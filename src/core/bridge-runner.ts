@@ -61,7 +61,7 @@ import {
 import type { ChatView } from "./view-models.js";
 import { hasStableIdentity, identitiesIntersect, identityKeys } from "./identity.js";
 import type { NaturalIntentClassifier } from "./natural-intent.js";
-import { resolveNaturalIntent } from "./natural-intent.js";
+import { pruneExpiredClarifications, resolveNaturalIntent } from "./natural-intent.js";
 import { chooseNaturalApprovalDecision } from "./natural-interactions.js";
 import { ImageDraftService } from "./image-drafts.js";
 import type {
@@ -487,6 +487,7 @@ export class BridgeRunner {
     if (this.naturalConversation) {
       this.state.imageDrafts ??= {};
       this.state.clarifications ??= {};
+      pruneExpiredClarifications(this.state.clarifications);
       await this.naturalConversation.imageDrafts.revalidate(this.state.imageDrafts);
       await this.store.save(this.state);
     }
@@ -515,6 +516,9 @@ export class BridgeRunner {
     }
     if (this.requireState().processedMessageIds.includes(message.messageId)) {
       return;
+    }
+    if (this.naturalConversation) {
+      await this.mutateState((state) => { pruneExpiredClarifications(state.clarifications ??= {}); });
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingApprovalForMessage(message)) {
       this.scheduleAcceptedMessage(message);

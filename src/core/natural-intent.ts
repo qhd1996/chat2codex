@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { PendingClarification } from "../state/types.js";
 
 export const naturalIntentNames = [
   "new_task", "continue_task", "steer_active", "stop", "approve",
@@ -35,6 +36,14 @@ export const naturalIntentDecisionSchema = z.object({
 }).strict();
 
 const fallbackQuestion = "这是继续当前任务，还是新建一个任务？";
+
+export function pruneExpiredClarifications(clarifications: Record<string, PendingClarification>, nowMs = Date.now()): string[] {
+  const expired: string[] = [];
+  for (const [key, clarification] of Object.entries(clarifications)) {
+    if (Date.parse(clarification.expiresAt) <= nowMs) { delete clarifications[key]; expired.push(key); }
+  }
+  return expired;
+}
 
 export async function resolveNaturalIntent(
   input: NaturalIntentInput,
