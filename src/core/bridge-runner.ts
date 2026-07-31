@@ -524,6 +524,14 @@ export class BridgeRunner {
       await this.handleImmediateCommand(message, () => this.answerNaturalApproval(message));
       return;
     }
+    if (this.naturalConversation && !message.attachments?.length && this.pendingUserInputForMessage(message)) {
+      await this.handleImmediateCommand(message, () => this.answerNaturalUserInput(message));
+      return;
+    }
+    if (this.naturalConversation && !message.attachments?.length && this.pendingRestrictedInteractionForMessage(message)) {
+      await this.handleImmediateCommand(message, () => this.repeatRestrictedInteractionPrompt(message));
+      return;
+    }
     if (this.naturalConversation && !message.attachments?.length && this.pendingClarificationForMessage(message)) {
       await this.handleImmediateNaturalClarification(message);
       return;
@@ -1004,7 +1012,8 @@ export class BridgeRunner {
       await this.rejectUnauthorized(message, decision);
       return;
     }
-    await this.expireImageDraftsForMessage(message);
+    const draftExpired = await this.expireImageDraftsForMessage(message);
+    if (draftExpired && !hasAttachments && !text.startsWith("/")) return;
     if (this.naturalConversation && message.naturalRouting !== "bypass" && !hasAttachments && !text.startsWith("/")) {
       const naturalHandled = await this.handleNaturalControl(message, text);
       if (naturalHandled) return;
@@ -1143,6 +1152,14 @@ export class BridgeRunner {
     return [...this.activeApprovals.values()].some((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
   }
 
+  private pendingUserInputForMessage(message: IncomingTextMessage): boolean {
+    return [...this.activeUserInputs.values()].some((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+  }
+
+  private pendingRestrictedInteractionForMessage(message: IncomingTextMessage): boolean {
+    return [...this.activePermissionApprovals.values(), ...this.activeMcpElicitations.values()].some((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+  }
+
   private pendingClarificationForMessage(message: IncomingTextMessage): boolean {
     if (!this.naturalConversation || !hasStableSenderIdentity(message.sender)) return false;
     const key = `${message.chatId}:${stableSenderKey(message.sender)}`;
@@ -1183,6 +1200,27 @@ export class BridgeRunner {
     pending.decision = selected; pending.resolvedAt = new Date().toISOString(); pending.resolve(selected);
     await this.updateApprovalCard(pending.handle, { status: "resolved", request: pending.request, decision: selected, updatedAt: pending.resolvedAt });
     await this.sender.sendText(message.chatId, decision.intent === "approve" ? "已同意本次执行。" : "已拒绝本次执行。");
+  }
+
+  private async answerNaturalUserInput(message: IncomingTextMessage): Promise<void> {
+    const candidates = [...this.activeUserInputs.values()].filter((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+    if (candidates.length !== 1) { await this.sender.sendText(message.chatId, "有多条待回答问题，请使用回复码选择。"); return; }
+    const pending = candidates[0]!; const question = nextUserInputQuestion(pending);
+    if (!question) return;
+    if (question.isSecret) { await this.sender.sendText(message.chatId, "该问题包含敏感输入，不能通过聊天自然回复。"); return; }
+    if (question.options?.length && !question.isOther) { await this.sendUserInputTextSafely(message.chatId, formatUserInputTextPrompt(pending)); return; }
+    const answer = routedText(message);
+    if (!answer || answer.length > maxUserInputAnswerLength) { await this.sender.sendText(message.chatId, "回答为空或过长，请缩短后重试。"); return; }
+    const input = this.advancePendingUserInput(pending, question.id, [answer]);
+    await this.updateUserInputCard(pending.handle, input);
+    await this.sendUserInputTextSafely(message.chatId, input.status === "resolved" ? "已把回答提交给 Codex（回答内容不会在聊天中回显）。" : "已记录回答，请继续回答下一题。");
+  }
+
+  private async repeatRestrictedInteractionPrompt(message: IncomingTextMessage): Promise<void> {
+    const permission = [...this.activePermissionApprovals.values()].find((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+    if (permission) { await this.sendUserInputTextSafely(message.chatId, formatPermissionApprovalTextPrompt(permission)); return; }
+    const mcp = [...this.activeMcpElicitations.values()].find((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+    if (mcp) await this.sendUserInputTextSafely(message.chatId, mcp.request.mode === "url" ? formatMcpUrlTextPrompt(mcp) : formatMcpTextPrompt(mcp));
   }
 
   private async stageImageMessage(message: IncomingTextMessage): Promise<void> {
@@ -1295,12 +1333,13 @@ export class BridgeRunner {
     });
   }
 
-  private async expireImageDraftsForMessage(message: IncomingTextMessage): Promise<void> {
-    if (!this.naturalConversation || !hasStableSenderIdentity(message.sender)) return;
+  private async expireImageDraftsForMessage(message: IncomingTextMessage): Promise<boolean> {
+    if (!this.naturalConversation || !hasStableSenderIdentity(message.sender)) return false;
     const key = this.naturalConversation.imageDrafts.key(message.chatId, stableSenderKey(message.sender));
     let expired: string[] = [];
     await this.mutateState(async (state) => { expired = await this.naturalConversation!.imageDrafts.expire(state.imageDrafts ??= {}); });
-    if (expired.includes(key)) await this.sender.sendText(message.chatId, "之前暂存的图片已超过 30 分钟并清理，请重新发送。");
+    if (expired.includes(key)) { await this.sender.sendText(message.chatId, "之前暂存的图片已超过 30 分钟并清理，请重新发送。"); return true; }
+    return false;
   }
 
   private async rejectUnauthorized(

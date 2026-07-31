@@ -4594,6 +4594,17 @@ describe("MessageRouter access control", () => {
     } finally { await second?.dispose(); await first.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
 
+  test("does not run a text instruction after its image draft has expired", async () => {
+    let now = Date.UTC(2026, 7, 1); const sender = new ImageDraftSender(); const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      await router.accept({ messageId: "exp-image", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      now += 1_001;
+      await router.accept({ messageId: "exp-text", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "分析这张图" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("超过 30 分钟")));
+      expect(codex.runs).toHaveLength(0);
+    }, (config) => ({ classifier: new QueueIntentClassifier([{ intent: "submit_image_draft", confidence: 1 }]), imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: 1_000, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes, now: () => now }) }));
+  });
+
   test("submits a native text-plus-image message immediately", async () => {
     const sender = new ImageDraftSender(); const codex = new FakeCodex();
     await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
@@ -5883,6 +5894,29 @@ describe("MessageRouter access control", () => {
         },
       });
     });
+  });
+
+  test("answers a free-form Codex question naturally before active-turn routing", async () => {
+    const codex = new UserInputCodex({ id: "natural_input", threadId: "thread_test", turnId: "turn_1", itemId: "item_1", autoResolutionMs: null, questions: [{ id: "detail", header: "Detail", question: "请补充说明", isOther: true, isSecret: false, options: null }] });
+    const sender = new CollectingSender(); const classifier = new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }]);
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "natural-input-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "需要提问" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/answer")));
+      const calls = classifier.calls; await router.accept({ messageId: "natural-input-answer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "使用测试环境" });
+      await running; expect(codex.response).toEqual({ answers: { detail: { answers: ["使用测试环境"] } } }); expect(classifier.calls).toBe(calls);
+    }, (config) => naturalDeps(config, classifier));
+  });
+
+  test("does not guess a natural answer for fixed Codex question options", async () => {
+    const codex = new UserInputCodex({ id: "natural_options", threadId: "thread_test", turnId: "turn_1", itemId: "item_1", autoResolutionMs: null, questions: [{ id: "environment", header: "Environment", question: "请选择环境", isOther: false, isSecret: false, options: [{ label: "Staging", description: "test" }, { label: "Production", description: "live" }] }] });
+    const sender = new CollectingSender();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "natural-options-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "需要选择" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/answer")));
+      await router.accept({ messageId: "natural-options-answer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "生产环境" });
+      expect(codex.response).toBeUndefined(); expect(sender.messages.at(-1)?.text).toContain("Production");
+      codex.abortRequest(); await running;
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
   });
 
   test("binds requestUserInput cancellation to the original group sender", async () => {
