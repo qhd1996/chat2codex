@@ -182,6 +182,8 @@ export interface PendingMessageDelivery {
     kind: "image" | "file";
     key: string;
     name?: string;
+    mediaType?: string;
+    size?: number;
   }>;
   acceptedAt: string;
   attempts: number;

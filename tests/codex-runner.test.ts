@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import {
   buildCodexArgs,
   buildCodexTurnInput,
+  validateLocalImages,
   CodexRunner,
   parseCodexJsonLine,
   summarizeCodexProgress,
@@ -23,6 +24,16 @@ test("buildCodexTurnInput emits native localImage items after text", () => {
 test("CLI fallback refuses native image inputs", () => {
   const config = loadConfig({ FEISHU_APP_ID: "x", FEISHU_APP_SECRET: "y", CODEX_WORKDIR: "C:\\work" });
   expect(() => buildCodexArgs(config, { prompt: "inspect", cwd: "C:\\work", localImages: ["C:\\img\\a.jpg"] })).toThrow(/images require Codex app-server/i);
+});
+
+test("validateLocalImages canonicalizes regular files and rejects missing or relative paths", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "chat2codex-local-image-"));
+  try {
+    const image = path.join(directory, "image.png"); await writeFile(image, "image");
+    expect(await validateLocalImages([image])).toEqual([await realpath(image)]);
+    await expect(validateLocalImages([path.join(directory, "missing.png")])).rejects.toThrow();
+    await expect(validateLocalImages(["relative.png"])).rejects.toThrow(/absolute/);
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });
 import { loadConfig } from "../src/config/env.js";
 import { ConsoleLogger } from "../src/util/logger.js";

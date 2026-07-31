@@ -77,4 +77,10 @@ describe("ImageDraftService", () => {
     await f.service.stage(drafts, input); await f.service.stage(drafts, input);
     expect(drafts["c:u"]?.images).toHaveLength(1); expect(await fs.stat(file)).toBeTruthy();
   });
+
+  test("detects the actual supported image signature when Weixin reports JPEG generically", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {}; const file = await image(f.root, "screen.jpg", "png");
+    await f.service.stage(drafts, { chatId: "c", senderKey: "u", sourceMessageId: "png", path: file, mediaType: "image/jpeg" });
+    expect(drafts["c:u"]?.images[0]?.mediaType).toBe("image/png");
+  });
 });

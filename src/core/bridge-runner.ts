@@ -524,26 +524,32 @@ export class BridgeRunner {
       }
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingApprovalForMessage(message)) {
+      await this.persistNaturalControlMarker(message, "approval_answer");
       await this.handleImmediateCommand(message, () => this.answerNaturalApproval(message));
       return;
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingUserInputForMessage(message)) {
+      await this.persistNaturalControlMarker(message, "user_input_answer");
       await this.handleImmediateCommand(message, () => this.answerNaturalUserInput(message));
       return;
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingRestrictedInteractionForMessage(message)) {
+      await this.persistNaturalControlMarker(message, "restricted_interaction");
       await this.handleImmediateCommand(message, () => this.repeatRestrictedInteractionPrompt(message));
       return;
     }
     if (this.naturalConversation && !message.attachments?.length && this.chatHasPendingInteraction(message.chatId)) {
+      await this.persistNaturalControlMarker(message, "other_sender_interaction");
       await this.handleImmediateCommand(message, () => this.sender.sendText(message.chatId, "当前 Codex 正在等待原任务发送者处理交互请求。"));
       return;
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingClarificationForMessage(message)) {
+      await this.persistNaturalControlMarker(message, "clarification_answer");
       await this.handleImmediateNaturalClarification(message);
       return;
     }
     if (this.naturalConversation && message.naturalRouting !== "bypass" && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
+      await this.persistNaturalControlMarker(message, "active_run_control");
       await this.handleImmediateNaturalActive(message);
       return;
     }
@@ -1131,14 +1137,15 @@ export class BridgeRunner {
     }
 
     const turn = parseCodexTurnRequest(text);
-    let staged = this.naturalConversation ? this.takeImageDraft(message) : undefined;
+    const persistedImages = this.requireState().jobs[message.messageId]?.localImages;
+    let staged = !persistedImages?.length && this.naturalConversation ? this.takeImageDraft(message) : undefined;
     const nativeImageMessage = this.naturalConversation && hasAttachments && message.attachments!.every((attachment) => attachment.kind === "image");
-    if (nativeImageMessage) {
+    if (!persistedImages?.length && nativeImageMessage) {
       const count = await this.stageMessageImages(message);
       if (count === null) return;
       staged = this.takeImageDraft(message);
     }
-    const prompt = staged || nativeImageMessage ? turn.prompt : await this.buildCodexPrompt(message, turn.prompt);
+    const prompt = persistedImages?.length || staged || nativeImageMessage ? turn.prompt : await this.buildCodexPrompt(message, turn.prompt);
     if (staged) this.logger.info("Weixin image draft submitted", { chatId: message.chatId, imageCount: staged.images.length });
     if (!prompt) {
       return;
@@ -1151,7 +1158,7 @@ export class BridgeRunner {
       message.messageId,
       message.sender,
       turn.collaborationMode,
-      staged?.images.map((image) => image.path),
+      persistedImages ?? staged?.images.map((image) => image.path),
     );
   }
 
@@ -1169,6 +1176,13 @@ export class BridgeRunner {
 
   private chatHasPendingInteraction(chatId: string): boolean {
     return [...this.activeApprovals.values(), ...this.activeUserInputs.values(), ...this.activePermissionApprovals.values(), ...this.activeMcpElicitations.values()].some((pending) => pending.chatId === chatId);
+  }
+
+  private async persistNaturalControlMarker(message: IncomingTextMessage, action: string): Promise<void> {
+    await this.mutateState((state) => {
+      if (state.processedMessageIds.includes(message.messageId)) return;
+      state.pendingMessages[message.messageId] ??= toPendingMessage({ ...message, text: `[natural-control:${action}]`, attachments: [] }, "control_no_replay");
+    });
   }
 
   private pendingClarificationForMessage(message: IncomingTextMessage): boolean {
@@ -1196,7 +1210,9 @@ export class BridgeRunner {
       return;
     }
     const pending = candidates[0]!;
-    const decision = await resolveNaturalIntent({ text: routedText(message), context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: this.activeRuns.has(message.chatId), pendingApprovalCount: 1, pendingPermissionCount: 0, hasImageDraft: false } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
+    const replyText = naturalApprovalReplyText(routedText(message));
+    if (!replyText) { await this.sender.sendText(message.chatId, "请明确回复同意执行或拒绝，不要只引用审批消息。"); return; }
+    const decision = await resolveNaturalIntent({ text: replyText, context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: this.activeRuns.has(message.chatId), pendingApprovalCount: 1, pendingPermissionCount: 0, hasImageDraft: false } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
     if (decision.intent !== "approve" && decision.intent !== "deny") {
       await this.sender.sendText(message.chatId, "这是同意执行还是拒绝这条命令？");
       return;
@@ -1290,7 +1306,7 @@ export class BridgeRunner {
       if (Date.parse(clarification.expiresAt) <= Date.now()) {
         await this.mutateState((state) => { delete (state.clarifications ??= {})[clarificationKey]; });
       } else {
-        const answer = parseClarificationAnswer(text);
+        const answer = await this.resolveClarificationAnswer(message, text);
         if (!answer) { await this.sender.sendText(message.chatId, clarification.question); return true; }
         await this.mutateState((state) => { delete (state.clarifications ??= {})[clarificationKey]; });
         const originalText = clarification.originalText ?? text;
@@ -1309,6 +1325,7 @@ export class BridgeRunner {
       await this.sender.sendText(message.chatId, "已取消暂存图片。"); return true;
     }
     if (decision.intent === "new_task") {
+      await this.markNaturalRoutingBypass(message.messageId);
       await this.resetSession(message.chatId); return false;
     }
     if (decision.intent === "steer_active") { await this.steerActiveRun(message.chatId, text); return true; }
@@ -1319,7 +1336,12 @@ export class BridgeRunner {
       this.logger.info("Weixin intent clarification requested", { chatId: message.chatId });
       await this.sender.sendText(message.chatId, question); return true;
     }
+    await this.markNaturalRoutingBypass(message.messageId);
     return false;
+  }
+
+  private async markNaturalRoutingBypass(messageId: string): Promise<void> {
+    await this.mutateState((state) => { const pending = state.pendingMessages[messageId]; if (pending) pending.naturalRouting = "bypass"; });
   }
 
   private async handleImmediateNaturalActive(message: IncomingTextMessage): Promise<void> {
@@ -1344,13 +1366,15 @@ export class BridgeRunner {
         await this.sender.sendText(message.chatId, "刚才的确认已过期，请重新描述任务。");
         return;
       }
-      const answer = parseClarificationAnswer(routedText(message));
+      const answer = await this.resolveClarificationAnswer(message, routedText(message));
       if (!answer) { await this.sender.sendText(message.chatId, pending.question); return; }
       await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
       if (answer === "stop") { await this.stopCodex(message.chatId); return; }
+      const activeQueue = this.queues.get(message.chatId);
       if (this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId)) {
         if (answer === "continue_task") { await this.steerActiveRun(message.chatId, pending.originalText ?? routedText(message)); return; }
         await this.stopCodex(message.chatId);
+        await activeQueue?.catch(() => undefined);
       }
       if (answer === "new_task") await this.resetSession(message.chatId);
       await this.accept({ ...message, messageId: `${message.messageId}:clarified`, text: pending.originalText ?? routedText(message), naturalRouting: "bypass" });
@@ -1365,6 +1389,14 @@ export class BridgeRunner {
     for (const item of expired) await this.naturalConversation.imageDrafts.deleteFiles(item.draft);
     if (expired.some((item) => item.key === key)) { await this.sender.sendText(message.chatId, "之前暂存的图片已超过 30 分钟并清理，请重新发送。"); return true; }
     return false;
+  }
+
+  private async resolveClarificationAnswer(message: IncomingTextMessage, text: string): Promise<"continue_task" | "new_task" | "stop" | null> {
+    const direct = parseClarificationAnswer(text);
+    if (direct || !this.naturalConversation) return direct;
+    const decision = await resolveNaturalIntent({ text, context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: this.activeRunIsInteractive(message.chatId) || this.queuedRuns.has(message.chatId), pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: this.hasImageDraftForMessage(message) } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
+    if (decision.intent === "new_task" || decision.intent === "continue_task" || decision.intent === "stop") return decision.intent;
+    return null;
   }
 
   private async rejectUnauthorized(
@@ -7888,6 +7920,10 @@ function parseClarificationAnswer(text: string): "continue_task" | "new_task" | 
   if (/^(新建|新任务|新建任务|另开一个|重新开始)$/u.test(normalized)) return "new_task";
   if (/^(停止|停下|先停一下|取消任务)$/u.test(normalized)) return "stop";
   return null;
+}
+
+function naturalApprovalReplyText(text: string): string {
+  return text.split(/\r?\n/u).filter((line) => !line.trimStart().startsWith("[引用]")).join("\n").trim();
 }
 
 function nextUserInputQuestion(

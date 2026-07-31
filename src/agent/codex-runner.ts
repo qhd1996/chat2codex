@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { realpath } from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
+import path from "node:path";
 import type { Readable } from "node:stream";
 import { StringDecoder } from "node:string_decoder";
 import { isDeepStrictEqual } from "node:util";
@@ -709,6 +710,7 @@ export class CodexRunner {
     if (input.signal?.aborted) {
       return cancelledRunResult(input.threadId);
     }
+    input = { ...input, localImages: await validateLocalImages(input.localImages) };
     if (!isReusableSessionScope(input.sessionScope)) {
       return this.runSingleUse(input);
     }
@@ -2848,6 +2850,19 @@ export function buildCodexTurnInput(input: Pick<CodexRunInput, "prompt" | "local
     { type: "text", text: input.prompt, text_elements: [] },
     ...(input.localImages ?? []).map((imagePath) => ({ type: "localImage", path: imagePath })),
   ];
+}
+
+export async function validateLocalImages(localImages: string[] | undefined): Promise<string[] | undefined> {
+  if (!localImages?.length) return undefined;
+  if (localImages.length > 32) throw new Error("Too many local images for one Codex turn.");
+  const validated: string[] = [];
+  for (const imagePath of localImages) {
+    if (!path.isAbsolute(imagePath)) throw new Error("Codex local image paths must be absolute.");
+    const canonical = await realpath(imagePath); const stat = await lstat(canonical);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error("Codex local image path must be a regular file.");
+    validated.push(canonical);
+  }
+  return validated;
 }
 
 export function buildCodexAppServerArgs(): string[] {
