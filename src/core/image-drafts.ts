@@ -23,7 +23,7 @@ export class ImageDraftService {
       const key = this.key(input.chatId, input.senderKey);
       const current = drafts[key];
       const existing = current?.images.find((image) => image.sourceMessageId === input.sourceMessageId);
-      if (existing) { await this.safeDeleteCandidate(file.path); return current!; }
+      if (existing) { if (path.resolve(file.path) !== path.resolve(existing.path)) await this.safeDeleteCandidate(file.path); return current!; }
       if ((current?.images.length ?? 0) >= this.options.maxCount) throw new Error(`Image draft limit is ${this.options.maxCount}.`);
       if ((current?.totalBytes ?? 0) + file.bytes > this.options.maxTotalBytes) throw new Error("Image draft exceeds the total-byte limit.");
       const now = new Date(this.now()).toISOString();
@@ -44,19 +44,29 @@ export class ImageDraftService {
     const draft = this.take(drafts, chatId, senderKey); if (!draft) return false; await this.deleteDraftFiles(draft); return true;
   }
 
-  async expire(drafts: Record<string, ImageDraft>): Promise<string[]> {
-    const expired: string[] = []; const now = this.now();
-    for (const [key, draft] of Object.entries(drafts)) if (Date.parse(draft.expiresAt) <= now) { delete drafts[key]; expired.push(key); await this.deleteDraftFiles(draft); }
+  takeExpired(drafts: Record<string, ImageDraft>): Array<{ key: string; draft: ImageDraft }> {
+    const expired: Array<{ key: string; draft: ImageDraft }> = []; const now = this.now();
+    for (const [key, draft] of Object.entries(drafts)) if (Date.parse(draft.expiresAt) <= now) { delete drafts[key]; expired.push({ key, draft }); }
     return expired;
+  }
+
+  async deleteFiles(draft: ImageDraft): Promise<void> { await this.deleteDraftFiles(draft); }
+
+  async expire(drafts: Record<string, ImageDraft>): Promise<string[]> {
+    const expired = this.takeExpired(drafts);
+    for (const item of expired) await this.deleteDraftFiles(item.draft);
+    return expired.map((item) => item.key);
   }
 
   async revalidate(drafts: Record<string, ImageDraft>): Promise<string[]> {
     const invalid: string[] = [];
     for (const [key, draft] of Object.entries(drafts)) {
       let valid = draft.images.length > 0 && draft.images.length <= this.options.maxCount && draft.totalBytes <= this.options.maxTotalBytes;
+      let actualTotal = 0;
       for (const image of draft.images) {
-        try { const checked = await this.validateFile(image.path, image.mediaType); valid &&= checked.sha256 === image.sha256 && checked.bytes === image.bytes; } catch { valid = false; }
+        try { const checked = await this.validateFile(image.path, image.mediaType); actualTotal += checked.bytes; valid &&= checked.sha256 === image.sha256 && checked.bytes === image.bytes; } catch { valid = false; }
       }
+      valid &&= actualTotal === draft.totalBytes;
       if (!valid) { delete drafts[key]; invalid.push(key); }
     }
     return invalid;

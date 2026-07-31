@@ -187,9 +187,8 @@ export async function createWeixinAdapter(
       return { status: "delivered" };
     },
     async openAttachment(ref) {
-      const descriptor = runtime.attachments[ref.attachmentId];
-      if (!descriptor || Date.parse(descriptor.expiresAt) <= Date.now()) {
-        delete runtime.attachments[ref.attachmentId];
+      const descriptor = getReusableAttachmentDescriptor(runtime, ref.attachmentId);
+      if (!descriptor) {
         await persist();
         throw new Error("Weixin attachment metadata is missing or expired.");
       }
@@ -199,13 +198,7 @@ export async function createWeixinAdapter(
         options.fetchImpl,
       );
       return {
-        chunks: removeDescriptorAfterConsumption(
-          downloaded.chunks,
-          async () => {
-            delete runtime.attachments[ref.attachmentId];
-            await persist();
-          },
-        ),
+        chunks: downloaded.chunks,
         name: descriptor.name,
         mediaType: descriptor.mediaType,
         size: downloaded.size,
@@ -512,16 +505,6 @@ async function* decryptResponseBody(
   }
 }
 
-async function* removeDescriptorAfterConsumption(
-  chunks: AsyncIterable<Uint8Array>,
-  completed: () => Promise<void>,
-): AsyncIterable<Uint8Array> {
-  for await (const chunk of chunks) {
-    yield chunk;
-  }
-  await completed();
-}
-
 function attachmentDownloadUrl(descriptor: WeixinAttachmentDescriptor): URL {
   if (descriptor.media.full_url) {
     const url = new URL(descriptor.media.full_url);
@@ -648,6 +631,15 @@ function pruneExpiredAttachments(runtime: WeixinRuntimeState): void {
   }
 }
 
+function getReusableAttachmentDescriptor(runtime: WeixinRuntimeState, attachmentId: string, nowMs = Date.now()): WeixinAttachmentDescriptor | undefined {
+  const descriptor = runtime.attachments[attachmentId];
+  if (!descriptor || !Number.isFinite(Date.parse(descriptor.expiresAt)) || Date.parse(descriptor.expiresAt) <= nowMs) {
+    delete runtime.attachments[attachmentId];
+    return undefined;
+  }
+  return descriptor;
+}
+
 function sanitizeAttachmentName(value: string | undefined): string | undefined {
   const normalized = value?.replaceAll("\\", "/").split("/").pop()?.trim();
   if (!normalized || normalized === "." || normalized === "..") {
@@ -701,4 +693,5 @@ export const weixinAdapterInternals = {
   pollWeixin,
   renderWeixinPlainText,
   renderWeixinView,
+  getReusableAttachmentDescriptor,
 };

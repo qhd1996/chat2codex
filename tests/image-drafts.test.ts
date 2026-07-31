@@ -63,4 +63,18 @@ describe("ImageDraftService", () => {
     await fs.appendFile(file, "changed");
     expect(await f.service.revalidate(drafts)).toEqual(["c:u"]); expect(drafts["c:u"]).toBeUndefined();
   });
+
+  test("drops restart metadata whose recorded total does not match the files", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {};
+    const file = await image(f.root, "total.jpg"); await f.service.stage(drafts, { chatId: "c", senderKey: "u", sourceMessageId: "m", path: file, mediaType: "image/jpeg" });
+    drafts["c:u"]!.totalBytes = 0;
+    expect(await f.service.revalidate(drafts)).toEqual(["c:u"]); expect(drafts["c:u"]).toBeUndefined();
+  });
+
+  test("does not delete the persisted image when the same source is staged again", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {}; const file = await image(f.root, "same.jpg");
+    const input = { chatId: "c", senderKey: "u", sourceMessageId: "same", path: file, mediaType: "image/jpeg" };
+    await f.service.stage(drafts, input); await f.service.stage(drafts, input);
+    expect(drafts["c:u"]?.images).toHaveLength(1); expect(await fs.stat(file)).toBeTruthy();
+  });
 });

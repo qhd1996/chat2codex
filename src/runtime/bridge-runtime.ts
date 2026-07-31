@@ -184,6 +184,19 @@ function createChatSender(
       attachment,
     ): Promise<DownloadedAttachment> => {
       await supervisorReady;
+      const directory = path.join(
+        config.attachmentDownloadDir,
+        sanitizePathSegment(message.messageId) || "message",
+      );
+      const downloadRoot = await ensurePrivateDirectory(config.attachmentDownloadDir);
+      const resolvedDirectory = await ensurePrivateDirectory(directory);
+      assertPathInside(downloadRoot, resolvedDirectory);
+      const hintedName = attachmentFileName(attachment, attachment.mediaType);
+      const hintedPath = path.join(resolvedDirectory, hintedName);
+      const existing = await fs.lstat(hintedPath).catch(() => null);
+      if (existing?.isFile() && !existing.isSymbolicLink()) {
+        return { kind: attachment.kind, name: attachment.name ?? hintedName, path: hintedPath, mediaType: attachment.mediaType };
+      }
       const stream = await supervisor.openAttachment({
         message: {
           adapterId,
@@ -193,14 +206,8 @@ function createChatSender(
         attachmentId: attachment.key,
         kind: attachment.kind,
         name: attachment.name,
+        mediaType: attachment.mediaType,
       });
-      const directory = path.join(
-        config.attachmentDownloadDir,
-        sanitizePathSegment(message.messageId) || "message",
-      );
-      const downloadRoot = await ensurePrivateDirectory(config.attachmentDownloadDir);
-      const resolvedDirectory = await ensurePrivateDirectory(directory);
-      assertPathInside(downloadRoot, resolvedDirectory);
       const fileName = attachmentFileName(
         { ...attachment, name: stream.name ?? attachment.name },
         stream.mediaType,

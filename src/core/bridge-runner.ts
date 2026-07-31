@@ -518,7 +518,10 @@ export class BridgeRunner {
       return;
     }
     if (this.naturalConversation) {
-      await this.mutateState((state) => { pruneExpiredClarifications(state.clarifications ??= {}); });
+      const clarifications = this.requireState().clarifications ??= {};
+      if (Object.values(clarifications).some((item) => Date.parse(item.expiresAt) <= Date.now())) {
+        await this.mutateState((state) => { pruneExpiredClarifications(state.clarifications ??= {}); });
+      }
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingApprovalForMessage(message)) {
       await this.handleImmediateCommand(message, () => this.answerNaturalApproval(message));
@@ -532,11 +535,15 @@ export class BridgeRunner {
       await this.handleImmediateCommand(message, () => this.repeatRestrictedInteractionPrompt(message));
       return;
     }
+    if (this.naturalConversation && !message.attachments?.length && this.chatHasPendingInteraction(message.chatId)) {
+      await this.handleImmediateCommand(message, () => this.sender.sendText(message.chatId, "当前 Codex 正在等待原任务发送者处理交互请求。"));
+      return;
+    }
     if (this.naturalConversation && !message.attachments?.length && this.pendingClarificationForMessage(message)) {
       await this.handleImmediateNaturalClarification(message);
       return;
     }
-    if (this.naturalConversation && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
+    if (this.naturalConversation && message.naturalRouting !== "bypass" && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
       await this.handleImmediateNaturalActive(message);
       return;
     }
@@ -1126,7 +1133,7 @@ export class BridgeRunner {
     const turn = parseCodexTurnRequest(text);
     let staged = this.naturalConversation ? this.takeImageDraft(message) : undefined;
     const nativeImageMessage = this.naturalConversation && hasAttachments && message.attachments!.every((attachment) => attachment.kind === "image");
-    if (!staged && nativeImageMessage) {
+    if (nativeImageMessage) {
       const count = await this.stageMessageImages(message);
       if (count === null) return;
       staged = this.takeImageDraft(message);
@@ -1160,6 +1167,10 @@ export class BridgeRunner {
     return [...this.activePermissionApprovals.values(), ...this.activeMcpElicitations.values()].some((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
   }
 
+  private chatHasPendingInteraction(chatId: string): boolean {
+    return [...this.activeApprovals.values(), ...this.activeUserInputs.values(), ...this.activePermissionApprovals.values(), ...this.activeMcpElicitations.values()].some((pending) => pending.chatId === chatId);
+  }
+
   private pendingClarificationForMessage(message: IncomingTextMessage): boolean {
     if (!this.naturalConversation || !hasStableSenderIdentity(message.sender)) return false;
     const key = `${message.chatId}:${stableSenderKey(message.sender)}`;
@@ -1179,7 +1190,9 @@ export class BridgeRunner {
   private async answerNaturalApproval(message: IncomingTextMessage): Promise<void> {
     const candidates = [...this.activeApprovals.values()].filter((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
     if (candidates.length !== 1 || !this.naturalConversation) {
-      await this.sender.sendText(message.chatId, candidates.length > 1 ? "有多条待审批请求，请使用审批编号选择。" : "当前没有可处理的审批请求。");
+      await this.sender.sendText(message.chatId, candidates.length > 1
+        ? ["有多条待审批请求，不能猜测要处理哪一条：", ...candidates.map((pending, index) => `${index + 1}. ${approvalRequestNaturalSummary(pending.request)}（回复码 ${pending.replyCode}）`), "请使用对应审批消息中的 /approve 命令。"].join("\n")
+        : "当前没有可处理的审批请求。");
       return;
     }
     const pending = candidates[0]!;
@@ -1213,7 +1226,11 @@ export class BridgeRunner {
     if (!answer || answer.length > maxUserInputAnswerLength) { await this.sender.sendText(message.chatId, "回答为空或过长，请缩短后重试。"); return; }
     const input = this.advancePendingUserInput(pending, question.id, [answer]);
     await this.updateUserInputCard(pending.handle, input);
-    await this.sendUserInputTextSafely(message.chatId, input.status === "resolved" ? "已把回答提交给 Codex（回答内容不会在聊天中回显）。" : "已记录回答，请继续回答下一题。");
+    if (input.status === "pending") {
+      await this.sendUserInputTextSafely(message.chatId, formatUserInputTextPrompt(pending));
+    } else {
+      await this.sendUserInputTextSafely(message.chatId, "已把回答提交给 Codex（回答内容不会在聊天中回显）。");
+    }
   }
 
   private async repeatRestrictedInteractionPrompt(message: IncomingTextMessage): Promise<void> {
@@ -1239,17 +1256,21 @@ export class BridgeRunner {
     if (!this.naturalConversation || !this.sender.downloadAttachment) return null;
     const senderKey = stableSenderKey(message.sender);
     const images = message.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
+    const pending: Array<{ attachment: IncomingAttachment; downloaded: DownloadedAttachment; sourceMessageId: string }> = [];
     for (const attachment of images) {
       const sourceMessageId = `${message.messageId}:${attachment.key}`;
       const key = this.naturalConversation.imageDrafts.key(message.chatId, senderKey);
       if (this.requireState().imageDrafts?.[key]?.images.some((image) => image.sourceMessageId === sourceMessageId)) continue;
-      const downloaded = await this.sender.downloadAttachment(message, attachment);
-      try {
-        await this.mutateState((state) => this.naturalConversation!.imageDrafts.stage(state.imageDrafts ??= {}, { chatId: message.chatId, senderKey, sourceMessageId, path: downloaded.path, mediaType: downloaded.mediaType ?? attachment.mediaType ?? "image/jpeg" }));
-      } catch (error) {
-        await this.sender.sendText(message.chatId, `图片暂存失败：${truncateInline(formatError(error), 160)}`);
-        return null;
-      }
+      pending.push({ attachment, downloaded: await this.sender.downloadAttachment(message, attachment), sourceMessageId });
+    }
+    try {
+      await this.mutateState(async (state) => {
+        for (const item of pending) await this.naturalConversation!.imageDrafts.stage(state.imageDrafts ??= {}, { chatId: message.chatId, senderKey, sourceMessageId: item.sourceMessageId, path: item.downloaded.path, mediaType: item.downloaded.mediaType ?? item.attachment.mediaType ?? "image/jpeg" });
+      });
+    } catch (error) {
+      await removeAttachmentFiles(this.config.attachmentDownloadDir, pending.map((item) => item.downloaded.path)).catch(() => undefined);
+      await this.sender.sendText(message.chatId, `图片暂存失败：${truncateInline(formatError(error), 160)}`);
+      return null;
     }
     return this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, senderKey)]?.images.length ?? 0;
   }
@@ -1282,9 +1303,12 @@ export class BridgeRunner {
     const session = this.requireState().chats[message.chatId];
     const decision = await resolveNaturalIntent({ text, context: { hasThread: Boolean(session?.threadId), activeRun: this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId), pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: Boolean(draft) } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
     if (decision.intent === "stop") { await this.stopCodex(message.chatId); return true; }
-    if (decision.intent === "cancel_draft") { await this.mutateState((state) => this.naturalConversation!.imageDrafts.cancel(state.imageDrafts ??= {}, message.chatId, senderKey)); await this.sender.sendText(message.chatId, "已取消暂存图片。"); return true; }
+    if (decision.intent === "cancel_draft") {
+      let cancelled; await this.mutateState((state) => { cancelled = this.naturalConversation!.imageDrafts.take(state.imageDrafts ??= {}, message.chatId, senderKey); });
+      if (cancelled) await this.naturalConversation.imageDrafts.deleteFiles(cancelled);
+      await this.sender.sendText(message.chatId, "已取消暂存图片。"); return true;
+    }
     if (decision.intent === "new_task") {
-      if (draft) { await this.sender.sendText(message.chatId, "暂存图片要用于这个新任务吗？请说明图片要求，或说取消这些图片。"); return true; }
       await this.resetSession(message.chatId); return false;
     }
     if (decision.intent === "steer_active") { await this.steerActiveRun(message.chatId, text); return true; }
@@ -1336,9 +1360,10 @@ export class BridgeRunner {
   private async expireImageDraftsForMessage(message: IncomingTextMessage): Promise<boolean> {
     if (!this.naturalConversation || !hasStableSenderIdentity(message.sender)) return false;
     const key = this.naturalConversation.imageDrafts.key(message.chatId, stableSenderKey(message.sender));
-    let expired: string[] = [];
-    await this.mutateState(async (state) => { expired = await this.naturalConversation!.imageDrafts.expire(state.imageDrafts ??= {}); });
-    if (expired.includes(key)) { await this.sender.sendText(message.chatId, "之前暂存的图片已超过 30 分钟并清理，请重新发送。"); return true; }
+    let expired: Array<{ key: string; draft: import("../state/types.js").ImageDraft }> = [];
+    await this.mutateState((state) => { expired = this.naturalConversation!.imageDrafts.takeExpired(state.imageDrafts ??= {}); });
+    for (const item of expired) await this.naturalConversation.imageDrafts.deleteFiles(item.draft);
+    if (expired.some((item) => item.key === key)) { await this.sender.sendText(message.chatId, "之前暂存的图片已超过 30 分钟并清理，请重新发送。"); return true; }
     return false;
   }
 
@@ -7839,6 +7864,12 @@ function hasStableSenderIdentity(sender: SenderIdentity): boolean {
 
 function sameStableSenderIdentity(left: SenderIdentity, right: SenderIdentity): boolean {
   return identitiesIntersect(left, right);
+}
+
+function approvalRequestNaturalSummary(request: CodexApprovalRequest): string {
+  return request.kind === "command"
+    ? `命令：${truncateInline(request.command ?? "(unknown)", 120)}`
+    : "文件变更请求";
 }
 
 function stableSenderKey(sender: SenderIdentity): string {

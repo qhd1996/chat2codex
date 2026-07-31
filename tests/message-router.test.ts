@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -4615,6 +4615,27 @@ describe("MessageRouter access control", () => {
     }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
   });
 
+  test("merges a staged image with images attached to the submitting text", async () => {
+    const sender = new ImageDraftSender(); const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      await router.accept({ messageId: "merge-first", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      await router.accept({ messageId: "merge-submit", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "比较两张", attachments: [{ kind: "image", key: "two", mediaType: "image/jpeg" }] });
+      await waitFor(() => codex.runs.length === 1); expect(codex.runs[0]?.localImages).toHaveLength(2);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
+  });
+
+  test("starts a new thread while submitting staged images when the instruction is clearly new", async () => {
+    const sender = new ImageDraftSender(); const codex = new SessionAwareCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      await router.accept({ messageId: "existing-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "已有任务" });
+      await waitFor(() => codex.runs.length === 1 && sender.messages.some((message) => message.text === "done"));
+      await router.accept({ messageId: "new-image", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      await router.accept({ messageId: "new-image-text", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "新任务，分析这张图" });
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[1]?.threadId).toBeUndefined(); expect(codex.runs[1]?.localImages).toHaveLength(1);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "new_task", confidence: 1 }])));
+  });
+
   test("asks for clarification instead of guessing a session action", async () => {
     const codex = new SessionAwareCodex();
     await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, sender }) => {
@@ -5224,6 +5245,17 @@ describe("MessageRouter access control", () => {
       });
       expect(sender.messages.at(-1)?.text).toContain("回复码无效");
     });
+  });
+
+  test("rolls back an entire multi-image message when one image exceeds the draft total", async () => {
+    const sender = new ImageDraftSender(); const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin", WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES: "10", WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES: "10" }, codex, sender, async ({ router, config }) => {
+      await router.accept({ messageId: "batch-limit", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }, { kind: "image", key: "two", mediaType: "image/jpeg" }] });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("图片暂存失败")));
+      expect(Object.keys((await new JsonStateStore(config.bridgeStatePath).load()).imageDrafts ?? {})).toHaveLength(0);
+      expect(codex.runs).toHaveLength(0);
+      for (const file of sender.downloadedPaths) expect(await stat(file).catch(() => null)).toBeNull();
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([])));
   });
 
   test("natural stop bypasses the queue for an active Weixin run", async () => {
@@ -5907,6 +5939,22 @@ describe("MessageRouter access control", () => {
     }, (config) => naturalDeps(config, classifier));
   });
 
+  test("prompts the next free-form Codex question after a natural answer", async () => {
+    const codex = new UserInputCodex({ id: "natural_multi", threadId: "thread_test", turnId: "turn_1", itemId: "item_1", autoResolutionMs: null, questions: [
+      { id: "first", header: "First", question: "第一题", isOther: true, isSecret: false, options: null },
+      { id: "second", header: "Second", question: "第二题", isOther: true, isSecret: false, options: null },
+    ] });
+    const sender = new CollectingSender();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "multi-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "需要两题" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("第一题")));
+      await router.accept({ messageId: "multi-first", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "答案一" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("第二题")));
+      await router.accept({ messageId: "multi-second", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "答案二" });
+      await running; expect(codex.response).toEqual({ answers: { first: { answers: ["答案一"] }, second: { answers: ["答案二"] } } });
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
+  });
+
   test("does not guess a natural answer for fixed Codex question options", async () => {
     const codex = new UserInputCodex({ id: "natural_options", threadId: "thread_test", turnId: "turn_1", itemId: "item_1", autoResolutionMs: null, questions: [{ id: "environment", header: "Environment", question: "请选择环境", isOther: false, isSecret: false, options: [{ label: "Staging", description: "test" }, { label: "Production", description: "live" }] }] });
     const sender = new CollectingSender();
@@ -6439,6 +6487,18 @@ describe("MessageRouter access control", () => {
     });
   });
 
+  test("does not treat natural text as a broad permission grant", async () => {
+    const request: CodexPermissionApprovalRequest = { id: "permission_natural_safe", cwd: "/repo", itemId: "item", permissions: { network: { enabled: true } }, threadId: "thread", turnId: "turn", environmentId: null, reason: "network" };
+    const codex = new PermissionApprovalCodex(request); const sender = new CollectingSender(); const classifier = new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }]);
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "permission-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "需要权限" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/permit"))); const calls = classifier.calls;
+      await router.accept({ messageId: "permission-natural", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以" });
+      expect(codex.decision).toBeUndefined(); expect(classifier.calls).toBe(calls); expect(sender.messages.at(-1)?.text).toContain("/permit");
+      codex.abortRequest(); await running;
+    }, (config) => naturalDeps(config, classifier));
+  });
+
   test("expires extra permission approval on abort and rejects late card actions", async () => {
     const request: CodexPermissionApprovalRequest = {
       id: "permission_expired",
@@ -6593,6 +6653,18 @@ describe("MessageRouter access control", () => {
       ).toHaveLength(1);
       },
     );
+  });
+
+  test("does not treat natural text as an MCP form or URL decision", async () => {
+    const codex = new McpElicitationCodex({ id: "mcp_natural_safe", serverName: "test", threadId: "thread", turnId: "turn", message: "Choose", mode: "url", elicitationId: "e", url: "https://example.test/" });
+    const sender = new CollectingSender(); const classifier = new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }]);
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "mcp-natural-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "需要 MCP" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/mcp-decide"))); const calls = classifier.calls;
+      await router.accept({ messageId: "mcp-natural-answer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以" });
+      expect(codex.response).toBeUndefined(); expect(classifier.calls).toBe(calls); expect(sender.messages.at(-1)?.text).toContain("/mcp-decide");
+      codex.abortRequest(); await running;
+    }, (config) => naturalDeps(config, classifier));
   });
 
   test("answers a leading-whitespace MCP field id and keeps required /skip as data", async () => {

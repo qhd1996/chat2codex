@@ -265,6 +265,17 @@ describe("Weixin protocol adapter", () => {
       ),
     ).rejects.toThrow("exceeds");
   });
+
+  test("keeps attachment descriptors reusable until their retention expires", () => {
+    const runtime = emptyWeixinRuntimeState();
+    runtime.attachments["a"] = { kind: "image", media: { encrypt_query_param: "opaque" }, mediaType: "image/jpeg", expiresAt: "2026-08-01T00:10:00.000Z" };
+    const before = Date.parse("2026-08-01T00:05:00.000Z");
+    expect(weixinAdapterInternals.getReusableAttachmentDescriptor(runtime, "a", before)).toBeTruthy();
+    expect(weixinAdapterInternals.getReusableAttachmentDescriptor(runtime, "a", before)).toBeTruthy();
+    expect(runtime.attachments.a).toBeTruthy();
+    expect(weixinAdapterInternals.getReusableAttachmentDescriptor(runtime, "a", Date.parse("2026-08-01T00:10:00.000Z"))).toBeUndefined();
+    expect(runtime.attachments.a).toBeUndefined();
+  });
 });
 
 describe("Weixin private state", () => {
