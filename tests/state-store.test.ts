@@ -27,6 +27,8 @@ describe("JsonStateStore", () => {
         pendingMessages: {},
         processedMessageIds: [],
         diagnostics: {},
+        imageDrafts: {},
+        clarifications: {},
       });
 
       await store.save({
@@ -193,7 +195,7 @@ describe("JsonStateStore", () => {
       await store.save(loaded);
 
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(2);
+      expect(persisted.schemaVersion).toBe(3);
       expect(persisted.adapters["lark:default"].processedMessageIds).toEqual(["m_legacy"]);
       expect(JSON.parse(await readFile(`${statePath}.v0.6.bak`, "utf8"))).toEqual(legacy);
       if (process.platform !== "win32") {
@@ -227,6 +229,8 @@ describe("JsonStateStore", () => {
         pendingMessages: {},
         processedMessageIds: [],
         diagnostics: {},
+        imageDrafts: {},
+        clarifications: {},
       });
       slackState.processedMessageIds.push("same-message-id");
       slackState.chats.same_chat = {
@@ -251,17 +255,45 @@ describe("JsonStateStore", () => {
   test("refuses to overwrite an unknown future state schema", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-"));
     const statePath = path.join(tempDir, "state.json");
-    const futureState = `${JSON.stringify({ schemaVersion: 3, adapters: {} }, null, 2)}\n`;
+    const futureState = `${JSON.stringify({ schemaVersion: 4, adapters: {} }, null, 2)}\n`;
     try {
       await writeFile(statePath, futureState, { mode: 0o600 });
       const store = new JsonStateStore(statePath, { adapterId: "feishu:default" });
 
-      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 3");
+      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 4");
       await expect(store.save(emptyState())).rejects.toThrow(
-        "Unsupported bridge state schema version: 3",
+        "Unsupported bridge state schema version: 4",
       );
       expect(await readFile(statePath, "utf8")).toBe(futureState);
       expect(await stat(`${statePath}.v0.6.bak`).catch(() => null)).toBeNull();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("migrates v2 adapter state with empty drafts and persists valid draft metadata", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-v2-"));
+    const statePath = path.join(tempDir, "state.json");
+    const imagePath = path.join(tempDir, "image.jpg");
+    try {
+      await writeFile(statePath, JSON.stringify({
+        schemaVersion: 2,
+        adapters: { "weixin:bot": emptyState() },
+      }));
+      const store = new JsonStateStore(statePath, { adapterId: "weixin:bot" });
+      const state = await store.load();
+      expect(state.imageDrafts).toEqual({});
+      expect(state.clarifications).toEqual({});
+      state.imageDrafts!["chat:user"] = {
+        chatId: "chat", senderKey: "user", createdAt: "2026-08-01T00:00:00.000Z",
+        updatedAt: "2026-08-01T00:00:00.000Z", expiresAt: "2026-08-01T00:30:00.000Z",
+        images: [{ sourceMessageId: "m1", path: imagePath, sha256: "a".repeat(64), mediaType: "image/jpeg", bytes: 10 }],
+        totalBytes: 10,
+      };
+      await store.save(state);
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+      expect(persisted.schemaVersion).toBe(3);
+      expect((await store.load()).imageDrafts["chat:user"]?.images).toHaveLength(1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

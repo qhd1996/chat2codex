@@ -4,9 +4,11 @@ import path from "node:path";
 
 import {
   type BridgeState,
-  type BridgeStateEnvelopeV2,
+  type BridgeStateEnvelopeV3,
   type DurableCodexJob,
   type DurableOutboxMessage,
+  type ImageDraft,
+  type PendingClarification,
   bridgeStateSchemaVersion,
   createSessionEpoch,
   emptyState,
@@ -49,7 +51,7 @@ export class JsonStateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const persisted = JSON.parse(raw) as unknown;
       assertSupportedSchema(persisted);
-      const state = isBridgeStateEnvelopeV2(persisted)
+      const state = isBridgeStateEnvelope(persisted)
         ? coerceBridgeState(persisted.adapters[this.adapterId])
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
@@ -94,9 +96,12 @@ export class JsonStateStore {
 
       const currentPersisted = await readPersistedState(this.filePath);
       assertSupportedSchema(currentPersisted);
-      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelopeV2(currentPersisted);
-      const envelope: BridgeStateEnvelopeV2 = isBridgeStateEnvelopeV2(currentPersisted)
+      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted);
+      const migratedV2 = isBridgeStateEnvelopeV2(currentPersisted);
+      const envelope: BridgeStateEnvelopeV3 = isBridgeStateEnvelope(currentPersisted)
         ? currentPersisted
+        : migratedV2
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
         : {
             schemaVersion: bridgeStateSchemaVersion,
             adapters: currentPersisted === null
@@ -108,6 +113,9 @@ export class JsonStateStore {
 
       if (migratedLegacy) {
         await preserveLegacyBackup(this.filePath);
+      }
+      if (migratedV2) {
+        await preserveVersionedBackup(this.filePath, "v2");
       }
 
       const tempPath = `${this.filePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -153,10 +161,12 @@ function coerceBridgeState(value: unknown): BridgeState {
     pendingMessages: parsed.pendingMessages ?? {},
     processedMessageIds: parsed.processedMessageIds ?? [],
     diagnostics: parsed.diagnostics ?? {},
+    imageDrafts: coerceImageDrafts(parsed.imageDrafts),
+    clarifications: coerceClarifications(parsed.clarifications),
   };
 }
 
-function isBridgeStateEnvelopeV2(value: unknown): value is BridgeStateEnvelopeV2 {
+function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV3 {
   return Boolean(
     isRecord(value) &&
       value.schemaVersion === bridgeStateSchemaVersion &&
@@ -164,11 +174,15 @@ function isBridgeStateEnvelopeV2(value: unknown): value is BridgeStateEnvelopeV2
   );
 }
 
+function isBridgeStateEnvelopeV2(value: unknown): value is { schemaVersion: 2; adapters: Record<string, BridgeState> } {
+  return Boolean(isRecord(value) && value.schemaVersion === 2 && isRecord(value.adapters));
+}
+
 function assertSupportedSchema(value: unknown): void {
   if (
     isRecord(value) &&
     Object.prototype.hasOwnProperty.call(value, "schemaVersion") &&
-    !isBridgeStateEnvelopeV2(value)
+    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV2(value)
   ) {
     throw new Error(`Unsupported bridge state schema version: ${String(value.schemaVersion)}`);
   }
@@ -200,6 +214,45 @@ async function preserveLegacyBackup(filePath: string): Promise<void> {
     }
     throw error;
   }
+}
+
+async function preserveVersionedBackup(filePath: string, version: string): Promise<void> {
+  const backupPath = `${filePath}.${version}.bak`;
+  try {
+    await fs.copyFile(filePath, backupPath, fs.constants.COPYFILE_EXCL);
+    await fs.chmod(backupPath, 0o600);
+  } catch (error) {
+    if (!isAlreadyExists(error)) throw error;
+  }
+}
+
+function coerceImageDrafts(value: unknown): BridgeState["imageDrafts"] {
+  if (!isRecord(value)) return {};
+  const drafts: Record<string, ImageDraft> = {};
+  for (const [key, draft] of Object.entries(value)) {
+    if (isImageDraft(draft)) drafts[key] = draft;
+  }
+  return drafts;
+}
+
+function isImageDraft(value: unknown): value is ImageDraft {
+  if (!isRecord(value) || !Array.isArray(value.images) || value.images.length > 32) return false;
+  if (![value.chatId, value.senderKey, value.createdAt, value.updatedAt, value.expiresAt].every((item) => typeof item === "string" && item.length > 0 && item.length <= 4096)) return false;
+  if (!Number.isSafeInteger(value.totalBytes) || Number(value.totalBytes) < 0) return false;
+  return value.images.every((image) => isRecord(image) && typeof image.sourceMessageId === "string" && typeof image.path === "string" && image.path.length <= 4096 && typeof image.sha256 === "string" && /^[a-f0-9]{64}$/iu.test(image.sha256) && typeof image.mediaType === "string" && Number.isSafeInteger(image.bytes) && Number(image.bytes) > 0);
+}
+
+function coerceClarifications(value: unknown): BridgeState["clarifications"] {
+  if (!isRecord(value)) return {};
+  const clarifications: Record<string, PendingClarification> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (isPendingClarification(item)) clarifications[key] = item;
+  }
+  return clarifications;
+}
+
+function isPendingClarification(value: unknown): value is PendingClarification {
+  return Boolean(isRecord(value) && typeof value.chatId === "string" && typeof value.senderKey === "string" && typeof value.question === "string" && Array.isArray(value.choices) && value.choices.every((choice) => typeof choice === "string") && typeof value.createdAt === "string" && typeof value.expiresAt === "string");
 }
 
 function normalizeChatSessionEpochs(state: BridgeState): void {

@@ -245,6 +245,33 @@ export interface DurableOutboxMessage {
   lastError?: string;
 }
 
+export interface StagedImage {
+  sourceMessageId: string;
+  path: string;
+  sha256: string;
+  mediaType: string;
+  bytes: number;
+}
+
+export interface ImageDraft {
+  chatId: string;
+  senderKey: string;
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  images: StagedImage[];
+  totalBytes: number;
+}
+
+export interface PendingClarification {
+  chatId: string;
+  senderKey: string;
+  question: string;
+  choices: string[];
+  createdAt: string;
+  expiresAt: string;
+}
+
 export interface BridgeState {
   chats: Record<string, ChatSession>;
   jobs: Record<string, DurableCodexJob>;
@@ -252,12 +279,14 @@ export interface BridgeState {
   pendingMessages: Record<string, PendingMessageDelivery>;
   processedMessageIds: string[];
   diagnostics: BridgeDiagnostics;
+  imageDrafts?: Record<string, ImageDraft>;
+  clarifications?: Record<string, PendingClarification>;
 }
 
-export const bridgeStateSchemaVersion = 2 as const;
+export const bridgeStateSchemaVersion = 3 as const;
 
 /** On-disk envelope. Each adapter receives an isolated v0.6-compatible state partition. */
-export interface BridgeStateEnvelopeV2 {
+export interface BridgeStateEnvelopeV3 {
   schemaVersion: typeof bridgeStateSchemaVersion;
   adapters: Record<string, BridgeState>;
 }
@@ -269,4 +298,6 @@ export const emptyState = (): BridgeState => ({
   pendingMessages: {},
   processedMessageIds: [],
   diagnostics: {},
+  imageDrafts: {},
+  clarifications: {},
 });

@@ -16,6 +16,51 @@ describe("loadConfig", () => {
     expect(config.weixinCredentialsPath).toBe(
       "/tmp/chat2codex-weixin-home/weixin/credentials.json",
     );
+    expect(config.weixinNaturalRouting).toBe(true);
+    expect(config.weixinIntentBaseUrl).toBe("http://127.0.0.1:23333/api/openai/v1");
+    expect(config.weixinIntentModel).toBe("gpt-5.6-sol");
+    expect(config.weixinIntentTimeoutMs).toBe(8_000);
+    expect(config.weixinIntentMinConfidence).toBe(0.78);
+    expect(config.weixinImageDraftTtlMs).toBe(30 * 60_000);
+    expect(config.weixinImageDraftMaxCount).toBe(4);
+    expect(config.weixinImageDraftMaxFileBytes).toBe(25 * 1024 ** 2);
+    expect(config.weixinImageDraftMaxTotalBytes).toBe(50 * 1024 ** 2);
+  });
+
+  test("parses and validates Weixin natural-routing settings", () => {
+    const config = loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin",
+      CODEX_WORKDIR: "/tmp/chat2codex",
+      WEIXIN_NATURAL_ROUTING: "false",
+      WEIXIN_INTENT_BASE_URL: "http://127.0.0.1:9999/v1/",
+      WEIXIN_INTENT_MODEL: "intent-model",
+      WEIXIN_INTENT_TIMEOUT_MS: "2500",
+      WEIXIN_INTENT_MIN_CONFIDENCE: "0.9",
+      WEIXIN_IMAGE_DRAFT_TTL_MS: "60000",
+      WEIXIN_IMAGE_DRAFT_MAX_COUNT: "3",
+      WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES: "100",
+      WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES: "250",
+    });
+    expect(config).toMatchObject({
+      weixinNaturalRouting: false,
+      weixinIntentBaseUrl: "http://127.0.0.1:9999/v1",
+      weixinIntentModel: "intent-model",
+      weixinIntentTimeoutMs: 2500,
+      weixinIntentMinConfidence: 0.9,
+      weixinImageDraftTtlMs: 60000,
+      weixinImageDraftMaxCount: 3,
+      weixinImageDraftMaxFileBytes: 100,
+      weixinImageDraftMaxTotalBytes: 250,
+    });
+    expect(() => loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp",
+      WEIXIN_INTENT_MIN_CONFIDENCE: "1.1",
+    })).toThrow();
+    expect(() => loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp",
+      WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES: "300",
+      WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES: "200",
+    })).toThrow();
   });
 
   test("keeps Feishu as the default and requires its credentials", () => {

@@ -49,6 +49,12 @@ const timeoutEnv = (defaultValue = 0) =>
     return value;
   }, z.number().int().nonnegative());
 
+const confidenceEnv = (defaultValue: number) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === "") return defaultValue;
+    return typeof value === "string" ? Number(value.trim()) : value;
+  }, z.number().min(0).max(1));
+
 const booleanEnv = (defaultValue: boolean) =>
   z.preprocess((value) => {
     if (value === undefined || value === "") {
@@ -76,6 +82,15 @@ const configSchema = z.object({
   FEISHU_BOT_OPEN_ID: z.string().optional(),
   LARK_DOMAIN: z.enum(["feishu", "lark"]).default("feishu"),
   WEIXIN_CREDENTIALS_PATH: z.string().optional(),
+  WEIXIN_NATURAL_ROUTING: booleanEnv(true),
+  WEIXIN_INTENT_BASE_URL: z.string().url().default("http://127.0.0.1:23333/api/openai/v1"),
+  WEIXIN_INTENT_MODEL: z.string().min(1).default("gpt-5.6-sol"),
+  WEIXIN_INTENT_TIMEOUT_MS: positiveIntegerEnv(8_000, 120_000),
+  WEIXIN_INTENT_MIN_CONFIDENCE: confidenceEnv(0.78),
+  WEIXIN_IMAGE_DRAFT_TTL_MS: positiveIntegerEnv(30 * 60_000, 24 * 60 * 60_000),
+  WEIXIN_IMAGE_DRAFT_MAX_COUNT: positiveIntegerEnv(4, 32),
+  WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES: positiveIntegerEnv(25 * 1024 ** 2, ONE_TEBIBYTE),
+  WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES: positiveIntegerEnv(50 * 1024 ** 2, ONE_TEBIBYTE),
   CODEX_BIN: z.string().min(1).default("codex"),
   CODEX_WORKDIR: z.string().min(1).default(process.cwd()),
   CODEX_SANDBOX: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
@@ -152,6 +167,13 @@ const configSchema = z.object({
       message: "must not exceed ATTACHMENT_MAX_TOTAL_BYTES",
     });
   }
+  if (config.WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES > config.WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES"],
+      message: "must not exceed WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES",
+    });
+  }
   if (config.ATTACHMENT_MAX_TOTAL_BYTES > config.ATTACHMENT_STORE_MAX_BYTES) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -187,6 +209,15 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
       parsed.WEIXIN_CREDENTIALS_PATH?.trim() ||
         path.join(home, "weixin", "credentials.json"),
     ),
+    weixinNaturalRouting: parsed.WEIXIN_NATURAL_ROUTING,
+    weixinIntentBaseUrl: parsed.WEIXIN_INTENT_BASE_URL.replace(/\/+$/u, ""),
+    weixinIntentModel: parsed.WEIXIN_INTENT_MODEL.trim(),
+    weixinIntentTimeoutMs: parsed.WEIXIN_INTENT_TIMEOUT_MS,
+    weixinIntentMinConfidence: parsed.WEIXIN_INTENT_MIN_CONFIDENCE,
+    weixinImageDraftTtlMs: parsed.WEIXIN_IMAGE_DRAFT_TTL_MS,
+    weixinImageDraftMaxCount: parsed.WEIXIN_IMAGE_DRAFT_MAX_COUNT,
+    weixinImageDraftMaxFileBytes: parsed.WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES,
+    weixinImageDraftMaxTotalBytes: parsed.WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES,
     codexBin: parsed.CODEX_BIN,
     codexWorkdir,
     codexSandbox: parsed.CODEX_SANDBOX,
