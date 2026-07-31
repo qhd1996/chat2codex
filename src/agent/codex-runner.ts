@@ -65,6 +65,7 @@ class CodexSessionStartupExitError extends Error {
 export interface CodexRunInput {
   prompt: string;
   cwd: string;
+  localImages?: string[];
   threadId?: string;
   collaborationMode?: CodexCollaborationMode;
   sessionScope?: CodexSessionScope;
@@ -1146,13 +1147,7 @@ export class CodexRunner {
         : undefined;
       const turnResult = await sendRequest("turn/start", {
         threadId,
-        input: [
-          {
-            type: "text",
-            text: input.prompt,
-            text_elements: [],
-          },
-        ],
+        input: buildCodexTurnInput(input),
         cwd: input.cwd,
         approvalPolicy: this.config.codexApprovalPolicy,
         sandboxPolicy: sandboxModeToPolicy(this.config.codexSandbox),
@@ -2150,13 +2145,7 @@ class CodexAppServerSession {
         "turn/start",
         {
           threadId: context.threadId,
-          input: [
-            {
-              type: "text",
-              text: input.prompt,
-              text_elements: [],
-            },
-          ],
+          input: buildCodexTurnInput(input),
           cwd: input.cwd,
           approvalPolicy: this.config.codexApprovalPolicy,
           sandboxPolicy: sandboxModeToPolicy(this.config.codexSandbox),
@@ -2826,6 +2815,9 @@ export function summarizeCodexProgress(event: CodexJsonEvent): CodexProgressUpda
 }
 
 export function buildCodexArgs(config: BridgeConfig, input: CodexRunInput): string[] {
+  if (input.localImages?.length) {
+    throw new Error("Local images require Codex app-server; CLI fallback is unsupported.");
+  }
   const global = ["--ask-for-approval", config.codexApprovalPolicy];
   const common = ["--json"];
   if (config.codexModel) {
@@ -2848,6 +2840,13 @@ export function buildCodexArgs(config: BridgeConfig, input: CodexRunInput): stri
     "--cd",
     input.cwd,
     input.prompt,
+  ];
+}
+
+export function buildCodexTurnInput(input: Pick<CodexRunInput, "prompt" | "localImages">): Array<Record<string, unknown>> {
+  return [
+    { type: "text", text: input.prompt, text_elements: [] },
+    ...(input.localImages ?? []).map((imagePath) => ({ type: "localImage", path: imagePath })),
   ];
 }
 

@@ -5,11 +5,25 @@ import path from "node:path";
 
 import {
   buildCodexArgs,
+  buildCodexTurnInput,
   CodexRunner,
   parseCodexJsonLine,
   summarizeCodexProgress,
   type CodexApprovalDecision,
 } from "../src/agent/codex-runner.js";
+
+test("buildCodexTurnInput emits native localImage items after text", () => {
+  expect(buildCodexTurnInput({ prompt: "compare", cwd: "C:\\work", localImages: ["C:\\img\\a.jpg", "C:\\img\\b.png"] })).toEqual([
+    { type: "text", text: "compare", text_elements: [] },
+    { type: "localImage", path: "C:\\img\\a.jpg" },
+    { type: "localImage", path: "C:\\img\\b.png" },
+  ]);
+});
+
+test("CLI fallback refuses native image inputs", () => {
+  const config = loadConfig({ FEISHU_APP_ID: "x", FEISHU_APP_SECRET: "y", CODEX_WORKDIR: "C:\\work" });
+  expect(() => buildCodexArgs(config, { prompt: "inspect", cwd: "C:\\work", localImages: ["C:\\img\\a.jpg"] })).toThrow(/images require Codex app-server/i);
+});
 import { loadConfig } from "../src/config/env.js";
 import { ConsoleLogger } from "../src/util/logger.js";
 
