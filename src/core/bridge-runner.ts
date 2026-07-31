@@ -488,7 +488,6 @@ export class BridgeRunner {
       this.state.imageDrafts ??= {};
       this.state.clarifications ??= {};
       await this.naturalConversation.imageDrafts.revalidate(this.state.imageDrafts);
-      await this.naturalConversation.imageDrafts.expire(this.state.imageDrafts);
       await this.store.save(this.state);
     }
     await this.recoverDurableState();
@@ -1112,13 +1111,12 @@ export class BridgeRunner {
     }
 
     const turn = parseCodexTurnRequest(text);
-    const staged = this.naturalConversation ? this.takeImageDraft(message) : undefined;
-    let directImages: DownloadedAttachment[] = [];
+    let staged = this.naturalConversation ? this.takeImageDraft(message) : undefined;
     const nativeImageMessage = this.naturalConversation && hasAttachments && message.attachments!.every((attachment) => attachment.kind === "image");
     if (!staged && nativeImageMessage) {
-      const downloaded = await this.downloadAttachments(message, message.attachments!);
-      if (!downloaded) return;
-      directImages = downloaded;
+      const count = await this.stageMessageImages(message);
+      if (count === null) return;
+      staged = this.takeImageDraft(message);
     }
     const prompt = staged || nativeImageMessage ? turn.prompt : await this.buildCodexPrompt(message, turn.prompt);
     if (staged) this.logger.info("Weixin image draft submitted", { chatId: message.chatId, imageCount: staged.images.length });
@@ -1133,7 +1131,7 @@ export class BridgeRunner {
       message.messageId,
       message.sender,
       turn.collaborationMode,
-      staged?.images.map((image) => image.path) ?? directImages.map((image) => image.path),
+      staged?.images.map((image) => image.path),
     );
   }
 
@@ -1187,20 +1185,31 @@ export class BridgeRunner {
     const access = decideAccess(this.config.access, toAccessContext(message));
     if (!access.allowed || !this.naturalConversation || !this.sender.downloadAttachment) { await this.rejectUnauthorized(message, access); return; }
     await this.expireImageDraftsForMessage(message);
+    const count = await this.stageMessageImages(message);
+    if (count === null) return;
     const senderKey = stableSenderKey(message.sender);
-    const images = message.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
-    for (const attachment of images) {
-      const downloaded = await this.sender.downloadAttachment(message, attachment);
-      try {
-        await this.mutateState((state) => this.naturalConversation!.imageDrafts.stage(state.imageDrafts ??= {}, { chatId: message.chatId, senderKey, sourceMessageId: `${message.messageId}:${attachment.key}`, path: downloaded.path, mediaType: downloaded.mediaType ?? attachment.mediaType ?? "image/jpeg" }));
-      } catch (error) {
-        await this.sender.sendText(message.chatId, `图片暂存失败：${truncateInline(formatError(error), 160)}`);
-        return;
-      }
-    }
     const draft = this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, senderKey)];
     this.logger.info("Weixin image draft staged", { chatId: message.chatId, imageCount: draft?.images.length ?? 0 });
     await this.sender.sendText(message.chatId, `已收到 ${draft?.images.length ?? 0} 张图片。可以继续发图，请发送文字说明后提交。`);
+  }
+
+  private async stageMessageImages(message: IncomingTextMessage): Promise<number | null> {
+    if (!this.naturalConversation || !this.sender.downloadAttachment) return null;
+    const senderKey = stableSenderKey(message.sender);
+    const images = message.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
+    for (const attachment of images) {
+      const sourceMessageId = `${message.messageId}:${attachment.key}`;
+      const key = this.naturalConversation.imageDrafts.key(message.chatId, senderKey);
+      if (this.requireState().imageDrafts?.[key]?.images.some((image) => image.sourceMessageId === sourceMessageId)) continue;
+      const downloaded = await this.sender.downloadAttachment(message, attachment);
+      try {
+        await this.mutateState((state) => this.naturalConversation!.imageDrafts.stage(state.imageDrafts ??= {}, { chatId: message.chatId, senderKey, sourceMessageId, path: downloaded.path, mediaType: downloaded.mediaType ?? attachment.mediaType ?? "image/jpeg" }));
+      } catch (error) {
+        await this.sender.sendText(message.chatId, `图片暂存失败：${truncateInline(formatError(error), 160)}`);
+        return null;
+      }
+    }
+    return this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, senderKey)]?.images.length ?? 0;
   }
 
   private takeImageDraft(message: IncomingTextMessage) {
