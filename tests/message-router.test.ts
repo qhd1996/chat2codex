@@ -4577,24 +4577,57 @@ describe("MessageRouter access control", () => {
       await router.accept({ messageId: "ambiguous", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "那个怎么样" });
       await waitFor(() => sender.messages.some((message) => message.text.includes("继续微软任务还是新建")));
       expect(codex.runs).toHaveLength(1);
-    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "clarify", confidence: 1, question: "这是继续微软任务还是新建任务？" }])));
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "clarify", confidence: 1, question: "这是继续微软任务还是新建任务？" }])));
+  });
+
+  test("natural stop with no active run does not start Codex", async () => {
+    const codex = new FakeCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, sender }) => {
+      await router.accept({ messageId: "idle-stop", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "先停一下" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("没有正在运行")));
+      expect(codex.runs).toHaveLength(0);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "stop", confidence: 1 }])));
+  });
+
+  test("natural new task resets the selected thread before executing", async () => {
+    const codex = new SessionAwareCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, sender }) => {
+      await router.accept({ messageId: "old-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "查微软股价" });
+      await waitFor(() => codex.runs.length === 1 && sender.messages.some((message) => message.text === "done"));
+      await router.accept({ messageId: "new-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "换个任务查苹果股价" });
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[0]?.threadId).toBeUndefined();
+      expect(codex.runs[1]?.threadId).toBeUndefined();
+      expect(codex.invalidations.some((item) => item.reason === "session_reset")).toBe(true);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "new_task", confidence: 1 }])));
+  });
+
+  test("natural continuation keeps the selected thread", async () => {
+    const codex = new SessionAwareCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, sender }) => {
+      await router.accept({ messageId: "base-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "查微软股价" });
+      await waitFor(() => codex.runs.length === 1 && sender.messages.some((message) => message.text === "done"));
+      await router.accept({ messageId: "continue-task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "继续比较苹果" });
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[1]?.threadId).toBe("thread_session");
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "continue_task", confidence: 1 }])));
   });
 
   test("persists a session clarification and resolves the next answer without reclassifying", async () => {
     const codex = new SessionAwareCodex();
-    const classifier = new QueueIntentClassifier([{ intent: "clarify", confidence: 1, question: "继续还是新建？" }]);
+    const classifier = new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "clarify", confidence: 1, question: "继续还是新建？" }]);
     await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, config, sender }) => {
       await router.accept({ messageId: "base", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "原任务" });
       await waitFor(() => codex.runs.length === 1);
       await router.accept({ messageId: "question", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "那个呢" });
-      await waitFor(() => classifier.calls === 1 && sender.messages.some((message) => message.text.includes("继续还是新建")));
+      await waitFor(() => classifier.calls === 2 && sender.messages.some((message) => message.text.includes("继续还是新建")));
       const rawEnvelope = JSON.parse(await Bun.file(config.bridgeStatePath).text()) as { adapters: Record<string, { clarifications?: Record<string, unknown> }> };
       const rawClarifications = Object.values(rawEnvelope.adapters).flatMap((state) => Object.keys(state.clarifications ?? {}));
       expect(rawClarifications).toHaveLength(1);
       expect(Object.keys((await new JsonStateStore(config.bridgeStatePath).load()).clarifications ?? {})).toHaveLength(1);
       await router.accept({ messageId: "answer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "新建任务" });
       await waitFor(() => codex.runs.length === 2);
-      expect(classifier.calls).toBe(1);
+      expect(classifier.calls).toBe(2);
       expect(codex.runs[1]?.threadId).toBeUndefined();
       expect(Object.keys((await new JsonStateStore(config.bridgeStatePath).load()).clarifications ?? {})).toHaveLength(0);
     }, (config) => naturalDeps(config, classifier));
@@ -5154,7 +5187,7 @@ describe("MessageRouter access control", () => {
       await waitFor(() => codex.runs.length === 1);
       await router.accept({ messageId: "natural-stop", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "先停一下" });
       await running; expect(codex.abortCount).toBe(1);
-    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "stop", confidence: 1 }])));
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "stop", confidence: 1 }])));
   });
 
   test("natural continuation steers an active Weixin run immediately", async () => {
@@ -5165,7 +5198,7 @@ describe("MessageRouter access control", () => {
       await router.accept({ messageId: "natural-steer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "补充一下，重点看测试" });
       await waitFor(() => codex.steers.length === 1); expect(codex.steers).toEqual(["补充一下，重点看测试"]);
       await router.enqueue({ messageId: "stop-steer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/stop" }); await running;
-    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "steer_active", confidence: 1 }])));
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "steer_active", confidence: 1 }])));
   });
 
   test("resolves one pending approval from natural language exactly once", async () => {
@@ -5182,7 +5215,7 @@ describe("MessageRouter access control", () => {
       const count = sender.messages.filter((message) => message.text.includes("已同意本次执行")).length;
       await router.accept({ messageId: "approve", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以执行" });
       expect(sender.messages.filter((message) => message.text.includes("已同意本次执行")).length).toBe(count);
-    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "approve", confidence: 1 }])));
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "approve", confidence: 1 }])));
   });
 
   test("approval card action rejects a mismatched card message id", async () => {

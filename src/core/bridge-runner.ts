@@ -525,7 +525,7 @@ export class BridgeRunner {
       await this.handleImmediateNaturalClarification(message);
       return;
     }
-    if (this.naturalConversation && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId))) {
+    if (this.naturalConversation && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
       await this.handleImmediateNaturalActive(message);
       return;
     }
@@ -1152,6 +1152,11 @@ export class BridgeRunner {
     return Boolean(this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, stableSenderKey(message.sender))]);
   }
 
+  private activeRunIsInteractive(chatId: string): boolean {
+    const run = this.activeRuns.get(chatId);
+    return Boolean(run && !run.terminal);
+  }
+
   private async answerNaturalApproval(message: IncomingTextMessage): Promise<void> {
     const candidates = [...this.activeApprovals.values()].filter((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
     if (candidates.length !== 1 || !this.naturalConversation) {
@@ -1224,7 +1229,6 @@ export class BridgeRunner {
     }
     const draft = this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, senderKey)];
     const session = this.requireState().chats[message.chatId];
-    if (!session?.threadId && !draft && !this.activeRuns.has(message.chatId) && !this.queuedRuns.has(message.chatId)) return false;
     const decision = await resolveNaturalIntent({ text, context: { hasThread: Boolean(session?.threadId), activeRun: this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId), pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: Boolean(draft) } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
     if (decision.intent === "stop") { await this.stopCodex(message.chatId); return true; }
     if (decision.intent === "cancel_draft") { await this.mutateState((state) => this.naturalConversation!.imageDrafts.cancel(state.imageDrafts ??= {}, message.chatId, senderKey)); await this.sender.sendText(message.chatId, "已取消暂存图片。"); return true; }
@@ -1259,7 +1263,13 @@ export class BridgeRunner {
   private async handleImmediateNaturalClarification(message: IncomingTextMessage): Promise<void> {
     await this.handleImmediateCommand(message, async () => {
       const key = `${message.chatId}:${stableSenderKey(message.sender)}`; const pending = this.requireState().clarifications?.[key];
-      if (!pending) return; const answer = parseClarificationAnswer(routedText(message));
+      if (!pending) return;
+      if (Date.parse(pending.expiresAt) <= Date.now()) {
+        await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
+        await this.sender.sendText(message.chatId, "刚才的确认已过期，请重新描述任务。");
+        return;
+      }
+      const answer = parseClarificationAnswer(routedText(message));
       if (!answer) { await this.sender.sendText(message.chatId, pending.question); return; }
       await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
       if (answer === "stop") { await this.stopCodex(message.chatId); return; }
@@ -1733,6 +1743,7 @@ export class BridgeRunner {
         summary: result.summary,
         finalText: result.finalText,
       });
+      runState.terminal = true;
       this.logger.info("Codex run completed", {
         chatId,
         cwd: session.cwd,
