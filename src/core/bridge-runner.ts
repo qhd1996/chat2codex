@@ -521,7 +521,7 @@ export class BridgeRunner {
       await this.mutateState((state) => { pruneExpiredClarifications(state.clarifications ??= {}); });
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingApprovalForMessage(message)) {
-      this.scheduleAcceptedMessage(message);
+      await this.handleImmediateCommand(message, () => this.answerNaturalApproval(message));
       return;
     }
     if (this.naturalConversation && !message.attachments?.length && this.pendingClarificationForMessage(message)) {

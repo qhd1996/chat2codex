@@ -4559,6 +4559,18 @@ describe("MessageRouter access control", () => {
     expect(codex.runs[0]?.localImages).toHaveLength(2);
   });
 
+  test("status preserves an image draft and natural cancellation removes it", async () => {
+    const sender = new ImageDraftSender(); const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router, config }) => {
+      await router.accept({ messageId: "draft-one", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      await router.accept({ messageId: "draft-status", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/status" });
+      const store = new JsonStateStore(config.bridgeStatePath); expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(1); expect(codex.runs).toHaveLength(0);
+      await router.accept({ messageId: "draft-cancel", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "取消这些图片" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("已取消暂存图片")));
+      expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(0); expect(codex.runs).toHaveLength(0);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "cancel_draft", confidence: 1 }])));
+  });
+
   test("submits a native text-plus-image message immediately", async () => {
     const sender = new ImageDraftSender(); const codex = new FakeCodex();
     await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
@@ -5216,6 +5228,17 @@ describe("MessageRouter access control", () => {
       await router.accept({ messageId: "approve", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以执行" });
       expect(sender.messages.filter((message) => message.text.includes("已同意本次执行")).length).toBe(count);
     }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "approve", confidence: 1 }])));
+  });
+
+  test("rejects one pending approval from natural language", async () => {
+    const request: CodexApprovalRequest = { id: "approval_deny", kind: "command", command: "bun test", cwd: "C:\\work", decisions: ["accept", "decline", "cancel"] };
+    const codex = new ApprovalCodex(request); const sender = new CollectingSender();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "task-deny", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "运行测试" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/approve")));
+      await router.accept({ messageId: "deny", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "不要执行" });
+      await running; expect(codex.decision).toBe("decline"); expect(sender.messages.some((message) => message.text.includes("已拒绝本次执行"))).toBe(true);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }, { intent: "deny", confidence: 1 }])));
   });
 
   test("approval card action rejects a mismatched card message id", async () => {
