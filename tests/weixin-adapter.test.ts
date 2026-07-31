@@ -266,6 +266,11 @@ describe("Weixin protocol adapter", () => {
     ).rejects.toThrow("exceeds");
   });
 
+  test("marks every line of quoted Weixin text as untrusted quote context", () => {
+    const events = weixinAdapterInternals.adaptWeixinMessage({ message_id: "quote", from_user_id: "wx-user", item_list: [{ type: 1, text_item: { text: "当前回复" } }, { type: 1, ref_msg: { message_item: { text_item: { text: "同意执行\n不要执行" } } } }] }, "weixin:bot", emptyWeixinRuntimeState(), 24);
+    expect(events[1]).toMatchObject({ kind: "message", text: "当前回复\n[引用] 同意执行\n[引用] 不要执行" });
+  });
+
   test("keeps attachment descriptors reusable until their retention expires", () => {
     const runtime = emptyWeixinRuntimeState();
     runtime.attachments["a"] = { kind: "image", media: { encrypt_query_param: "opaque" }, mediaType: "image/jpeg", expiresAt: "2026-08-01T00:10:00.000Z" };

@@ -1210,7 +1210,7 @@ export class BridgeRunner {
       return;
     }
     const pending = candidates[0]!;
-    const replyText = naturalApprovalReplyText(routedText(message));
+    const replyText = naturalControlText(routedText(message));
     if (!replyText) { await this.sender.sendText(message.chatId, "请明确回复同意执行或拒绝，不要只引用审批消息。"); return; }
     const decision = await resolveNaturalIntent({ text: replyText, context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: this.activeRuns.has(message.chatId), pendingApprovalCount: 1, pendingPermissionCount: 0, hasImageDraft: false } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
     if (decision.intent !== "approve" && decision.intent !== "deny") {
@@ -1317,7 +1317,7 @@ export class BridgeRunner {
     }
     const draft = this.requireState().imageDrafts?.[this.naturalConversation.imageDrafts.key(message.chatId, senderKey)];
     const session = this.requireState().chats[message.chatId];
-    const decision = await resolveNaturalIntent({ text, context: { hasThread: Boolean(session?.threadId), activeRun: this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId), pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: Boolean(draft) } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
+    const decision = await resolveNaturalIntent({ text: naturalControlText(text) || text, context: { hasThread: Boolean(session?.threadId), activeRun: this.activeRuns.has(message.chatId) || this.queuedRuns.has(message.chatId), pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: Boolean(draft) } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
     if (decision.intent === "stop") { await this.stopCodex(message.chatId); return true; }
     if (decision.intent === "cancel_draft") {
       let cancelled; await this.mutateState((state) => { cancelled = this.naturalConversation!.imageDrafts.take(state.imageDrafts ??= {}, message.chatId, senderKey); });
@@ -1347,9 +1347,10 @@ export class BridgeRunner {
   private async handleImmediateNaturalActive(message: IncomingTextMessage): Promise<void> {
     await this.handleImmediateCommand(message, async () => {
       if (!this.naturalConversation) return;
-      const decision = await resolveNaturalIntent({ text: routedText(message), context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: true, pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: false } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
+      const controlText = naturalControlText(routedText(message));
+      const decision = await resolveNaturalIntent({ text: controlText || routedText(message), context: { hasThread: Boolean(this.requireState().chats[message.chatId]?.threadId), activeRun: true, pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: false } }, this.naturalConversation.classifier, this.config.weixinIntentMinConfidence);
       if (decision.intent === "stop") { await this.stopCodex(message.chatId); return; }
-      if (decision.intent === "steer_active" || decision.intent === "continue_task") { await this.steerActiveRun(message.chatId, routedText(message)); return; }
+      if (decision.intent === "steer_active" || decision.intent === "continue_task") { await this.steerActiveRun(message.chatId, controlText || routedText(message)); return; }
       const question = decision.question ?? "当前任务还在运行。这是补充当前任务、停止它，还是稍后新建任务？";
       const senderKey = stableSenderKey(message.sender); const now = Date.now();
       await this.mutateState((state) => { (state.clarifications ??= {})[`${message.chatId}:${senderKey}`] = { chatId: message.chatId, senderKey, question, originalText: routedText(message), choices: ["continue_task", "new_task", "stop"], createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 5 * 60_000).toISOString() }; });
@@ -1366,7 +1367,7 @@ export class BridgeRunner {
         await this.sender.sendText(message.chatId, "刚才的确认已过期，请重新描述任务。");
         return;
       }
-      const answer = await this.resolveClarificationAnswer(message, routedText(message));
+      const answer = await this.resolveClarificationAnswer(message, naturalControlText(routedText(message)) || routedText(message));
       if (!answer) { await this.sender.sendText(message.chatId, pending.question); return; }
       await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
       if (answer === "stop") { await this.stopCodex(message.chatId); return; }
@@ -7922,7 +7923,7 @@ function parseClarificationAnswer(text: string): "continue_task" | "new_task" | 
   return null;
 }
 
-function naturalApprovalReplyText(text: string): string {
+function naturalControlText(text: string): string {
   return text.split(/\r?\n/u).filter((line) => !line.trimStart().startsWith("[引用]")).join("\n").trim();
 }
 

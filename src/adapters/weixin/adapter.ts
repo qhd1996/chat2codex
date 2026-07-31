@@ -392,7 +392,7 @@ function extractText(item: WeixinMessageItem): string | undefined {
   const quoted = item.ref_msg?.message_item?.text_item?.text?.trim();
   const title = item.ref_msg?.title?.trim();
   if (quoted || title) {
-    return `[引用] ${quoted ?? title}`;
+    return (quoted ?? title)!.split(/\r?\n/u).map((line) => `[引用] ${line}`).join("\n");
   }
   return undefined;
 }
