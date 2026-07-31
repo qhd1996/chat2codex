@@ -4571,6 +4571,29 @@ describe("MessageRouter access control", () => {
     }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "cancel_draft", confidence: 1 }])));
   });
 
+  test("recovers a staged image after router restart and submits it exactly once", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-draft-restart-"));
+    const config = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: tempDir, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
+    const sender = new ImageDraftSender(); sender.setAttachmentRoot(config.attachmentDownloadDir);
+    const codex = new FakeCodex(); const store = new JsonStateStore(config.bridgeStatePath);
+    const first = new MessageRouter(config, store, sender, silentLogger, codex, {}, naturalDeps(config, new QueueIntentClassifier([])));
+    let second: MessageRouter | undefined;
+    try {
+      await first.start();
+      await first.accept({ messageId: "restart-image", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(1);
+      await first.dispose();
+      second = new MessageRouter(config, store, sender, silentLogger, codex, {}, naturalDeps(config, new QueueIntentClassifier([{ intent: "submit_image_draft", confidence: 1 }])));
+      await second.start();
+      await second.accept({ messageId: "restart-text", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "分析这张图" });
+      await waitFor(() => codex.runs.length === 1);
+      expect(codex.runs[0]?.localImages).toHaveLength(1);
+      expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(0);
+      await second.accept({ messageId: "restart-text", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "分析这张图" });
+      expect(codex.runs).toHaveLength(1);
+    } finally { await second?.dispose(); await first.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
   test("submits a native text-plus-image message immediately", async () => {
     const sender = new ImageDraftSender(); const codex = new FakeCodex();
     await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
