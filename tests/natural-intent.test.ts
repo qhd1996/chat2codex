@@ -42,4 +42,9 @@ describe("natural intent", () => {
     expect(result.intent).toBe("clarify");
     expect(result.question).toContain("继续");
   });
+
+  test("keeps stop intent so the router can report that nothing is active", async () => {
+    const classifier: NaturalIntentClassifier = { classify: async () => ({ intent: "stop", confidence: 0.99 }) };
+    expect((await resolveNaturalIntent({ text: "停一下", context: { ...context, activeRun: false } }, classifier, 0.78)).intent).toBe("stop");
+  });
 });

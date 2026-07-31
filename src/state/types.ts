@@ -177,6 +177,7 @@ export interface PendingMessageDelivery {
     unionId?: string;
   };
   text: string;
+  naturalRouting?: "bypass";
   attachments?: Array<{
     kind: "image" | "file";
     key: string;
@@ -210,6 +211,7 @@ export interface DurableCodexJob {
   chatType: "direct" | "group";
   cwd: string;
   prompt: string;
+  localImages?: string[];
   /** Missing on pre-v0.5 state files and therefore treated as default mode. */
   collaborationMode?: "default" | "plan";
   threadId?: string;
@@ -267,6 +269,7 @@ export interface PendingClarification {
   chatId: string;
   senderKey: string;
   question: string;
+  originalText?: string;
   choices: string[];
   createdAt: string;
   expiresAt: string;

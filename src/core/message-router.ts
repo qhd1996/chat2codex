@@ -10,6 +10,7 @@ import {
   type IncomingEventDiagnostic,
   type IncomingTextMessage,
   type MessageRouterRuntimeControl,
+  type NaturalConversationDependencies,
 } from "./bridge-runner.js";
 import type { InteractionPolicy } from "./interaction-policy.js";
 
@@ -30,6 +31,7 @@ export class MessageRouter {
     codex: CodexClient,
     interactionPolicy: InteractionPolicy,
     runtimeControl: MessageRouterRuntimeControl = {},
+    naturalConversation?: NaturalConversationDependencies,
   ) {
     this.runner = new BridgeRunner(
       config,
@@ -39,6 +41,7 @@ export class MessageRouter {
       codex,
       interactionPolicy,
       runtimeControl,
+      naturalConversation,
     );
   }
 

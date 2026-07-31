@@ -278,12 +278,13 @@ describe("JsonStateStore", () => {
     try {
       await writeFile(statePath, JSON.stringify({
         schemaVersion: 2,
-        adapters: { "weixin:bot": emptyState() },
+        adapters: { "weixin:bot": { ...emptyState(), processedMessageIds: ["kept-v2"] } },
       }));
       const store = new JsonStateStore(statePath, { adapterId: "weixin:bot" });
       const state = await store.load();
       expect(state.imageDrafts).toEqual({});
       expect(state.clarifications).toEqual({});
+      expect(state.processedMessageIds).toEqual(["kept-v2"]);
       state.imageDrafts!["chat:user"] = {
         chatId: "chat", senderKey: "user", createdAt: "2026-08-01T00:00:00.000Z",
         updatedAt: "2026-08-01T00:00:00.000Z", expiresAt: "2026-08-01T00:30:00.000Z",

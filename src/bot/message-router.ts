@@ -1,11 +1,13 @@
 import { CodexRunner } from "../agent/codex-runner.js";
 import { feishuInteractionPolicy } from "../adapters/feishu/interaction-policy.js";
+import { textInteractionPolicy } from "../core/interaction-policy.js";
 import type { BridgeConfig } from "../config/env.js";
 import {
   MessageRouter as CoreMessageRouter,
   type ChatSender,
   type CodexClient,
   type MessageRouterRuntimeControl,
+  type NaturalConversationDependencies,
 } from "../core/message-router.js";
 import type { JsonStateStore } from "../state/store.js";
 import type { Logger } from "../util/logger.js";
@@ -21,6 +23,7 @@ export class MessageRouter extends CoreMessageRouter {
     logger: Logger,
     codex?: CodexClient,
     runtimeControl: MessageRouterRuntimeControl = {},
+    naturalConversation?: NaturalConversationDependencies,
   ) {
     super(
       config,
@@ -28,8 +31,9 @@ export class MessageRouter extends CoreMessageRouter {
       sender,
       logger,
       codex ?? new CodexRunner(config, logger),
-      feishuInteractionPolicy,
+      config.chatAdapter === "weixin" ? textInteractionPolicy : feishuInteractionPolicy,
       runtimeControl,
+      naturalConversation,
     );
   }
 }

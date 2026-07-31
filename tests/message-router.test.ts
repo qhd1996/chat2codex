@@ -57,6 +57,9 @@ import {
 } from "../src/bot/message-router.js";
 import { loadConfig } from "../src/config/env.js";
 import { JsonStateStore } from "../src/state/store.js";
+import { ImageDraftService } from "../src/core/image-drafts.js";
+import type { NaturalIntentClassifier, NaturalIntentDecision } from "../src/core/natural-intent.js";
+import type { NaturalConversationDependencies } from "../src/core/bridge-runner.js";
 import type { Logger } from "../src/util/logger.js";
 
 type TestBridgeConfig = ReturnType<typeof loadConfig>;
@@ -459,7 +462,7 @@ class AttachmentCollectingSender extends CollectingSender {
   readonly downloads: Array<{ messageId: string; attachment: IncomingAttachment }> = [];
   readonly downloadedPaths: string[] = [];
   readonly contentsByKey = new Map<string, string>();
-  private attachmentRoot = "/tmp/chat2codex-downloads";
+  protected attachmentRoot = "/tmp/chat2codex-downloads";
 
   setAttachmentRoot(attachmentRoot: string): void {
     this.attachmentRoot = attachmentRoot;
@@ -484,6 +487,23 @@ class AttachmentCollectingSender extends CollectingSender {
       path: filePath,
     };
   }
+}
+
+class ImageDraftSender extends AttachmentCollectingSender {
+  override async downloadAttachment(message: IncomingTextMessage, attachment: IncomingAttachment): Promise<DownloadedAttachment> {
+    this.downloads.push({ messageId: message.messageId, attachment });
+    const filePath = path.join(this.attachmentRoot, message.messageId, `${attachment.key}.jpg`);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, Buffer.from([0xff, 0xd8, 0xff, 0xdb, 1, 2, 3]));
+    this.downloadedPaths.push(filePath);
+    return { kind: "image", path: filePath, mediaType: "image/jpeg" };
+  }
+}
+
+class QueueIntentClassifier implements NaturalIntentClassifier {
+  calls = 0;
+  constructor(private readonly decisions: NaturalIntentDecision[]) {}
+  async classify(): Promise<unknown> { this.calls += 1; return this.decisions.shift() ?? { intent: "ordinary", confidence: 1 }; }
 }
 
 class FakeCodex implements CodexClient {
@@ -4521,6 +4541,65 @@ describe("MessageRouter access control", () => {
     });
   });
 
+  test("stages multiple image-only messages and submits them with the next text as one native-image turn", async () => {
+    const sender = new ImageDraftSender();
+    const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      for (const [messageId, key] of [["img1", "one"], ["img2", "two"]]) {
+        await router.accept({ messageId, chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "", attachments: [{ kind: "image", key, mediaType: "image/jpeg" }] });
+      }
+      await router.accept({ messageId: "text1", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "比较这两张图" });
+      await waitFor(() => codex.runs.length === 1);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
+    const messages = sender.messages.map((item) => item.text);
+    expect(messages.some((text) => text.includes("已收到 1 张"))).toBe(true);
+    expect(messages.some((text) => text.includes("已收到 2 张"))).toBe(true);
+    expect(codex.runs).toHaveLength(1);
+    expect(codex.runs[0]?.prompt).toBe("比较这两张图");
+    expect(codex.runs[0]?.localImages).toHaveLength(2);
+  });
+
+  test("submits a native text-plus-image message immediately", async () => {
+    const sender = new ImageDraftSender(); const codex = new FakeCodex();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      await router.accept({ messageId: "rich", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "看看这张图", attachments: [{ kind: "image", key: "one", mediaType: "image/jpeg" }] });
+      await waitFor(() => codex.runs.length === 1);
+      expect(codex.runs[0]?.prompt).toBe("看看这张图"); expect(codex.runs[0]?.localImages).toHaveLength(1);
+      expect(sender.messages.some((message) => message.text.includes("请发送文字"))).toBe(false);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "ordinary", confidence: 1 }])));
+  });
+
+  test("asks for clarification instead of guessing a session action", async () => {
+    const codex = new SessionAwareCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, sender }) => {
+      await router.accept({ messageId: "first", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "查微软股价" });
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept({ messageId: "ambiguous", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "那个怎么样" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("继续微软任务还是新建")));
+      expect(codex.runs).toHaveLength(1);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "clarify", confidence: 1, question: "这是继续微软任务还是新建任务？" }])));
+  });
+
+  test("persists a session clarification and resolves the next answer without reclassifying", async () => {
+    const codex = new SessionAwareCodex();
+    const classifier = new QueueIntentClassifier([{ intent: "clarify", confidence: 1, question: "继续还是新建？" }]);
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router, config, sender }) => {
+      await router.accept({ messageId: "base", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "原任务" });
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept({ messageId: "question", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "那个呢" });
+      await waitFor(() => classifier.calls === 1 && sender.messages.some((message) => message.text.includes("继续还是新建")));
+      const rawEnvelope = JSON.parse(await Bun.file(config.bridgeStatePath).text()) as { adapters: Record<string, { clarifications?: Record<string, unknown> }> };
+      const rawClarifications = Object.values(rawEnvelope.adapters).flatMap((state) => Object.keys(state.clarifications ?? {}));
+      expect(rawClarifications).toHaveLength(1);
+      expect(Object.keys((await new JsonStateStore(config.bridgeStatePath).load()).clarifications ?? {})).toHaveLength(1);
+      await router.accept({ messageId: "answer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "新建任务" });
+      await waitFor(() => codex.runs.length === 2);
+      expect(classifier.calls).toBe(1);
+      expect(codex.runs[1]?.threadId).toBeUndefined();
+      expect(Object.keys((await new JsonStateStore(config.bridgeStatePath).load()).clarifications ?? {})).toHaveLength(0);
+    }, (config) => naturalDeps(config, classifier));
+  });
+
   test("rejects attachment counts before starting any download", async () => {
     const sender = new AttachmentCollectingSender();
     await withRouterAndSender(
@@ -5066,6 +5145,44 @@ describe("MessageRouter access control", () => {
       });
       expect(sender.messages.at(-1)?.text).toContain("回复码无效");
     });
+  });
+
+  test("natural stop bypasses the queue for an active Weixin run", async () => {
+    const codex = new BlockingCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router }) => {
+      const running = router.enqueue({ messageId: "run", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "长任务" });
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept({ messageId: "natural-stop", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "先停一下" });
+      await running; expect(codex.abortCount).toBe(1);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "stop", confidence: 1 }])));
+  });
+
+  test("natural continuation steers an active Weixin run immediately", async () => {
+    const codex = new SteerableCodex();
+    await withRouterAndCodex({ CHAT2CODEX_ADAPTER: "weixin" }, codex, async ({ router }) => {
+      const running = router.enqueue({ messageId: "run-steer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "长任务" });
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept({ messageId: "natural-steer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "补充一下，重点看测试" });
+      await waitFor(() => codex.steers.length === 1); expect(codex.steers).toEqual(["补充一下，重点看测试"]);
+      await router.enqueue({ messageId: "stop-steer", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/stop" }); await running;
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "steer_active", confidence: 1 }])));
+  });
+
+  test("resolves one pending approval from natural language exactly once", async () => {
+    const request: CodexApprovalRequest = { id: "approval_natural", kind: "command", command: "bun test", cwd: "C:\\work", decisions: ["accept", "decline", "cancel"] };
+    const codex = new ApprovalCodex(request);
+    const sender = new CollectingSender();
+    await withRouterAndSender({ CHAT2CODEX_ADAPTER: "weixin" }, codex, sender, async ({ router }) => {
+      const running = router.accept({ messageId: "task", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "运行测试" });
+      await waitFor(() => sender.messages.some((message) => message.text.includes("/approve")));
+      await router.accept({ messageId: "wrong", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_other" }, text: "可以执行" });
+      expect(codex.decision).toBeUndefined();
+      await router.accept({ messageId: "approve", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以执行" });
+      await waitFor(() => codex.decision === "accept"); await running; expect(codex.decision).toBe("accept");
+      const count = sender.messages.filter((message) => message.text.includes("已同意本次执行")).length;
+      await router.accept({ messageId: "approve", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "可以执行" });
+      expect(sender.messages.filter((message) => message.text.includes("已同意本次执行")).length).toBe(count);
+    }, (config) => naturalDeps(config, new QueueIntentClassifier([{ intent: "approve", confidence: 1 }])));
   });
 
   test("approval card action rejects a mismatched card message id", async () => {
@@ -6910,8 +7027,9 @@ async function withRouterAndCodex<TCodex extends CodexClient>(
     codex: TCodex;
     config: TestBridgeConfig;
   }) => Promise<void>,
+  naturalFactory?: (config: TestBridgeConfig) => NaturalConversationDependencies,
 ): Promise<void> {
-  await withRouterAndSender(env, codex, new CollectingSender(), testBody);
+  await withRouterAndSender(env, codex, new CollectingSender(), testBody, naturalFactory);
 }
 
 async function withRouterAndSender<TCodex extends CodexClient, TSender extends ChatSender>(
@@ -6924,6 +7042,7 @@ async function withRouterAndSender<TCodex extends CodexClient, TSender extends C
     codex: TCodex;
     config: TestBridgeConfig;
   }) => Promise<void>,
+  naturalFactory?: (config: TestBridgeConfig) => NaturalConversationDependencies,
 ): Promise<void> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-test-"));
   let router: MessageRouter | undefined;
@@ -6946,6 +7065,8 @@ async function withRouterAndSender<TCodex extends CodexClient, TSender extends C
       sender,
       silentLogger,
       codex,
+      {},
+      naturalFactory?.(config),
     );
     await router.start();
     await testBody({ router, sender, codex, config });
@@ -6953,6 +7074,17 @@ async function withRouterAndSender<TCodex extends CodexClient, TSender extends C
     await router?.dispose();
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function naturalDeps(config: TestBridgeConfig, classifier: NaturalIntentClassifier): NaturalConversationDependencies {
+  return {
+    classifier,
+    imageDrafts: new ImageDraftService({
+      root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs,
+      maxCount: config.weixinImageDraftMaxCount, maxFileBytes: config.weixinImageDraftMaxFileBytes,
+      maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+    }),
+  };
 }
 
 function formatDecisionForTest(decision: CodexApprovalDecision | undefined): string {

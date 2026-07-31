@@ -59,7 +59,6 @@ export async function resolveNaturalIntent(
 function decisionAllowed(intent: NaturalIntentDecision["intent"], context: NaturalIntentContext): boolean {
   if ((intent === "approve" || intent === "deny") && context.pendingApprovalCount === 0 && context.pendingPermissionCount === 0) return false;
   if (intent === "steer_active" && !context.activeRun) return false;
-  if (intent === "stop" && !context.activeRun) return false;
   if ((intent === "cancel_draft" || intent === "submit_image_draft") && !context.hasImageDraft) return false;
   return true;
 }

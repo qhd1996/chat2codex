@@ -51,7 +51,7 @@ export class JsonStateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const persisted = JSON.parse(raw) as unknown;
       assertSupportedSchema(persisted);
-      const state = isBridgeStateEnvelope(persisted)
+      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV2(persisted)
         ? coerceBridgeState(persisted.adapters[this.adapterId])
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
@@ -252,7 +252,7 @@ function coerceClarifications(value: unknown): BridgeState["clarifications"] {
 }
 
 function isPendingClarification(value: unknown): value is PendingClarification {
-  return Boolean(isRecord(value) && typeof value.chatId === "string" && typeof value.senderKey === "string" && typeof value.question === "string" && Array.isArray(value.choices) && value.choices.every((choice) => typeof choice === "string") && typeof value.createdAt === "string" && typeof value.expiresAt === "string");
+  return Boolean(isRecord(value) && typeof value.chatId === "string" && typeof value.senderKey === "string" && typeof value.question === "string" && (value.originalText === undefined || typeof value.originalText === "string") && Array.isArray(value.choices) && value.choices.every((choice) => typeof choice === "string") && typeof value.createdAt === "string" && typeof value.expiresAt === "string");
 }
 
 function normalizeChatSessionEpochs(state: BridgeState): void {

@@ -18,15 +18,22 @@ export class ImageDraftService {
   key(chatId: string, senderKey: string): string { return `${chatId}:${senderKey}`; }
 
   async stage(drafts: Record<string, ImageDraft>, input: StageImageInput): Promise<ImageDraft> {
-    const file = await this.validateFile(input.path, input.mediaType);
-    const key = this.key(input.chatId, input.senderKey);
-    const current = drafts[key];
-    if ((current?.images.length ?? 0) >= this.options.maxCount) throw new Error(`Image draft limit is ${this.options.maxCount}.`);
-    if ((current?.totalBytes ?? 0) + file.bytes > this.options.maxTotalBytes) throw new Error("Image draft exceeds the total-byte limit.");
-    const now = new Date(this.now()).toISOString();
-    const draft: ImageDraft = current ?? { chatId: input.chatId, senderKey: input.senderKey, createdAt: now, updatedAt: now, expiresAt: now, images: [], totalBytes: 0 };
-    draft.images.push({ sourceMessageId: input.sourceMessageId, path: file.path, sha256: file.sha256, mediaType: input.mediaType, bytes: file.bytes });
-    draft.totalBytes += file.bytes; draft.updatedAt = now; draft.expiresAt = new Date(this.now() + this.options.ttlMs).toISOString(); drafts[key] = draft; return draft;
+    try {
+      const file = await this.validateFile(input.path, input.mediaType);
+      const key = this.key(input.chatId, input.senderKey);
+      const current = drafts[key];
+      const existing = current?.images.find((image) => image.sourceMessageId === input.sourceMessageId);
+      if (existing) { await this.safeDeleteCandidate(file.path); return current!; }
+      if ((current?.images.length ?? 0) >= this.options.maxCount) throw new Error(`Image draft limit is ${this.options.maxCount}.`);
+      if ((current?.totalBytes ?? 0) + file.bytes > this.options.maxTotalBytes) throw new Error("Image draft exceeds the total-byte limit.");
+      const now = new Date(this.now()).toISOString();
+      const draft: ImageDraft = current ?? { chatId: input.chatId, senderKey: input.senderKey, createdAt: now, updatedAt: now, expiresAt: now, images: [], totalBytes: 0 };
+      draft.images.push({ sourceMessageId: input.sourceMessageId, path: file.path, sha256: file.sha256, mediaType: input.mediaType, bytes: file.bytes });
+      draft.totalBytes += file.bytes; draft.updatedAt = now; draft.expiresAt = new Date(this.now() + this.options.ttlMs).toISOString(); drafts[key] = draft; return draft;
+    } catch (error) {
+      await this.safeDeleteCandidate(input.path);
+      throw error;
+    }
   }
 
   take(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): ImageDraft | undefined {
@@ -66,6 +73,10 @@ export class ImageDraftService {
   private async deleteDraftFiles(draft: ImageDraft): Promise<void> {
     const root = await fs.realpath(this.options.root);
     for (const image of draft.images) { try { const real = await fs.realpath(image.path); assertInside(root, real); await fs.rm(real, { force: true }); } catch { /* invalid/missing files are not followed */ } }
+  }
+
+  private async safeDeleteCandidate(filePath: string): Promise<void> {
+    try { const root = await fs.realpath(this.options.root); const real = await fs.realpath(filePath); assertInside(root, real); await fs.rm(real, { force: true }); } catch { /* never delete unvalidated paths */ }
   }
 }
 

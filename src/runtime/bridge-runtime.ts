@@ -21,6 +21,8 @@ import type { ChatView } from "../core/view-models.js";
 import { JsonStateStore } from "../state/store.js";
 import type { Logger } from "../util/logger.js";
 import { AdapterSupervisor } from "./adapter-supervisor.js";
+import { OpenAiIntentClassifier } from "./openai-intent-classifier.js";
+import { ImageDraftService } from "../core/image-drafts.js";
 
 export interface PlatformAdapterBundle {
   adapter: ChatAdapter;
@@ -45,6 +47,12 @@ export async function runBridgeRuntime(
     markSupervisorReady = resolve;
   });
   const sender = createChatSender(config, supervisor, adapter, supervisorReady, logger);
+  const naturalConversation = config.chatAdapter === "weixin" && config.weixinNaturalRouting
+    ? {
+        classifier: new OpenAiIntentClassifier({ baseUrl: config.weixinIntentBaseUrl, model: config.weixinIntentModel, timeoutMs: config.weixinIntentTimeoutMs }),
+        imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: config.weixinImageDraftMaxCount, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }),
+      }
+    : undefined;
   const router = new MessageRouter(
     config,
     new JsonStateStore(config.bridgeStatePath, {
@@ -57,6 +65,7 @@ export async function runBridgeRuntime(
     new CodexRunner(config, logger),
     interactionPolicy,
     { requestRestart },
+    naturalConversation,
   );
 
   try {
@@ -208,6 +217,7 @@ function createChatSender(
         kind: attachment.kind,
         name: attachment.name ?? stream.name ?? fileName,
         path: filePath,
+        mediaType: stream.mediaType,
       };
     };
   }
@@ -270,6 +280,7 @@ async function routeInboundEvent(
       kind: attachment.kind,
       key: attachment.attachmentId,
       name: attachment.name,
+      mediaType: attachment.mediaType,
     })),
   });
 }
