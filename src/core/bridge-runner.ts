@@ -64,6 +64,13 @@ import type { NaturalIntentClassifier } from "./natural-intent.js";
 import { pruneExpiredClarifications, resolveNaturalIntent } from "./natural-intent.js";
 import { chooseNaturalApprovalDecision } from "./natural-interactions.js";
 import { ImageDraftService } from "./image-drafts.js";
+import { ExecutionWorkspaceService } from "./execution-workspaces.js";
+import { resolveNaturalTaskDecision, type NaturalTaskClassifier } from "./natural-task-router.js";
+import { prefixTaskMessage } from "./task-labels.js";
+import { TaskRegistry } from "./task-registry.js";
+import { TaskScheduler } from "./task-scheduler.js";
+import { TaskTargetResolver } from "./task-target-resolver.js";
+import { WorkspaceRouter } from "./workspace-router.js";
 import type {
   ApprovalCardInput,
   HostHealthCardInput,
@@ -90,6 +97,8 @@ import {
   type LastRunReviewSummary,
   type LastRunStatus,
   type LastRunSummary,
+  type IsolationMode,
+  type RegisteredTask,
   type PendingMessageDelivery,
   type PendingMessageRoute,
   type PendingForkAttempt,
@@ -234,6 +243,20 @@ export interface MessageRouterRuntimeControl {
 export interface NaturalConversationDependencies {
   classifier: NaturalIntentClassifier;
   imageDrafts: ImageDraftService;
+  taskRegistry?: TaskRegistry;
+  taskTargetResolver?: TaskTargetResolver;
+  workspaceRouter?: WorkspaceRouter;
+  executionWorkspaces?: ExecutionWorkspaceService;
+  taskScheduler?: TaskScheduler;
+}
+
+interface OrchestratorDependencies extends NaturalConversationDependencies {
+  classifier: NaturalIntentClassifier & NaturalTaskClassifier;
+  taskRegistry: TaskRegistry;
+  taskTargetResolver: TaskTargetResolver;
+  workspaceRouter: WorkspaceRouter;
+  executionWorkspaces: ExecutionWorkspaceService;
+  taskScheduler: TaskScheduler;
 }
 
 interface PendingApproval {
@@ -254,6 +277,9 @@ interface PendingApproval {
 }
 
 interface ActiveRunState {
+  taskId?: string;
+  conversationId?: string;
+  taskTitle?: string;
   controller: AbortController;
   cwd: string;
   prompt: string;
@@ -273,6 +299,12 @@ interface ActiveRunState {
 }
 
 interface QueuedRunState {
+  taskId?: string;
+  conversationId?: string;
+  taskTitle?: string;
+  workspaceRoot?: string;
+  isolationMode?: IsolationMode;
+  sandboxPolicy?: CodexRunInput["sandboxPolicy"];
   controller: AbortController;
   cwd: string;
   prompt: string;
@@ -383,11 +415,21 @@ export class BridgeRunner {
       originSender?: SenderIdentity;
     }
   >();
+  private readonly retryableRunsByTask = new Map<
+    string,
+    {
+      conversationId: string;
+      prompt: string;
+      collaborationMode: CodexCollaborationMode;
+      originSender?: SenderIdentity;
+    }
+  >();
   private readonly forkRecoveries = new Map<string, PendingForkAttempt>();
   private readonly threadArchiveRecoveries = new Map<string, PendingThreadArchiveAttempt>();
   private readonly restartAfterMessageIds = new Set<string>();
   private readonly globalRunWaiters: GlobalRunWaiter[] = [];
   private readonly activeCodexRunTasks = new Set<Promise<CodexRunResult>>();
+  private readonly orchestratedRunTasks = new Set<Promise<void>>();
   private activeGlobalRuns = 0;
   private readonly codex: CodexClient;
   private disposed = false;
@@ -458,6 +500,7 @@ export class BridgeRunner {
       }
       const taskResults = await Promise.allSettled([
         ...this.activeCodexRunTasks,
+        ...this.orchestratedRunTasks,
         ...this.messageTasks.values(),
         ...this.queues.values(),
         ...this.outboxTasks.values(),
@@ -548,7 +591,7 @@ export class BridgeRunner {
       await this.handleImmediateNaturalClarification(message);
       return;
     }
-    if (this.naturalConversation && message.naturalRouting !== "bypass" && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
+    if (this.naturalConversation && !this.orchestrator && message.naturalRouting !== "bypass" && !message.attachments?.length && !routedText(message).startsWith("/") && !this.hasImageDraftForMessage(message) && (this.activeRunIsInteractive(message.chatId) || (!this.activeRuns.has(message.chatId) && this.queuedRuns.has(message.chatId)))) {
       await this.persistNaturalControlMarker(message, "active_run_control");
       await this.handleImmediateNaturalActive(message);
       return;
@@ -976,7 +1019,7 @@ export class BridgeRunner {
     }
     await this.mutateState((currentState) => {
       const job = currentState.jobs[message.messageId];
-      if (job?.status === "queued") {
+      if (job?.status === "queued" && !job.taskId) {
         job.status = "cancelled";
         job.prompt = truncateInline(job.prompt, 180);
         job.updatedAt = new Date().toISOString();
@@ -1023,6 +1066,10 @@ export class BridgeRunner {
     const decision = decideAccess(this.config.access, toAccessContext(message));
     if (!decision.allowed) {
       await this.rejectUnauthorized(message, decision);
+      return;
+    }
+    if (this.orchestrator && message.naturalRouting !== "bypass" && !hasAttachments && !text.startsWith("/")) {
+      await this.handleOrchestratedMessage(message, text);
       return;
     }
     const draftExpired = await this.expireImageDraftsForMessage(message);
@@ -1160,6 +1207,185 @@ export class BridgeRunner {
       turn.collaborationMode,
       persistedImages ?? staged?.images.map((image) => image.path),
     );
+  }
+
+  private get orchestrator(): OrchestratorDependencies | undefined {
+    const value = this.naturalConversation;
+    if (!value?.taskRegistry || !value.taskTargetResolver || !value.workspaceRouter || !value.executionWorkspaces || !value.taskScheduler || !("classifyTask" in value.classifier)) return undefined;
+    return value as OrchestratorDependencies;
+  }
+
+  private async handleOrchestratedMessage(message: IncomingTextMessage, text: string): Promise<void> {
+    const orchestrator = this.orchestrator!;
+    const senderKey = stableSenderKey(message.sender);
+    const tasks = orchestrator.taskRegistry.listConversation(this.requireState(), message.chatId, senderKey);
+    const decision = await resolveNaturalTaskDecision({
+      text,
+      conversationId: message.chatId,
+      candidates: tasks.map((task) => ({
+        taskId: task.taskId, title: task.title, aliases: task.aliases, workspaceKind: task.workspaceKind,
+        status: task.status, objectiveSummary: task.objectiveSummary, recentRequests: task.recentRequests,
+      })),
+      workspaces: orchestrator.workspaceRouter.candidatesForClassifier(),
+      pendingImageCount: 0,
+      pendingInteractions: [],
+    }, orchestrator.classifier, this.config.weixinIntentMinConfidence);
+    const action = decision.action;
+    if (action.kind === "create_task") {
+      let route;
+      try {
+        route = action.explicitPath
+          ? await orchestrator.workspaceRouter.resolveExplicit(action.explicitPath, message.chatType)
+          : orchestrator.workspaceRouter.resolveKind(action.workspaceKind ?? "work");
+      } catch (error) {
+        await this.sender.sendText(message.chatId, `工作区无法确定：${formatError(error)}`);
+        return;
+      }
+      let task!: RegisteredTask;
+      await this.mutateState((state) => {
+        task = orchestrator.taskRegistry.create(state, {
+          conversationId: message.chatId, chatType: message.chatType, senderKey,
+          title: action.instruction, aliases: [], workspaceKind: route.kind, workspaceRoot: route.root, objective: action.instruction,
+        });
+        orchestrator.taskRegistry.transition(state, task.taskId, "queued");
+        orchestrator.taskRegistry.appendRequest(state, task.taskId, action.instruction);
+      });
+      await this.startOrchestratedRun(task.taskId, action.instruction, message, action.collaborationMode ?? "default", action.executionIntent ?? "general");
+      return;
+    }
+    if (action.kind === "clarify") {
+      await this.sender.sendText(message.chatId, action.question);
+      return;
+    }
+    if (action.kind === "show_status" || action.kind === "list_tasks") {
+      await this.sendTaskStatus(message.chatId, tasks);
+      return;
+    }
+    if (action.kind === "steer_task" || action.kind === "continue_task" || action.kind === "stop_task" || action.kind === "retry_task" || action.kind === "inspect_task") {
+      const resolution = orchestrator.taskTargetResolver.resolve({
+        tasks, conversationId: message.chatId, senderKey, explicitTaskId: action.taskId,
+        actionKind: action.kind, allowRecency: action.kind !== "stop_task",
+      });
+      if (resolution.status !== "resolved") {
+        await this.sender.sendText(message.chatId, resolution.question);
+        return;
+      }
+      const task = this.requireState().tasks[resolution.taskId]!;
+      if (action.kind === "stop_task") {
+        await this.stopTask(task);
+      } else if (action.kind === "inspect_task") {
+        await this.sendTaskStatus(message.chatId, [task]);
+      } else if (action.kind === "retry_task") {
+        await this.retryTask(task, message);
+      } else if (action.kind === "steer_task" || action.kind === "continue_task") {
+        const instruction = action.instruction;
+        if (this.activeRuns.has(task.taskId)) {
+          await this.steerTask(task, instruction);
+          return;
+        }
+        if (this.queuedRuns.has(task.taskId)) {
+          await this.queuePendingRunSteerForKey(task.taskId, instruction, task.conversationId, task);
+          return;
+        }
+        await this.mutateState((state) => {
+          orchestrator.taskRegistry.transition(state, task.taskId, "queued");
+          orchestrator.taskRegistry.appendRequest(state, task.taskId, instruction);
+        });
+        await this.startOrchestratedRun(
+          task.taskId,
+          instruction,
+          message,
+          "default",
+          executionIntentForTask(task),
+        );
+      }
+      return;
+    }
+    await this.sender.sendText(message.chatId, "当前多任务模式暂不支持这个操作，请说明要新建、继续、补充或停止哪个任务。");
+  }
+
+  private async retryTask(task: RegisteredTask, message: IncomingTextMessage): Promise<void> {
+    const remembered = this.retryableRunsByTask.get(task.taskId);
+    if (!remembered || !remembered.originSender || !sameStableSenderIdentity(remembered.originSender, message.sender)) {
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "没有可安全重试的最近任务上下文。"));
+      return;
+    }
+    if (this.activeRuns.has(task.taskId) || this.queuedRuns.has(task.taskId)) {
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "任务正在排队或运行，不能重复重试。"));
+      return;
+    }
+    await this.mutateState((state) => {
+      this.orchestrator!.taskRegistry.transition(state, task.taskId, "queued");
+      this.orchestrator!.taskRegistry.appendRequest(state, task.taskId, remembered.prompt);
+    });
+    await this.startOrchestratedRun(
+      task.taskId,
+      remembered.prompt,
+      message,
+      remembered.collaborationMode,
+      executionIntentForTask(task),
+    );
+  }
+
+  private async sendTaskStatus(conversationId: string, tasks: RegisteredTask[]): Promise<void> {
+    if (!tasks.length) {
+      await this.sender.sendText(conversationId, "当前会话还没有任务。");
+      return;
+    }
+    const scheduler = this.orchestrator!.taskScheduler.snapshot();
+    const lines = tasks.slice(0, 12).map((task) => {
+      const scheduled = scheduler.jobs.find((job) => job.taskId === task.taskId);
+      const queue = scheduled?.queueReason ? `，等待：${scheduled.queueReason}` : "";
+      return `${prefixTaskMessage(task, task.status)}，工作区：${task.workspaceKind}，模式：${task.isolationMode}${queue}`;
+    });
+    await this.sender.sendText(conversationId, ["任务状态", ...lines].join("\n"));
+  }
+
+  private async startOrchestratedRun(taskId: string, prompt: string, message: IncomingTextMessage, collaborationMode: CodexCollaborationMode = "default", executionIntent: "general" | "output_only" = "general"): Promise<void> {
+    const orchestrator = this.orchestrator!;
+    const execution = await orchestrator.executionWorkspaces.prepare({ taskId, workspaceRoot: this.requireState().tasks[taskId]!.workspaceRoot, intent: executionIntent });
+    await this.mutateState((state) => {
+      const task = state.tasks[taskId]!;
+      task.executionCwd = execution.executionCwd; task.isolationMode = execution.isolationMode;
+      orchestrator.taskRegistry.transition(state, taskId, "waiting_workspace");
+      const job = state.jobs[message.messageId];
+      if (job) {
+        job.taskId = taskId; job.workspaceRoot = execution.workspaceRoot; job.executionCwd = execution.executionCwd; job.isolationMode = execution.isolationMode;
+        job.cwd = execution.executionCwd; job.threadId = task.threadId; job.collaborationMode = collaborationMode;
+      }
+    });
+    const task = this.requireState().tasks[taskId]!;
+    const queuedRun: QueuedRunState = {
+      controller: new AbortController(), taskId, conversationId: task.conversationId, taskTitle: task.title,
+      workspaceRoot: execution.workspaceRoot, isolationMode: execution.isolationMode, sandboxPolicy: execution.sandboxPolicy,
+      cwd: execution.executionCwd, prompt, collaborationMode, sessionEpoch: task.sessionEpoch, messageId: message.messageId,
+      threadId: task.threadId, chatType: message.chatType, originSender: { ...message.sender }, queuedAtMs: Date.now(), waitingFor: "workspace",
+    };
+    this.queuedRuns.set(taskId, queuedRun);
+    if (execution.isolationMode === "canonical_fifo") {
+      const sameRootBusy = orchestrator.taskScheduler.snapshot().jobs.some((job) =>
+        platformPathKey(job.workspaceRoot) === platformPathKey(execution.workspaceRoot) && job.isolationMode === "canonical_fifo",
+      );
+      if (sameRootBusy) {
+        await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "该工作区无法安全隔离并发写入，任务会按 FIFO 安全排队。"));
+      }
+    }
+    const run = orchestrator.taskScheduler.schedule({ taskId, workspaceRoot: execution.workspaceRoot, isolationMode: execution.isolationMode }, async () => {
+      await this.runTask(taskId, queuedRun);
+    });
+    this.orchestratedRunTasks.add(run);
+    void run.catch((error: unknown) => this.logger.error("Orchestrated task failed", error)).finally(() => this.orchestratedRunTasks.delete(run));
+  }
+
+  private async runTask(taskId: string, queuedRun: QueuedRunState): Promise<void> {
+    const task = this.requireState().tasks[taskId];
+    if (!task || queuedRun.controller.signal.aborted) return;
+    try {
+      await this.mutateState((state) => { this.orchestrator!.taskRegistry.transition(state, taskId, "running"); });
+      await this.runCodexWithGlobalPermit(task.conversationId, queuedRun);
+    } finally {
+      if (this.queuedRuns.get(taskId) === queuedRun) this.queuedRuns.delete(taskId);
+    }
   }
 
   private pendingApprovalForMessage(message: IncomingTextMessage): boolean {
@@ -1579,6 +1805,10 @@ export class BridgeRunner {
   ): Promise<void> {
     const state = this.requireState();
     const session = this.ensureSession(chatId, state, queuedRun.chatType);
+    const task = queuedRun.taskId ? state.tasks[queuedRun.taskId] : undefined;
+    const runKey = task?.taskId ?? chatId;
+    const runCwd = task?.executionCwd ?? session.cwd;
+    const runThreadId = task?.threadId ?? session.threadId;
     const prompt = queuedRun.prompt;
     queuedRun.waitingFor = "workspace";
 
@@ -1592,13 +1822,16 @@ export class BridgeRunner {
       queuedRun.collaborationMode,
       queuedRun.originSender,
     );
+    if (task) {
+      this.rememberTaskRun(task.taskId, chatId, prompt, queuedRun.collaborationMode, queuedRun.originSender);
+    }
 
     const controller = queuedRun.controller;
     if (controller.signal.aborted) {
       await this.updateStatusCard(statusCard, {
         status: "stopped",
         detail: "任务在等待执行期间已取消。",
-        cwd: session.cwd,
+        cwd: runCwd,
         prompt,
         startedAt,
         updatedAt: new Date().toISOString(),
@@ -1619,47 +1852,55 @@ export class BridgeRunner {
     }
     const runState: ActiveRunState = {
       controller,
-      cwd: session.cwd,
+      taskId: task?.taskId,
+      conversationId: chatId,
+      taskTitle: task?.title,
+      cwd: runCwd,
       prompt,
-      threadId: session.threadId,
-      pendingSteers: this.takePendingRunSteers(chatId),
+      threadId: runThreadId,
+      pendingSteers: this.takePendingRunSteers(runKey),
       startedAt,
       startedAtMs,
       terminal: false,
       progressDeliveryTail: Promise.resolve(),
     };
-    if (this.queuedRuns.get(chatId) === queuedRun) {
-      this.queuedRuns.delete(chatId);
+    let taskTerminalStatus: "completed" | "failed" | "interrupted" | undefined;
+    if (this.queuedRuns.get(runKey) === queuedRun) {
+      this.queuedRuns.delete(runKey);
     }
     if (this.config.codexRunTimeoutMs > 0) {
       runState.timeoutTimer = setTimeout(() => {
-        if (this.activeRuns.get(chatId) !== runState || controller.signal.aborted) {
+        if (this.activeRuns.get(runKey) !== runState || controller.signal.aborted) {
           return;
         }
         runState.timedOut = true;
         controller.abort();
       }, this.config.codexRunTimeoutMs);
     }
-    const reportProgress = this.createProgressReporter(chatId, controller.signal, runState);
-    this.activeRuns.set(chatId, runState);
+    const reportProgress = this.createProgressReporter(chatId, controller.signal, runState, task);
+    this.activeRuns.set(runKey, runState);
     this.logger.info("Codex run started", {
       chatId,
-      cwd: session.cwd,
-      threadId: session.threadId ?? "(new)",
+      taskId: task?.taskId,
+      cwd: runCwd,
+      threadId: runThreadId ?? "(new)",
       collaborationMode: queuedRun.collaborationMode,
     });
     try {
       const codexRunTask = this.codex.run({
         prompt,
         localImages: queuedRun.localImages,
-        cwd: session.cwd,
-        threadId: session.threadId,
+        cwd: runCwd,
+        sandboxPolicy: queuedRun.sandboxPolicy,
+        threadId: runThreadId,
         collaborationMode: queuedRun.collaborationMode,
         sessionScope:
           queuedRun.originSender && hasStableSenderIdentity(queuedRun.originSender)
             ? {
                 adapterId: this.store.adapterId,
-                chatId,
+                ...(task
+                  ? { conversationId: chatId, taskId: task.taskId }
+                  : { chatId }),
                 sessionEpoch: queuedRun.sessionEpoch,
                 principal: { ...queuedRun.originSender },
               }
@@ -1669,17 +1910,21 @@ export class BridgeRunner {
             throw new Error("Chat2Codex is shutting down; refusing to bind a Codex thread.");
           }
           await this.mutateState((currentState) => {
-            const currentSession = this.ensureSession(chatId, currentState, queuedRun.chatType);
-            if (
-              currentSession.cwd !== queuedRun.cwd ||
-              currentSession.threadId !== queuedRun.threadId ||
-              currentSession.sessionEpoch !== queuedRun.sessionEpoch
-            ) {
-              throw new Error("The chat session changed before the Codex thread could be bound.");
-            }
             const now = new Date().toISOString();
-            currentSession.threadId = threadId;
-            currentSession.updatedAt = now;
+            if (task) {
+              const currentTask = currentState.tasks[task.taskId];
+              if (!currentTask || currentTask.executionCwd !== queuedRun.cwd || currentTask.threadId !== queuedRun.threadId || currentTask.sessionEpoch !== queuedRun.sessionEpoch) {
+                throw new Error("The task generation changed before the Codex thread could be bound.");
+              }
+              this.orchestrator!.taskRegistry.bindThread(currentState, task.taskId, threadId);
+            } else {
+              const currentSession = this.ensureSession(chatId, currentState, queuedRun.chatType);
+              if (currentSession.cwd !== queuedRun.cwd || currentSession.threadId !== queuedRun.threadId || currentSession.sessionEpoch !== queuedRun.sessionEpoch) {
+                throw new Error("The chat session changed before the Codex thread could be bound.");
+              }
+              currentSession.threadId = threadId;
+              currentSession.updatedAt = now;
+            }
             if (queuedRun.messageId) {
               const job = currentState.jobs[queuedRun.messageId];
               if (!job || isTerminalJobStatus(job.status)) {
@@ -1731,7 +1976,7 @@ export class BridgeRunner {
           runState.threadId = control.threadId ?? runState.threadId;
           runState.turnId = control.turnId;
           runState.steer = control.steer;
-          void this.flushPendingSteers(chatId, runState);
+          void this.flushPendingSteers(runKey, runState, chatId, task);
         },
       });
       this.activeCodexRunTasks.add(codexRunTask);
@@ -1744,6 +1989,7 @@ export class BridgeRunner {
       await this.closeProgressReporter(runState);
 
       if (result.cancelled || controller.signal.aborted) {
+        taskTerminalStatus = "interrupted";
         if (this.disposed) {
           return;
         }
@@ -1786,6 +2032,7 @@ export class BridgeRunner {
       const completedAt = new Date().toISOString();
 
       if (result.exitCode !== 0) {
+        taskTerminalStatus = "failed";
         this.logger.warn("Codex run completed with failure", {
           chatId,
           cwd: session.cwd,
@@ -1803,7 +2050,7 @@ export class BridgeRunner {
           summary: result.summary,
           errorText: [result.finalText, result.stderr].filter(Boolean).join("\n"),
         });
-        const failure = formatCodexFailure(result, session.cwd);
+        const failure = formatCodexFailure(result, runCwd);
         await this.recordRecentFailure(chatId, {
           category: inferCodexResultFailureCategory(result),
           cwd: session.cwd,
@@ -1821,7 +2068,10 @@ export class BridgeRunner {
           lastRun,
           threadId: resultThreadId,
           updateSessionThread: true,
-          deliveries: splitForChat(failure).map((text) => ({ kind: "text" as const, text })),
+          deliveries: splitForChat(failure).map((text) => ({
+            kind: "text" as const,
+            text: task ? prefixTaskMessage(task, text) : text,
+          })),
         });
         await this.updateStatusCard(statusCard, {
           status: "failed",
@@ -1836,7 +2086,7 @@ export class BridgeRunner {
           await this.drainOutboxForJob(queuedRun.messageId!);
         } else {
           for (const chunk of splitForChat(failure)) {
-            await this.sender.sendText(chatId, chunk);
+            await this.sender.sendText(chatId, task ? prefixTaskMessage(task, chunk) : chunk);
           }
         }
         return;
@@ -1852,6 +2102,7 @@ export class BridgeRunner {
         summary: result.summary,
         finalText: result.finalText,
       });
+      taskTerminalStatus = "completed";
       runState.terminal = true;
       this.logger.info("Codex run completed", {
         chatId,
@@ -1868,7 +2119,7 @@ export class BridgeRunner {
         threadId: resultThreadId,
         deliveries: splitForChat(chatOutput).map((text) => ({
           kind: "markdown" as const,
-          text,
+          text: task ? prefixTaskMessage(task, text) : text,
         })),
       });
       await this.updateStatusCard(statusCard, {
@@ -1883,13 +2134,14 @@ export class BridgeRunner {
       if (durable) {
         await this.drainOutboxForJob(queuedRun.messageId!);
       } else {
-        for (const chunk of splitForChat(chatOutput)) {
-          await this.sendMarkdown(chatId, chunk);
+          for (const chunk of splitForChat(chatOutput)) {
+            await this.sendMarkdown(chatId, task ? prefixTaskMessage(task, chunk) : chunk);
         }
       }
     } catch (error) {
       await this.closeProgressReporter(runState);
       if (controller.signal.aborted) {
+        taskTerminalStatus = "interrupted";
         if (this.disposed) {
           return;
         }
@@ -1920,9 +2172,10 @@ export class BridgeRunner {
         }
         return;
       }
+      taskTerminalStatus = "failed";
       this.logger.error("Codex run failed", error);
-      const failedCwd = session.cwd;
-      const failedThreadId = session.threadId;
+      const failedCwd = runCwd;
+      const failedThreadId = runThreadId;
       const cwdExists = Boolean(
         (await fs.stat(failedCwd).catch(() => null))?.isDirectory(),
       );
@@ -2020,7 +2273,10 @@ export class BridgeRunner {
         status: "failed",
         lastRun,
         threadId: failedThreadId,
-        deliveries: splitForChat(failure).map((text) => ({ kind: "text" as const, text })),
+        deliveries: splitForChat(failure).map((text) => ({
+          kind: "text" as const,
+          text: task ? prefixTaskMessage(task, text) : text,
+        })),
       });
       await this.updateStatusCard(statusCard, {
         status: "failed",
@@ -2035,7 +2291,7 @@ export class BridgeRunner {
         await this.drainOutboxForJob(queuedRun.messageId!);
       } else {
         for (const chunk of splitForChat(failure)) {
-          await this.sender.sendText(chatId, chunk);
+          await this.sender.sendText(chatId, task ? prefixTaskMessage(task, chunk) : chunk);
         }
       }
     } finally {
@@ -2046,11 +2302,19 @@ export class BridgeRunner {
       await this.cancelUserInputsForChat(chatId);
       await this.cancelPermissionApprovalsForChat(chatId);
       await this.cancelMcpElicitationsForChat(chatId);
-      if (this.activeRuns.get(chatId) === runState) {
+      if (this.activeRuns.get(runKey) === runState) {
         if (!this.disposed) {
           await this.reportUnsentPendingSteers(chatId, runState);
         }
-        this.activeRuns.delete(chatId);
+        this.activeRuns.delete(runKey);
+      }
+      if (task && this.requireState().tasks[task.taskId] && !this.disposed) {
+        await this.mutateState((state) => {
+          const current = state.tasks[task.taskId];
+          if (!current || ["completed", "failed", "interrupted", "archived"].includes(current.status)) return;
+          const next = taskTerminalStatus ?? (controller.signal.aborted ? "interrupted" : "failed");
+          this.orchestrator!.taskRegistry.transition(state, task.taskId, next);
+        });
       }
     }
   }
@@ -2915,26 +3179,81 @@ export class BridgeRunner {
     await this.sendSteer(chatId, run, text, "sent");
   }
 
-  private async queuePendingRunSteer(chatId: string, text: string): Promise<void> {
-    const existing = this.pendingRunSteers.get(chatId);
-    if (existing) {
-      if (!this.addPendingSteer(existing.items, text)) {
-        await this.sender.sendText(chatId, pendingSteerLimitMessage);
+  private async steerTask(task: RegisteredTask, text: string): Promise<void> {
+    const run = this.activeRuns.get(task.taskId);
+    if (!run || run.controller.signal.aborted) {
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "当前任务暂时不能接收补充指令。"));
+      return;
+    }
+    if (!run.steer) {
+      if (!this.addPendingSteer(run.pendingSteers, text)) {
+        await this.sender.sendText(task.conversationId, prefixTaskMessage(task, pendingSteerLimitMessage));
         return;
       }
-      await this.sender.sendText(chatId, "当前 Codex 任务正在排队或启动；已暂存这条补充指令，准备好后会自动发送。");
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "当前 Codex 任务正在启动补充指令通道；已暂存这条补充指令，准备好后会自动发送。"));
+      return;
+    }
+    await this.sendSteer(task.conversationId, run, text, "sent", task);
+  }
+
+  private async stopTask(task: RegisteredTask): Promise<void> {
+    const run = this.activeRuns.get(task.taskId);
+    if (run && !run.controller.signal.aborted) {
+      await this.mutateState((state) => {
+        const current = state.tasks[task.taskId];
+        if (current && current.status === "running") this.orchestrator!.taskRegistry.transition(state, task.taskId, "stopping");
+      });
+      run.controller.abort();
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "已请求停止当前 Codex 任务。"));
+      return;
+    }
+    const queued = this.queuedRuns.get(task.taskId);
+    if (queued && !queued.controller.signal.aborted) {
+      queued.controller.abort();
+      this.queuedRuns.delete(task.taskId);
+      this.orchestrator!.taskScheduler.cancel(task.taskId);
+      await this.persistCancelledQueuedRun(queued);
+      await this.mutateState((state) => {
+        const current = state.tasks[task.taskId];
+        if (current && (current.status === "queued" || current.status === "waiting_workspace")) {
+          this.orchestrator!.taskRegistry.transition(state, task.taskId, "interrupted");
+        }
+      });
+      await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "已取消排队中的 Codex 任务。"));
+      return;
+    }
+    await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "当前任务没有正在运行的 Codex turn。"));
+  }
+
+  private async queuePendingRunSteer(chatId: string, text: string): Promise<void> {
+    return this.queuePendingRunSteerForKey(chatId, text, chatId);
+  }
+
+  private async queuePendingRunSteerForKey(
+    runKey: string,
+    text: string,
+    conversationId: string,
+    task?: RegisteredTask,
+  ): Promise<void> {
+    const existing = this.pendingRunSteers.get(runKey);
+    if (existing) {
+      if (!this.addPendingSteer(existing.items, text)) {
+        await this.sender.sendText(conversationId, task ? prefixTaskMessage(task, pendingSteerLimitMessage) : pendingSteerLimitMessage);
+        return;
+      }
+      await this.sender.sendText(conversationId, task ? prefixTaskMessage(task, "任务正在排队或启动；已暂存补充指令。") : "当前 Codex 任务正在排队或启动；已暂存这条补充指令，准备好后会自动发送。");
       return;
     }
 
     const pending: PendingRunSteers = {
       items: [{ text }],
       timeoutTimer: setTimeout(() => {
-        void this.expirePendingRunSteers(chatId);
+        void this.expirePendingRunSteers(runKey, conversationId, task);
       }, pendingRunSteerTtlMs),
     };
     pending.timeoutTimer.unref?.();
-    this.pendingRunSteers.set(chatId, pending);
-    await this.sender.sendText(chatId, "当前 Codex 任务正在排队或启动；已暂存这条补充指令，准备好后会自动发送。");
+    this.pendingRunSteers.set(runKey, pending);
+    await this.sender.sendText(conversationId, task ? prefixTaskMessage(task, "任务正在排队或启动；已暂存补充指令。") : "当前 Codex 任务正在排队或启动；已暂存这条补充指令，准备好后会自动发送。");
   }
 
   private addPendingSteer(items: PendingSteer[], text: string): boolean {
@@ -2955,20 +3274,20 @@ export class BridgeRunner {
     return pending.items.splice(0);
   }
 
-  private async expirePendingRunSteers(chatId: string): Promise<void> {
-    const pending = this.pendingRunSteers.get(chatId);
+  private async expirePendingRunSteers(runKey: string, conversationId: string = runKey, task?: RegisteredTask): Promise<void> {
+    const pending = this.pendingRunSteers.get(runKey);
     if (!pending) {
       return;
     }
-    this.pendingRunSteers.delete(chatId);
+    this.pendingRunSteers.delete(runKey);
     const count = pending.items.length;
     if (!count) {
       return;
     }
     try {
       await this.sender.sendText(
-        chatId,
-        count === 1
+        conversationId,
+        task ? prefixTaskMessage(task, count === 1 ? "暂存的补充指令没有等到可接收的 Codex 任务，已取消。" : `${count} 条暂存的补充指令没有等到可接收的 Codex 任务，已取消。`) : count === 1
           ? "暂存的补充指令没有等到可接收的 Codex 任务，已取消。"
           : `${count} 条暂存的补充指令没有等到可接收的 Codex 任务，已取消。`,
       );
@@ -2978,18 +3297,20 @@ export class BridgeRunner {
   }
 
   private async flushPendingSteers(
-    chatId: string,
+    runKey: string,
     run: ActiveRunState,
+    chatId: string = run.conversationId ?? runKey,
+    task?: RegisteredTask,
   ): Promise<void> {
-    if (this.activeRuns.get(chatId) !== run || run.controller.signal.aborted || !run.steer) {
+    if (this.activeRuns.get(runKey) !== run || run.controller.signal.aborted || !run.steer) {
       return;
     }
     const pending = run.pendingSteers.splice(0);
     for (const item of pending) {
-      if (this.activeRuns.get(chatId) !== run || run.controller.signal.aborted) {
+      if (this.activeRuns.get(runKey) !== run || run.controller.signal.aborted) {
         return;
       }
-      await this.sendSteer(chatId, run, item.text, "flushed");
+      await this.sendSteer(chatId, run, item.text, "flushed", task);
     }
   }
 
@@ -2998,6 +3319,7 @@ export class BridgeRunner {
     run: ActiveRunState,
     text: string,
     mode: "sent" | "flushed",
+    task?: RegisteredTask,
   ): Promise<void> {
     if (!run.steer) {
       await this.sender.sendText(chatId, "当前 Codex 任务暂时还不能接收补充指令，请稍后重试。");
@@ -3007,7 +3329,7 @@ export class BridgeRunner {
       await run.steer(text);
       await this.sender.sendText(
         chatId,
-        mode === "sent"
+        task ? prefixTaskMessage(task, mode === "sent" ? "已把补充指令发送给当前 Codex 任务。" : "已把暂存的补充指令发送给当前 Codex 任务。") : mode === "sent"
           ? "已把补充指令发送给当前 Codex 任务。"
           : "已把暂存的补充指令发送给当前 Codex 任务。",
       );
@@ -5641,10 +5963,32 @@ export class BridgeRunner {
     }
   }
 
+  private rememberTaskRun(
+    taskId: string,
+    conversationId: string,
+    prompt: string,
+    collaborationMode: CodexCollaborationMode,
+    originSender?: SenderIdentity,
+  ): void {
+    this.retryableRunsByTask.delete(taskId);
+    this.retryableRunsByTask.set(taskId, {
+      conversationId,
+      prompt,
+      collaborationMode,
+      originSender: originSender ? { ...originSender } : undefined,
+    });
+    while (this.retryableRunsByTask.size > maxRememberedStatusCards) {
+      const oldestTaskId = this.retryableRunsByTask.keys().next().value;
+      if (!oldestTaskId) break;
+      this.retryableRunsByTask.delete(oldestTaskId);
+    }
+  }
+
   private createProgressReporter(
     chatId: string,
     signal: AbortSignal,
     runState: ActiveRunState,
+    task?: RegisteredTask,
   ): (update: CodexProgressUpdate) => Promise<void> {
     let lastSentAt = 0;
     return async (update) => {
@@ -5663,7 +6007,7 @@ export class BridgeRunner {
         if (signal.aborted) {
           return;
         }
-        await this.sender.sendText(chatId, update.text);
+        await this.sender.sendText(chatId, task ? prefixTaskMessage(task, update.text) : update.text);
       });
       runState.progressDeliveryTail = delivery.catch((error: unknown) => {
         this.logger.warn("Progress delivery failed", error);
@@ -8232,4 +8576,13 @@ function canonicalExistingPath(value: string): string | null {
   } catch {
     return null;
   }
+}
+
+function platformPathKey(value: string): string {
+  const resolved = path.resolve(value);
+  return process.platform === "win32" ? resolved.toLocaleLowerCase() : resolved;
+}
+
+function executionIntentForTask(task: RegisteredTask): "general" | "output_only" {
+  return task.isolationMode === "output_only" ? "output_only" : "general";
 }

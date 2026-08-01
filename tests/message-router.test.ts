@@ -58,7 +58,13 @@ import {
 import { loadConfig } from "../src/config/env.js";
 import { JsonStateStore } from "../src/state/store.js";
 import { ImageDraftService } from "../src/core/image-drafts.js";
+import { ExecutionWorkspaceService } from "../src/core/execution-workspaces.js";
+import { TaskRegistry } from "../src/core/task-registry.js";
+import { TaskScheduler } from "../src/core/task-scheduler.js";
+import { TaskTargetResolver } from "../src/core/task-target-resolver.js";
+import { WorkspaceRouter } from "../src/core/workspace-router.js";
 import type { NaturalIntentClassifier, NaturalIntentDecision } from "../src/core/natural-intent.js";
+import type { NaturalTaskClassifier, NaturalTaskRoutingInput } from "../src/core/natural-task-router.js";
 import type { NaturalConversationDependencies } from "../src/core/bridge-runner.js";
 import type { Logger } from "../src/util/logger.js";
 import { supportsFileSymlinks } from "./helpers/platform.js";
@@ -509,6 +515,25 @@ class QueueIntentClassifier implements NaturalIntentClassifier {
   async classify(): Promise<unknown> { this.calls += 1; return this.decisions.shift() ?? { intent: "ordinary", confidence: 1 }; }
 }
 
+class QueueTaskClassifier implements NaturalIntentClassifier, NaturalTaskClassifier {
+  readonly taskInputs: NaturalTaskRoutingInput[] = [];
+
+  constructor(
+    private readonly decisions: Array<(input: NaturalTaskRoutingInput) => unknown>,
+  ) {}
+
+  async classify(): Promise<unknown> {
+    return { intent: "ordinary", confidence: 1 };
+  }
+
+  async classifyTask(input: NaturalTaskRoutingInput): Promise<unknown> {
+    this.taskInputs.push(structuredClone(input));
+    const decision = this.decisions.shift();
+    if (!decision) throw new Error("Unexpected task-classifier call.");
+    return decision(input);
+  }
+}
+
 class FakeCodex implements CodexClient {
   readonly runs: CodexRunInput[] = [];
 
@@ -525,6 +550,83 @@ class FakeCodex implements CodexClient {
       stderr: "",
       exitCode: 0,
     };
+  }
+}
+
+class ConcurrentTaskCodex implements CodexClient {
+  readonly runs: CodexRunInput[] = [];
+  readonly steers: Array<{ taskId: string; text: string }> = [];
+  readonly runControlWaits: string[] = [];
+  private readonly releases = new Map<string, ReturnType<typeof deferred<void>>>();
+  private readonly runControlReleases = new Map<string, ReturnType<typeof deferred<void>>>();
+  private readonly failedTaskIds = new Set<string>();
+
+  constructor(private readonly delayRunControl = false) {}
+
+  async run(input: CodexRunInput): Promise<CodexRunResult> {
+    const taskId = input.sessionScope?.taskId;
+    if (!taskId) throw new Error("Task-scoped run omitted sessionScope.taskId.");
+    this.runs.push(input);
+    const release = deferred<void>();
+    this.releases.set(taskId, release);
+    const threadId = `thread-${taskId}`;
+    await input.onThreadBound?.(threadId);
+    if (this.delayRunControl) {
+      const releaseRunControl = deferred<void>();
+      this.runControlReleases.set(taskId, releaseRunControl);
+      this.runControlWaits.push(taskId);
+      await Promise.race([
+        releaseRunControl.promise,
+        new Promise<void>((resolve) =>
+          input.signal?.addEventListener("abort", () => resolve(), { once: true }),
+        ),
+      ]);
+      if (input.signal?.aborted) {
+        return {
+          threadId,
+          finalText: "",
+          stderr: "",
+          exitCode: null,
+          cancelled: true,
+        };
+      }
+    }
+    input.onRunControl?.({
+      threadId,
+      turnId: `turn-${taskId}`,
+      steer: async (text) => { this.steers.push({ taskId, text }); },
+    });
+    await input.onProgress?.({ kind: "running", text: `progress-${taskId}` });
+    await Promise.race([
+      release.promise,
+      new Promise<void>((resolve) =>
+        input.signal?.addEventListener("abort", () => resolve(), { once: true }),
+      ),
+    ]);
+    return {
+      threadId,
+      finalText: `done-${taskId}`,
+      stderr: "",
+      exitCode: input.signal?.aborted ? null : this.failedTaskIds.has(taskId) ? 1 : 0,
+      cancelled: input.signal?.aborted,
+    };
+  }
+
+  finish(taskId: string): void {
+    this.releases.get(taskId)?.resolve();
+  }
+
+  releaseRunControl(taskId: string): void {
+    this.runControlReleases.get(taskId)?.resolve();
+  }
+
+  fail(taskId: string): void {
+    this.failedTaskIds.add(taskId);
+    this.finish(taskId);
+  }
+
+  succeed(taskId: string): void {
+    this.failedTaskIds.delete(taskId);
   }
 }
 
@@ -7110,6 +7212,429 @@ describe("MessageRouter access control", () => {
 
       expect(sender.messages.at(-1)?.text).toContain("没有收到 Codex 的 token usage 通知");
     });
+  });
+
+  test("runs two named tasks in one Weixin conversation", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-routing-"));
+    const work = path.join(tempDir, "Work");
+    const travel = path.join(tempDir, "Travel");
+    const finance = path.join(tempDir, "Finance");
+    const personal = path.join(tempDir, "Personal");
+    const aiLab = path.join(tempDir, "AI-Lab");
+    const learning = path.join(tempDir, "Learning");
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all([
+        mkdir(work),
+        mkdir(travel),
+        mkdir(finance),
+        mkdir(personal),
+        mkdir(aiLab),
+        mkdir(learning),
+      ]);
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: work,
+        CODEX_MAX_CONCURRENT_RUNS: "2",
+        CODEX_MAX_APP_SERVER_SESSIONS: "2",
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify({
+          work,
+          travel,
+          personal,
+          finance,
+          ai_lab: aiLab,
+          learning,
+        }),
+        BRIDGE_STATE_PATH: path.join(tempDir, "state.json"),
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "财报分析", workspaceKind: "finance" }, imageDisposition: "none", confidence: 1 }),
+        (input) => ({ action: { kind: "steer_task", taskId: input.candidates.find((item) => item.title === "日本酒店")?.taskId, instruction: "优先筛选新宿" }, imageDisposition: "none", confidence: 1 }),
+        (input) => ({ action: { kind: "stop_task", taskId: input.candidates.find((item) => item.title === "财报分析")?.taskId }, imageDisposition: "none", confidence: 1 }),
+        (input) => ({ action: { kind: "retry_task", taskId: input.candidates.find((item) => item.title === "日本酒店")?.taskId }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "show_status" }, imageDisposition: "none", confidence: 1 }),
+      ]);
+      const sender = new CollectingSender();
+      const codex = new ConcurrentTaskCodex(true);
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      const executionWorkspaces = await ExecutionWorkspaceService.create({
+        chat2codexHome: path.join(tempDir, "home"),
+        codexBin: config.codexBin,
+        sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+      });
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(config.bridgeStatePath),
+        sender,
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces,
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+        },
+      );
+      await router.start();
+      const message = (messageId: string, text: string): IncomingTextMessage => ({
+        messageId,
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text,
+      });
+
+      await router.accept(message("task-hotel", "新建一个日本酒店任务，放到旅行工作区"));
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept(message("task-finance", "再新建一个财报分析任务，放到金融工作区"));
+      await waitFor(() => codex.runs.length === 2);
+
+      const state = await new JsonStateStore(config.bridgeStatePath).load();
+      const tasks = Object.values(state.tasks);
+      const hotel = tasks.find((task) => task.title === "日本酒店");
+      const report = tasks.find((task) => task.title === "财报分析");
+      expect(hotel).toBeDefined();
+      expect(report).toBeDefined();
+      expect(codex.runs.map((run) => path.normalize(run.cwd).toLocaleLowerCase()).sort()).toEqual(
+        [finance, travel].map((item) => path.normalize(item).toLocaleLowerCase()).sort(),
+      );
+      expect(new Set(codex.runs.map((run) => run.sessionScope?.taskId))).toEqual(
+        new Set([hotel!.taskId, report!.taskId]),
+      );
+      expect(new Set(codex.runs.map((run) => run.threadId))).toEqual(new Set([undefined]));
+      expect(new Set([hotel, report].map((task) => task!.threadId))).toEqual(
+        new Set([`thread-${hotel!.taskId}`, `thread-${report!.taskId}`]),
+      );
+
+      await router.accept(message("steer-hotel", "日本酒店任务补充：优先筛选新宿"));
+      await waitFor(() => classifier.taskInputs.length === 3);
+      expect(codex.steers).toEqual([]);
+      expect(sender.messages.at(-1)?.text).toContain("已暂存");
+      codex.releaseRunControl(hotel!.taskId);
+      await waitFor(() => codex.steers.length === 1);
+      expect(codex.steers).toEqual([{ taskId: hotel!.taskId, text: "优先筛选新宿" }]);
+      await router.accept(message("stop-report", "停止财报分析任务"));
+      await waitFor(() => codex.runs.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted === true);
+      expect(codex.runs.find((run) => run.sessionScope?.taskId === hotel!.taskId)?.signal?.aborted).toBe(false);
+
+      codex.fail(hotel!.taskId);
+      await waitFor(() => sender.messages.some((item) => item.text.includes(`done-${hotel!.taskId}`)));
+      await waitForState(
+        new JsonStateStore(config.bridgeStatePath),
+        (current) => current.tasks[hotel!.taskId]?.status === "failed",
+      );
+      expect(sender.messages.filter((item) => /progress-|done-|已把补充|已请求停止/u.test(item.text)).every((item) => /^\[(日本酒店|财报分析)\]/u.test(item.text))).toBe(true);
+
+      codex.succeed(hotel!.taskId);
+      await router.accept(message("retry-hotel", "重试日本酒店任务"));
+      await waitFor(() => codex.runs.length === 3);
+      const retriedHotel = codex.runs[2]!;
+      expect(retriedHotel).toMatchObject({
+        cwd: hotel!.executionCwd,
+        prompt: "日本酒店",
+        threadId: `thread-${hotel!.taskId}`,
+      });
+      expect(retriedHotel.sessionScope?.taskId).toBe(hotel!.taskId);
+      expect(codex.runs.filter((run) => run.sessionScope?.taskId === report!.taskId)).toHaveLength(1);
+      expect(codex.runs.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted).toBe(true);
+      await waitFor(() => codex.runControlWaits.filter((taskId) => taskId === hotel!.taskId).length === 2);
+      codex.releaseRunControl(hotel!.taskId);
+      await waitFor(() => sender.messages.filter((item) => item.text.includes(`progress-${hotel!.taskId}`)).length === 2);
+      codex.finish(hotel!.taskId);
+      await waitFor(() => sender.messages.filter((item) => item.text.includes(`done-${hotel!.taskId}`)).length === 2);
+      await waitForState(
+        new JsonStateStore(config.bridgeStatePath),
+        (current) => current.tasks[hotel!.taskId]?.status === "completed",
+      );
+
+      await router.accept(message("task-status", "查看任务状态"));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("任务状态")));
+      expect(sender.messages.at(-1)?.text).toContain("[日本酒店]");
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("routes an output-only task into its verified isolated directory", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-output-only-"));
+    const workspaceRoots = {
+      work: path.join(tempDir, "Work"),
+      travel: path.join(tempDir, "Travel"),
+      personal: path.join(tempDir, "Personal"),
+      finance: path.join(tempDir, "Finance"),
+      ai_lab: path.join(tempDir, "AI-Lab"),
+      learning: path.join(tempDir, "Learning"),
+    };
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all(Object.values(workspaceRoots).map((root) => mkdir(root)));
+      const statePath = path.join(tempDir, "state.json");
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: workspaceRoots.work,
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(workspaceRoots),
+        BRIDGE_STATE_PATH: statePath,
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({
+          action: {
+            kind: "create_task",
+            instruction: "生成一份新的课程报告，不改现有文件",
+            workspaceKind: "learning",
+            executionIntent: "output_only",
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+        (input) => ({
+          action: {
+            kind: "continue_task",
+            taskId: input.candidates[0]?.taskId,
+            instruction: "继续补充报告结论",
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+      ]);
+      const sender = new CollectingSender();
+      const codex = new ConcurrentTaskCodex();
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      const executionWorkspaces = await ExecutionWorkspaceService.create({
+        chat2codexHome: path.join(tempDir, "home"),
+        codexBin: config.codexBin,
+        sandboxProbe: async () => ({ verified: true, codexVersion: "codex-test 1.0" }),
+      });
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(statePath),
+        sender,
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces,
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+        },
+      );
+      await router.start();
+      await router.accept({
+        messageId: "output-only-task",
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text: "在课程学习工作区生成新报告，但不要修改现有文件",
+      });
+      await waitFor(() => codex.runs.length === 1);
+
+      const state = await new JsonStateStore(statePath).load();
+      const task = Object.values(state.tasks).find((item) => item.title === "生成一份新的课程报告，不改现有文件");
+      expect(task).toBeDefined();
+      const expectedOutput = await realpath(path.join(
+        workspaceRoots.learning,
+        "outputs",
+        "tasks",
+        task!.taskId,
+      ));
+      const run = codex.runs[0]!;
+      expect(run.cwd).toBe(expectedOutput);
+      expect(run.sandboxPolicy).toEqual({
+        type: "workspaceWrite",
+        writableRoots: [expectedOutput],
+        networkAccess: false,
+        excludeTmpdirEnvVar: true,
+        excludeSlashTmp: true,
+      });
+      expect(task).toMatchObject({
+        executionCwd: expectedOutput,
+        isolationMode: "output_only",
+      });
+      expect(state.jobs["output-only-task"]).toMatchObject({
+        taskId: task!.taskId,
+        workspaceRoot: await realpath(workspaceRoots.learning),
+        executionCwd: expectedOutput,
+        isolationMode: "output_only",
+      });
+      expect(run.sandboxPolicy?.type === "workspaceWrite"
+        ? run.sandboxPolicy.writableRoots
+        : []).not.toContain(await realpath(workspaceRoots.learning));
+
+      codex.finish(task!.taskId);
+      await waitForState(
+        new JsonStateStore(statePath),
+        (current) => current.tasks[task!.taskId]?.status === "completed",
+      );
+
+      await router.accept({
+        messageId: "continue-output-only-task",
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text: "继续补充刚才课程报告的结论",
+      });
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[1]).toMatchObject({
+        cwd: expectedOutput,
+        threadId: `thread-${task!.taskId}`,
+        sandboxPolicy: {
+          type: "workspaceWrite",
+          writableRoots: [expectedOutput],
+          networkAccess: false,
+          excludeTmpdirEnvVar: true,
+          excludeSlashTmp: true,
+        },
+      });
+      codex.finish(task!.taskId);
+      await waitForState(
+        new JsonStateStore(statePath),
+        (current) => current.jobs["continue-output-only-task"]?.status === "completed",
+      );
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("serializes same-root general tasks and durably stops the queued task", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-fifo-stop-"));
+    const workspaceRoots = {
+      work: path.join(tempDir, "Work"),
+      travel: path.join(tempDir, "Travel"),
+      personal: path.join(tempDir, "Personal"),
+      finance: path.join(tempDir, "Finance"),
+      ai_lab: path.join(tempDir, "AI-Lab"),
+      learning: path.join(tempDir, "Learning"),
+    };
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all(Object.values(workspaceRoots).map((root) => mkdir(root)));
+      const statePath = path.join(tempDir, "state.json");
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: workspaceRoots.work,
+        CODEX_MAX_CONCURRENT_RUNS: "2",
+        CODEX_MAX_APP_SERVER_SESSIONS: "2",
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(workspaceRoots),
+        BRIDGE_STATE_PATH: statePath,
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({ action: { kind: "create_task", instruction: "同根任务甲", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "同根任务乙", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        (input) => ({ action: { kind: "stop_task", taskId: input.candidates.find((item) => item.title === "同根任务乙")?.taskId }, imageDisposition: "none", confidence: 1 }),
+      ]);
+      const sender = new CollectingSender();
+      const codex = new ConcurrentTaskCodex();
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(statePath),
+        sender,
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces: await ExecutionWorkspaceService.create({
+            chat2codexHome: path.join(tempDir, "home"),
+            codexBin: config.codexBin,
+            sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+          }),
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+        },
+      );
+      await router.start();
+      const message = (messageId: string, text: string): IncomingTextMessage => ({
+        messageId,
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text,
+      });
+
+      await router.accept(message("same-root-first", "在工作区新建同根任务甲"));
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept(message("same-root-second", "在工作区新建同根任务乙"));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("FIFO 安全排队")));
+
+      const queuedState = await new JsonStateStore(statePath).load();
+      const firstTask = Object.values(queuedState.tasks).find((task) => task.title === "同根任务甲");
+      const secondTask = Object.values(queuedState.tasks).find((task) => task.title === "同根任务乙");
+      expect(firstTask?.status).toBe("running");
+      expect(secondTask?.status).toBe("waiting_workspace");
+      expect(codex.runs).toHaveLength(1);
+
+      await router.accept(message("stop-same-root-second", "停止同根任务乙"));
+      await waitForState(
+        new JsonStateStore(statePath),
+        (state) => state.jobs["same-root-second"]?.status === "cancelled"
+          && state.tasks[secondTask!.taskId]?.status === "interrupted"
+          && state.processedMessageIds.includes("same-root-second"),
+      );
+      expect(codex.runs).toHaveLength(1);
+      expect(sender.messages.at(-1)?.text).toContain("[同根任务乙] 已取消排队中的 Codex 任务");
+
+      codex.finish(firstTask!.taskId);
+      await waitForState(
+        new JsonStateStore(statePath),
+        (state) => state.tasks[firstTask!.taskId]?.status === "completed",
+      );
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("service controls expose status and bounded logs and restart only from an admin direct chat", async () => {

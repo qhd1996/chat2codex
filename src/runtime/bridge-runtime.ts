@@ -23,6 +23,11 @@ import type { Logger } from "../util/logger.js";
 import { AdapterSupervisor } from "./adapter-supervisor.js";
 import { OpenAiIntentClassifier } from "./openai-intent-classifier.js";
 import { ImageDraftService } from "../core/image-drafts.js";
+import { ExecutionWorkspaceService } from "../core/execution-workspaces.js";
+import { TaskRegistry } from "../core/task-registry.js";
+import { TaskScheduler } from "../core/task-scheduler.js";
+import { TaskTargetResolver } from "../core/task-target-resolver.js";
+import { WorkspaceRouter } from "../core/workspace-router.js";
 
 export interface PlatformAdapterBundle {
   adapter: ChatAdapter;
@@ -47,12 +52,25 @@ export async function runBridgeRuntime(
     markSupervisorReady = resolve;
   });
   const sender = createChatSender(config, supervisor, adapter, supervisorReady, logger);
-  const naturalConversation = config.chatAdapter === "weixin" && config.weixinNaturalRouting
-    ? {
-        classifier: new OpenAiIntentClassifier({ baseUrl: config.weixinIntentBaseUrl, model: config.weixinIntentModel, timeoutMs: config.weixinIntentTimeoutMs }),
-        imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: config.weixinImageDraftMaxCount, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }),
-      }
-    : undefined;
+  let naturalConversation;
+  if (config.chatAdapter === "weixin" && config.weixinNaturalRouting) {
+    const [workspaceRouter, executionWorkspaces] = await Promise.all([
+      WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots),
+      ExecutionWorkspaceService.create({
+        chat2codexHome: config.chat2codexHome,
+        codexBin: config.codexBin,
+      }),
+    ]);
+    naturalConversation = {
+      classifier: new OpenAiIntentClassifier({ baseUrl: config.weixinIntentBaseUrl, model: config.weixinIntentModel, timeoutMs: config.weixinIntentTimeoutMs }),
+      imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: config.weixinImageDraftMaxCount, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }),
+      taskRegistry: new TaskRegistry(),
+      taskTargetResolver: new TaskTargetResolver(),
+      workspaceRouter,
+      executionWorkspaces,
+      taskScheduler: new TaskScheduler({ maxConcurrentRuns: config.codexMaxConcurrentRuns }),
+    };
+  }
   const router = new MessageRouter(
     config,
     new JsonStateStore(config.bridgeStatePath, {
