@@ -91,11 +91,14 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
   expect(validateSandboxPolicy({ type: "dangerFullAccess" })).toEqual({
     type: "dangerFullAccess",
   });
-  const unchangedPolicy = {
+  const policyWithDuplicateRoots = {
     type: "workspaceWrite" as const,
-    writableRoots: [path.resolve("out"), path.resolve("out")],
+    writableRoots: [path.resolve("out"), path.resolve("cache"), path.resolve("out")],
   };
-  expect(validateSandboxPolicy(unchangedPolicy)).toEqual(unchangedPolicy);
+  expect(validateSandboxPolicy(policyWithDuplicateRoots)).toEqual({
+    type: "workspaceWrite",
+    writableRoots: [path.resolve("out"), path.resolve("cache")],
+  });
 });
 import { loadConfig } from "../src/config/env.js";
 import { createNodeTestLauncher } from "./helpers/platform.js";

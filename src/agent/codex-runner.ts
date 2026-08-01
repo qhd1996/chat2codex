@@ -2958,7 +2958,7 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
       const excludeSlashTmp = record.excludeSlashTmp as boolean | undefined;
       return {
         type: "workspaceWrite",
-        writableRoots: [...record.writableRoots] as string[],
+        writableRoots: [...new Set(record.writableRoots as string[])],
         ...(networkAccess !== undefined ? { networkAccess } : {}),
         ...(excludeTmpdirEnvVar !== undefined ? { excludeTmpdirEnvVar } : {}),
         ...(excludeSlashTmp !== undefined ? { excludeSlashTmp } : {}),
