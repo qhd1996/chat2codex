@@ -113,6 +113,10 @@ describe("loadConfig", () => {
     expect(config.attachmentMaxTotalBytes).toBe(52_428_800);
     expect(config.attachmentStoreMaxBytes).toBe(1_073_741_824);
     expect(config.attachmentRetentionHours).toBe(24);
+    expect(config.outboundMediaMaxCount).toBe(16);
+    expect(config.outboundMediaMaxFileBytes).toBe(25 * 1024 ** 2);
+    expect(config.outboundMediaMaxTotalBytes).toBe(50 * 1024 ** 2);
+    expect(config.outboundMediaRetentionHours).toBe(24);
     expect(config.chatOutputMaxChars).toBe(28_000);
     expect(config.codexStderrMaxBytes).toBe(262_144);
     expect(config.runLogMaxCommands).toBe(20);
@@ -139,6 +143,10 @@ describe("loadConfig", () => {
       ATTACHMENT_MAX_TOTAL_BYTES: "200",
       ATTACHMENT_STORE_MAX_BYTES: "300",
       ATTACHMENT_RETENTION_HOURS: "6",
+      OUTBOUND_MEDIA_MAX_COUNT: "3",
+      OUTBOUND_MEDIA_MAX_FILE_BYTES: "120",
+      OUTBOUND_MEDIA_MAX_TOTAL_BYTES: "240",
+      OUTBOUND_MEDIA_RETENTION_HOURS: "7",
       CHAT_OUTPUT_MAX_CHARS: "400",
       CODEX_STDERR_MAX_BYTES: "500",
       RUN_LOG_MAX_COMMANDS: "7",
@@ -162,6 +170,10 @@ describe("loadConfig", () => {
       attachmentMaxTotalBytes: 200,
       attachmentStoreMaxBytes: 300,
       attachmentRetentionHours: 6,
+      outboundMediaMaxCount: 3,
+      outboundMediaMaxFileBytes: 120,
+      outboundMediaMaxTotalBytes: 240,
+      outboundMediaRetentionHours: 7,
       chatOutputMaxChars: 400,
       codexStderrMaxBytes: 500,
       runLogMaxCommands: 7,
@@ -265,6 +277,10 @@ describe("loadConfig", () => {
       "ATTACHMENT_MAX_TOTAL_BYTES",
       "ATTACHMENT_STORE_MAX_BYTES",
       "ATTACHMENT_RETENTION_HOURS",
+      "OUTBOUND_MEDIA_MAX_COUNT",
+      "OUTBOUND_MEDIA_MAX_FILE_BYTES",
+      "OUTBOUND_MEDIA_MAX_TOTAL_BYTES",
+      "OUTBOUND_MEDIA_RETENTION_HOURS",
       "CHAT_OUTPUT_MAX_CHARS",
       "CODEX_STDERR_MAX_BYTES",
       "RUN_LOG_MAX_COMMANDS",
@@ -306,6 +322,14 @@ describe("loadConfig", () => {
         FEISHU_APP_SECRET: "secret",
         BRIDGE_MAX_PENDING_MESSAGES: "4",
         BRIDGE_MAX_PENDING_MESSAGES_PER_CHAT: "5",
+      }),
+    ).toThrow();
+    expect(() =>
+      loadConfig({
+        FEISHU_APP_ID: "cli_test",
+        FEISHU_APP_SECRET: "secret",
+        OUTBOUND_MEDIA_MAX_FILE_BYTES: "301",
+        OUTBOUND_MEDIA_MAX_TOTAL_BYTES: "300",
       }),
     ).toThrow();
     expect(() =>

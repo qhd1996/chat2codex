@@ -118,6 +118,10 @@ const configSchema = z.object({
   ATTACHMENT_MAX_TOTAL_BYTES: positiveIntegerEnv(50 * 1024 ** 2, ONE_TEBIBYTE),
   ATTACHMENT_STORE_MAX_BYTES: positiveIntegerEnv(ONE_GIBIBYTE, ONE_TEBIBYTE),
   ATTACHMENT_RETENTION_HOURS: positiveIntegerEnv(24, 24 * 365 * 10),
+  OUTBOUND_MEDIA_MAX_COUNT: positiveIntegerEnv(16, 16),
+  OUTBOUND_MEDIA_MAX_FILE_BYTES: positiveIntegerEnv(25 * 1024 ** 2, ONE_TEBIBYTE),
+  OUTBOUND_MEDIA_MAX_TOTAL_BYTES: positiveIntegerEnv(50 * 1024 ** 2, ONE_TEBIBYTE),
+  OUTBOUND_MEDIA_RETENTION_HOURS: positiveIntegerEnv(24, 24 * 365 * 10),
   CHAT_OUTPUT_MAX_CHARS: positiveIntegerEnv(28_000, ONE_GIBIBYTE),
   CODEX_STDERR_MAX_BYTES: positiveIntegerEnv(256 * 1024, ONE_GIBIBYTE),
   RUN_LOG_MAX_COMMANDS: positiveIntegerEnv(20, 100_000),
@@ -175,6 +179,13 @@ const configSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["WEIXIN_IMAGE_DRAFT_MAX_FILE_BYTES"],
       message: "must not exceed WEIXIN_IMAGE_DRAFT_MAX_TOTAL_BYTES",
+    });
+  }
+  if (config.OUTBOUND_MEDIA_MAX_FILE_BYTES > config.OUTBOUND_MEDIA_MAX_TOTAL_BYTES) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["OUTBOUND_MEDIA_MAX_FILE_BYTES"],
+      message: "must not exceed OUTBOUND_MEDIA_MAX_TOTAL_BYTES",
     });
   }
   if (config.ATTACHMENT_MAX_TOTAL_BYTES > config.ATTACHMENT_STORE_MAX_BYTES) {
@@ -252,6 +263,10 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
     attachmentMaxTotalBytes: parsed.ATTACHMENT_MAX_TOTAL_BYTES,
     attachmentStoreMaxBytes: parsed.ATTACHMENT_STORE_MAX_BYTES,
     attachmentRetentionHours: parsed.ATTACHMENT_RETENTION_HOURS,
+    outboundMediaMaxCount: parsed.OUTBOUND_MEDIA_MAX_COUNT,
+    outboundMediaMaxFileBytes: parsed.OUTBOUND_MEDIA_MAX_FILE_BYTES,
+    outboundMediaMaxTotalBytes: parsed.OUTBOUND_MEDIA_MAX_TOTAL_BYTES,
+    outboundMediaRetentionHours: parsed.OUTBOUND_MEDIA_RETENTION_HOURS,
     chatOutputMaxChars: parsed.CHAT_OUTPUT_MAX_CHARS,
     codexStderrMaxBytes: parsed.CODEX_STDERR_MAX_BYTES,
     runLogMaxCommands: parsed.RUN_LOG_MAX_COMMANDS,
