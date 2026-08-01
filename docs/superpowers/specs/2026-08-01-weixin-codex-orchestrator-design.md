@@ -104,6 +104,8 @@ Replace the current one-session-per-chat model with a durable registry keyed by 
 - timestamps and recency score;
 - current user objective and a bounded recent-request summary;
 - pending approval, permission, user-input, and MCP request identifiers;
+- current execution owner (`bridge` or `desktop`), lease generation, lease expiry, and last handoff reason;
+- the last Codex turn and item already mirrored to Weixin;
 - inbound image draft association;
 - durable job and outbound delivery identifiers.
 
@@ -237,6 +239,24 @@ Add a loopback-only status publisher backed by the task registry. It exposes an 
 
 The dashboard is authoritative for live state; the native sidebar is authoritative for persistent thread history. Acceptance does not require the native sidebar to show a false `active` badge.
 
+### 9.3 Cross-surface handoff and Weixin result mirroring
+
+A Weixin-created task can be continued from the Codex desktop app and later continued again from Weixin. Both surfaces use the same recorded `threadId`; they do not copy conversation text into a second thread.
+
+One thread has exactly one execution owner at a time. Ownership is represented by a durable lease containing task ID, thread ID, owner, generation, acquisition time, expiry, and heartbeat. The bridge owns a task while it is starting, steering, approving, or waiting for a bridge-started turn. The desktop plugin must acquire desktop ownership before it starts a new desktop turn.
+
+Desktop takeover is allowed only after the bridge confirms that the thread has no active bridge turn and no unresolved bridge-owned interactive request. If a bridge turn is active, the user can either keep observing it, stop it and then take over, or fork the task. The system never lets two app-server processes start turns on the same thread concurrently.
+
+While the desktop owns the task, Weixin remains an observation and control surface. Status queries are served normally. A Weixin request to continue, steer, stop, or approve the desktop-owned task is routed to the task and either forwarded through the desktop integration when that action is supported or answered with one concise handoff instruction. It is never applied to another task.
+
+The personal Codex plugin installs a `Stop` hook for desktop turns. The hook sends a loopback-authenticated completion notification containing only thread ID, turn ID, and bounded final-message metadata. The bridge treats that notification as a wake-up signal, verifies that the thread is bound to a Weixin task and that the reported turn has not already been mirrored, then reads the authoritative persisted turn through Codex `thread/read` or turn/item list APIs. Hook payload text is not trusted as the result itself.
+
+The result synchronizer converts the newly completed desktop turn into the same structured result used by bridge-started turns. Visible final text and intentionally declared output files enter the existing durable ordered outbox. The outbox sends them to the original Weixin conversation, records the mirrored turn/item high-water mark, and retries partial delivery without rerunning Codex or duplicating already acknowledged messages.
+
+Only tasks created from Weixin or explicitly bound to a Weixin conversation are mirrored. Ordinary desktop tasks are never sent to Weixin. The desktop dashboard offers explicit "bind to Weixin", "take over", and "return control to Weixin" actions and shows the current owner. Returning control releases the desktop lease only after the desktop turn is terminal and its result has been durably captured.
+
+If the desktop closes, the hook fails, or a lease heartbeat expires, the bridge reconciles task status with Codex `thread/read`. A terminal unseen turn is mirrored once. An apparently active or indeterminate turn becomes `ownership_uncertain`; neither surface may start another turn until reconciliation or explicit user recovery. Lease expiry alone never proves that an in-flight Codex turn stopped.
+
 ## 10. Process and Security Boundaries
 
 - The Weixin adapter remains direct-message only unless group support is separately designed.
@@ -244,6 +264,8 @@ The dashboard is authoritative for live state; the native sidebar is authoritati
 - All approvals are bound to adapter, conversation, sender, task, thread, turn, request, expiry, and the exact decision set supplied by Codex.
 - Bridge state has one writer and atomic durable persistence.
 - The desktop status endpoint listens on loopback only and requires a local capability token stored outside logs and prompts.
+- Desktop handoff, hook notifications, and result synchronization use the same loopback-authenticated boundary and verify task/thread/turn bindings before changing ownership or delivering output.
+- The execution-owner lease enforces one writer per Codex thread across the bridge and desktop app. Lease timeout alone cannot authorize a second writer.
 - No public webhook, public listener, or unauthenticated non-loopback app-server endpoint is introduced.
 - Credentials stay in the private Weixin credential store; they are never copied into task state, memory, deliverables, or the plugin UI.
 - Restart never automatically replays a task that reached `running`; it reports `interrupted` because prior side effects cannot be inferred safely.
@@ -284,6 +306,8 @@ Each upstream upgrade records a compatibility matrix containing Chat2Codex revis
 - Media upload failure remains in the outbox and retries without rerunning Codex.
 - Partial ordered delivery reports the task and remaining count; retries do not duplicate confirmed deliveries.
 - Desktop dashboard failure does not stop Weixin or Codex execution; native task results and local durable state remain available.
+- Desktop hook loss triggers authoritative thread reconciliation; it does not silently drop or invent a result.
+- Ownership disagreement or an indeterminate active turn fails closed to `ownership_uncertain` and requires reconciliation before either surface continues.
 
 ## 13. Verification and Acceptance
 
@@ -303,6 +327,9 @@ Implementation follows test-driven development. Completion requires fresh eviden
 - Approval/permission scoping with multiple simultaneous tasks.
 - Shared Codex history config isolation and disabled unrelated MCP servers.
 - Desktop status snapshots, event ordering, reconnect, authentication, and redaction.
+- Desktop/bridge ownership lease acquisition, heartbeat, transfer, expiry, stale-generation rejection, and one-writer enforcement.
+- Desktop `Stop` hook wake-up, authoritative turn reread, high-water-mark deduplication, and ordinary-desktop-task exclusion.
+- Desktop-produced text/image/file result staging and durable Weixin replay after partial delivery or restart.
 - State schema migration from current natural.9 without losing existing threads or queued obligations.
 - Full `bun run check`, dependency audit, packaging, and installed-package smoke tests.
 
@@ -318,6 +345,11 @@ Implementation follows test-driven development. Completion requires fresh eviden
 8. Restart between media entries and verify resume without duplicate Codex execution.
 9. Confirm the `[微信]` thread appears in Codex desktop history and opens successfully.
 10. Observe live queued, running, approval, and terminal states in the Codex plugin dashboard.
-11. Upgrade-test one Codex CLI schema and one upstream Chat2Codex integration branch using the documented compatibility gate.
+11. Take over a Weixin-created idle thread in Codex desktop, complete another turn, and verify its text and declared files are returned to the original Weixin conversation exactly once.
+12. Continue the same thread from Weixin after desktop control is returned and verify the desktop turn remains in context.
+13. Attempt concurrent bridge and desktop turns on the same thread and verify one-writer enforcement, safe stop/fork choices, and no cross-task routing.
+14. Close the desktop or suppress the hook around completion and verify reconciliation mirrors an unseen terminal turn once without treating lease expiry as proof of completion.
+15. Verify an unrelated desktop-created thread is never delivered to Weixin unless explicitly bound.
+16. Upgrade-test one Codex CLI schema and one upstream Chat2Codex integration branch using the documented compatibility gate.
 
 The feature is complete only when all three original outcomes are true in production: Weixin is connected, ordinary natural language reliably controls the intended concurrent task, and text-plus-image transmission works in both directions.
