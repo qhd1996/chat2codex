@@ -14,6 +14,7 @@ Extend the existing Chat2Codex fork into a durable Weixin-to-Codex orchestrator 
 4. Run independent tasks concurrently when isolation is safe, while preventing conflicting writes.
 5. Make Weixin-created Codex threads visible in the Codex desktop app and provide an authoritative real-time task dashboard there.
 6. Keep the custom system maintainable as upstream Chat2Codex, Codex app-server, and Tencent's Weixin protocol implementation evolve.
+7. Detect incorrect or inefficient usage, explain the correction, and turn repeated real-world friction into reviewable improvement proposals instead of silently preserving a bad workflow.
 
 The bridge, scheduler, state, and files remain local. The machine makes outbound HTTPS connections to Weixin/iLink, Weixin CDN, and the configured Codex model service. It does not require a public IP, domain, inbound port, or public webhook.
 
@@ -82,6 +83,11 @@ flowchart TB
   SP --> DA["Codex plugin task dashboard"]
   CR --> SH["Shared Codex thread history"]
   SH --> DS["Codex desktop task list"]
+  DA -->|"acquire or return execution lease"| TR
+  DS -->|"continue the same thread"| DC["Desktop Codex turn"]
+  DC -->|"Stop hook wake-up"| SP
+  SP -->|"authoritative turn reread"| SH
+  SP -->|"desktop result"| RP
 
   UP["Upstream Chat2Codex"] --> CORE["Core bridge and app-server adapter"]
   TW["Tencent Weixin protocol baseline"] --> WA
@@ -146,6 +152,14 @@ Quoted text is context only. It cannot itself approve, stop, redirect, or grant 
 ### 5.3 Failure behavior
 
 Classifier timeout, malformed output, low confidence, missing task, or ambiguous high-risk action fails closed to one concise clarification. The raw user message is not persisted in approval state and is not replayed onto a different task after restart.
+
+### 5.4 Corrective guidance and experience-driven improvement
+
+The bridge does not blindly execute a request when the user's method conflicts with a known transport, task, workspace, or safety constraint. It explains what is wrong, why it matters, what state was preserved, and the shortest corrected next action. Examples include instructing the user to send up to four images before the instruction text, identifying that a continuation refers to multiple plausible tasks, or warning that an output path would send an unintended file. A correction must not consume an image draft, approval, task selection, or execution lease unless the corrected action is unambiguous and authorized.
+
+The system records bounded, non-secret operational signals such as repeated clarifications, abandoned image drafts, routing corrections, delivery retries, ownership conflicts, and frequently used recovery actions. It uses these signals to produce reviewable improvement proposals for prompts, routing rules, workspace aliases, task labels, validation, automation, and UI.
+
+An improvement proposal states the observation, evidence, expected benefit, risks, scope, rollback, and verification plan. It is shown to the user in Weixin or the desktop dashboard before a material behavior or production configuration change. The system may apply small reversible safety fixes within an already authorized task and report them afterward, but it never self-modifies production behavior, broadens permissions, changes external-action policy, or deploys an architectural evolution without user review.
 
 ## 6. Workspace Routing and Safe Concurrency
 
@@ -290,6 +304,7 @@ Custom modules are:
 - `ImageDraftService`;
 - `MediaOutbox`;
 - `DesktopStatusPublisher`;
+- `UsageAdvisor`;
 - Codex desktop plugin/dashboard.
 
 The existing `BridgeRunner` must delegate to these modules rather than accumulating another monolithic block of conditions. Platform wire details remain in the Weixin adapter; scheduler and task semantics remain platform-neutral.
@@ -308,6 +323,8 @@ Each upstream upgrade records a compatibility matrix containing Chat2Codex revis
 - Desktop dashboard failure does not stop Weixin or Codex execution; native task results and local durable state remain available.
 - Desktop hook loss triggers authoritative thread reconciliation; it does not silently drop or invent a result.
 - Ownership disagreement or an indeterminate active turn fails closed to `ownership_uncertain` and requires reconciliation before either surface continues.
+- Incorrect usage returns corrective guidance without silently consuming drafts, decisions, task bindings, or leases.
+- Improvement telemetry is bounded and redacted; failure to generate an improvement proposal never blocks ordinary task execution.
 
 ## 13. Verification and Acceptance
 
@@ -330,6 +347,8 @@ Implementation follows test-driven development. Completion requires fresh eviden
 - Desktop/bridge ownership lease acquisition, heartbeat, transfer, expiry, stale-generation rejection, and one-writer enforcement.
 - Desktop `Stop` hook wake-up, authoritative turn reread, high-water-mark deduplication, and ordinary-desktop-task exclusion.
 - Desktop-produced text/image/file result staging and durable Weixin replay after partial delivery or restart.
+- Corrective-guidance tests for wrong image order, excessive images, ambiguous task control, unsafe output declaration, and invalid desktop handoff.
+- Experience-advisor aggregation, redaction, proposal review, rollback metadata, and prevention of unauthorized self-modification.
 - State schema migration from current natural.9 without losing existing threads or queued obligations.
 - Full `bun run check`, dependency audit, packaging, and installed-package smoke tests.
 
@@ -353,3 +372,35 @@ Implementation follows test-driven development. Completion requires fresh eviden
 16. Upgrade-test one Codex CLI schema and one upstream Chat2Codex integration branch using the documented compatibility gate.
 
 The feature is complete only when all three original outcomes are true in production: Weixin is connected, ordinary natural language reliably controls the intended concurrent task, and text-plus-image transmission works in both directions.
+
+## 14. Requirement Coverage Matrix
+
+This matrix is the scope guard for implementation and completion review. A row cannot be marked complete from unit tests alone when it names a real desktop or Weixin outcome.
+
+| Confirmed requirement | Design evidence | Required acceptance evidence |
+| --- | --- | --- |
+| Connect personal Weixin without a public webhook | Sections 1, 3, 8.4, and 10 | Real iLink receive/send test from the installed service |
+| Ordinary conversation, not prescribed phrases | Sections 2.2 and 5 | Paraphrase matrix plus real natural create/continue/stop/approve flows |
+| Natural control covers the complete existing command surface | Section 5.1 | Command-AST coverage test for every supported action |
+| Locate the intended task in one shared Weixin conversation | Sections 4 and 5.2 | Concurrent-task ambiguity and exact-target E2E |
+| Multiple tasks can run concurrently | Sections 2.3 and 6.2 | Two simultaneous real tasks with independently reported state |
+| Same workspace is not globally limited to one task | Section 6.2 | Worktree or isolated-directory concurrency test |
+| Conflicting or non-isolatable writes serialize safely | Section 6.2 | Collision and FIFO fallback tests |
+| Six default workspaces including `Learning` | Sections 2.1 and 6.1 | Routing tests for all six directories |
+| Up to four inbound images, images first, text required | Section 7 | Real one-to-four-image E2E and no-text non-execution evidence |
+| Expire images that never receive text | Section 7.3 | TTL cleanup and restart test |
+| Discard prior images when later text clearly starts another task | Section 7.2 | Real discard-to-new-task E2E |
+| Correct wrong usage instead of silently doing the wrong thing | Section 5.4 | Corrective-guidance tests and preserved-state assertions |
+| Outbound text plus images/files as ordered native messages | Section 8 | Real ordered text/image/file E2E |
+| Media upload is encrypted and retryable | Sections 8.3 and 8.4 | Protocol, partial failure, restart, and deduplication tests |
+| Weixin and desktop share Codex history | Section 9.1 | `[微信]` thread visible and openable in the desktop app |
+| Real-time Weixin task state is visible on desktop | Section 9.2 | Dashboard observes queued, running, approval, terminal, and reconnect states |
+| Continue a Weixin task from desktop using the same thread | Section 9.3 | Desktop takeover and same-thread continuation E2E |
+| Return desktop-produced text/images/files to Weixin | Sections 8 and 9.3 | Exactly-once desktop-result mirroring E2E |
+| Continue again from Weixin after desktop work | Section 9.3 | Round-trip Weixin to desktop to Weixin context test |
+| One writer per thread across desktop and bridge | Sections 9.3 and 10 | Lease race, stale generation, crash, and reconciliation tests |
+| Ordinary desktop tasks do not leak to Weixin | Section 9.3 | Unbound desktop-thread exclusion test |
+| Proactively propose improvements from real usage | Section 5.4 | Redacted evidence-to-proposal test and user-review gate |
+| Remain based on Chat2Codex and accept upstream updates | Section 11 | One complete upstream integration rehearsal with rollback |
+| Keep Tencent protocol provenance and compatibility baseline | Sections 8.4 and 11 | Pinned baseline, notice, contract tests, and protocol diff review |
+| No secret leakage or unauthorized external action | Sections 8.4, 10, and 12 | Redaction, authorization, negative security, and recovery tests |
