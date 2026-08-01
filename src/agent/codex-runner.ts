@@ -2956,9 +2956,17 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
       const networkAccess = record.networkAccess as boolean | undefined;
       const excludeTmpdirEnvVar = record.excludeTmpdirEnvVar as boolean | undefined;
       const excludeSlashTmp = record.excludeSlashTmp as boolean | undefined;
+      const seenWritableRoots = new Set<string>();
+      const writableRoots = (record.writableRoots as string[]).filter((root) => {
+        const normalizedRoot = path.resolve(root);
+        const deduplicationKey = process.platform === "win32" ? normalizedRoot.toLowerCase() : normalizedRoot;
+        if (seenWritableRoots.has(deduplicationKey)) return false;
+        seenWritableRoots.add(deduplicationKey);
+        return true;
+      });
       return {
         type: "workspaceWrite",
-        writableRoots: [...new Set(record.writableRoots as string[])],
+        writableRoots,
         ...(networkAccess !== undefined ? { networkAccess } : {}),
         ...(excludeTmpdirEnvVar !== undefined ? { excludeTmpdirEnvVar } : {}),
         ...(excludeSlashTmp !== undefined ? { excludeSlashTmp } : {}),

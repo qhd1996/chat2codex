@@ -93,7 +93,12 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
   });
   const policyWithDuplicateRoots = {
     type: "workspaceWrite" as const,
-    writableRoots: [path.resolve("out"), path.resolve("cache"), path.resolve("out")],
+    writableRoots: [
+      path.resolve("out"),
+      path.resolve("cache"),
+      path.resolve("out"),
+      `${path.resolve("out")}${path.sep}..${path.sep}${path.basename(path.resolve("out"))}`,
+    ],
   };
   expect(validateSandboxPolicy(policyWithDuplicateRoots)).toEqual({
     type: "workspaceWrite",
