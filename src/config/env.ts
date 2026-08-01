@@ -12,6 +12,8 @@ export interface AccessControlConfig {
 }
 
 const codexApprovalPolicies = ["untrusted", "on-request", "never"] as const;
+export const configuredWorkspaceKinds = ["work", "travel", "personal", "finance", "ai_lab", "learning"] as const;
+export type ConfiguredWorkspaceKind = typeof configuredWorkspaceKinds[number];
 
 const ONE_GIBIBYTE = 1024 ** 3;
 const ONE_TEBIBYTE = 1024 ** 4;
@@ -103,6 +105,7 @@ const configSchema = z.object({
   CODEX_MODEL: z.string().optional(),
   CODEX_SKIP_GIT_REPO_CHECK: booleanEnv(false),
   CODEX_GROUP_ALLOWED_ROOTS: z.string().default(""),
+  CHAT2CODEX_WORKSPACE_ROUTES: z.string().default(""),
   ALLOW_DIRECT_MESSAGES: booleanEnv(true),
   ALLOW_GROUPS: booleanEnv(false),
   ALLOWED_CHAT_IDS: z.string().default(""),
@@ -199,6 +202,7 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
   const groupAllowedRoots = parseCsv(parsed.CODEX_GROUP_ALLOWED_ROOTS).map((entry) =>
     path.resolve(entry),
   );
+  const workspaceRoutes = parseWorkspaceRoutes(parsed.CHAT2CODEX_WORKSPACE_ROUTES, codexWorkdir);
   return {
     chatAdapter: parsed.CHAT2CODEX_ADAPTER,
     feishuAppId: parsed.FEISHU_APP_ID?.trim() ?? "",
@@ -230,6 +234,7 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
     codexModel: parsed.CODEX_MODEL?.trim() || undefined,
     codexSkipGitRepoCheck: parsed.CODEX_SKIP_GIT_REPO_CHECK,
     codexGroupAllowedRoots: groupAllowedRoots.length > 0 ? groupAllowedRoots : [codexWorkdir],
+    workspaceRoutes,
     access: {
       allowDirectMessages: parsed.ALLOW_DIRECT_MESSAGES,
       allowGroups: parsed.ALLOW_GROUPS,
@@ -270,4 +275,16 @@ function parseCsv(value: string): string[] {
     .split(",")
     .map((entry) => entry.trim())
     .filter(Boolean);
+}
+
+function parseWorkspaceRoutes(value: string, codexWorkdir: string): Record<string, string> {
+  if (!value.trim()) return { work: codexWorkdir };
+  let raw: unknown;
+  try { raw = JSON.parse(value); } catch { throw new Error("CHAT2CODEX_WORKSPACE_ROUTES must be valid JSON."); }
+  const schema = z.object(Object.fromEntries(configuredWorkspaceKinds.map((kind) => [kind, z.string().min(1)])) as Record<ConfiguredWorkspaceKind, z.ZodString>).strict();
+  const parsed = schema.parse(raw) as Record<ConfiguredWorkspaceKind, string>;
+  const resolved = Object.fromEntries(configuredWorkspaceKinds.map((kind) => [kind, path.resolve(parsed[kind])]));
+  const normalized = Object.values(resolved).map((root) => process.platform === "win32" ? root.toLocaleLowerCase() : root);
+  if (new Set(normalized).size !== normalized.length) throw new Error("CHAT2CODEX_WORKSPACE_ROUTES contains duplicate paths.");
+  return resolved;
 }

@@ -4,6 +4,11 @@ import path from "node:path";
 import { loadConfig } from "../src/config/env.js";
 
 describe("loadConfig", () => {
+  test("parses strict workspace routes", () => {
+    const routes = { work: "C:\\ws\\Work", travel: "C:\\ws\\Travel", personal: "C:\\ws\\Personal", finance: "C:\\ws\\Finance", ai_lab: "C:\\ws\\AI-Lab", learning: "C:\\ws\\Learning" };
+    const config = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: routes.work, CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(routes) });
+    expect(config.workspaceRoutes).toEqual(Object.fromEntries(Object.entries(routes).map(([key, value]) => [key, path.resolve(value)])));
+  });
   test("selects Weixin without requiring Feishu credentials", () => {
     const config = loadConfig({
       CHAT2CODEX_ADAPTER: "weixin",
