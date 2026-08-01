@@ -83,4 +83,16 @@ describe("OpenAiIntentClassifier", () => {
     expect(systemPrompt).toContain("explicitly requests creating new deliverables without modifying existing workspace files");
     expect(systemPrompt).toContain("otherwise use general");
   });
+
+  test("instructs the task classifier to make explicit fail-closed image dispositions", async () => {
+    const f = await fixture(() => ({ body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({ action: { kind: "clarify", question: "图片属于哪个任务？", candidateTaskIds: [] }, imageDisposition: "clarify", confidence: 1 }) } }] }) }));
+    const client = new OpenAiIntentClassifier({ baseUrl: f.baseUrl, model: "intent", timeoutMs: 1000 });
+    await client.classifyTask({ text: "处理一下", conversationId: "wx", candidates: [], workspaces: [], pendingImageCount: 2, pendingInteractions: [] });
+    const request = JSON.parse(f.received()) as { messages: Array<{ role: string; content: string }> };
+    const prompt = request.messages.find((message) => message.role === "system")?.content ?? "";
+    expect(prompt).toContain("imageDisposition=attach");
+    expect(prompt).toContain("imageDisposition=discard");
+    expect(prompt).toContain("imageDisposition=clarify");
+    expect(prompt).toContain("pendingImageCount");
+  });
 });

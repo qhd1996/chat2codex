@@ -322,6 +322,23 @@ describe("JsonStateStore", () => {
     }
   });
 
+  test("loads only bounded image clarification references and drops descriptor-like fields", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-clarification-")); const statePath = path.join(tempDir, "state.json");
+    try {
+      const state = emptyState();
+      state.clarifications!["chat:user"] = { chatId: "chat", senderKey: "user", question: "图片属于哪个任务？", originalText: "处理一下", draftKey: "chat:user", candidateTaskIds: ["tsk_1"], choices: ["tsk_1"], createdAt: "2026-08-01T00:00:00.000Z", expiresAt: "2026-08-01T00:05:00.000Z" };
+      await new JsonStateStore(statePath).save(state);
+      const raw = JSON.parse(await readFile(statePath, "utf8"));
+      raw.adapters["feishu:default"].clarifications["chat:user"].images = [{ path: "secret.jpg", bytes: "base64" }];
+      await writeFile(statePath, JSON.stringify(raw));
+
+      const loaded = await new JsonStateStore(statePath).load(); const pending = loaded.clarifications?.["chat:user"] as Record<string, unknown>;
+      expect(pending.draftKey).toBe("chat:user");
+      expect(pending.candidateTaskIds).toEqual(["tsk_1"]);
+      expect(pending.images).toBeUndefined();
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
   test("adds and persists a session epoch when loading legacy chat state", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-"));
     const statePath = path.join(tempDir, "state.json");

@@ -59,6 +59,7 @@ const taskClassifierPrompt = [
   "Return strict JSON only: {action,imageDisposition,confidence}.",
   "Choose only supplied task and pending-interaction ids. Never invent approval, permission, path, or output data.",
   "For create_task set executionIntent=output_only only when the user explicitly requests creating new deliverables without modifying existing workspace files; otherwise use general.",
+  "When pendingImageCount is greater than zero, choose exactly one explicit disposition: imageDisposition=attach only to submit them with a create_task, continue_task, or submit_images action; imageDisposition=discard only when the user explicitly abandons them before another action; imageDisposition=clarify when ownership is ambiguous. Never return none while images are pending.",
   "When the target or image ownership is ambiguous, return action.kind clarify with one short Chinese question.",
 ].join(" " );
 

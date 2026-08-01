@@ -290,6 +290,9 @@ export interface PendingClarification {
   senderKey: string;
   question: string;
   originalText?: string;
+  /** Present only for task-aware image clarification; never stores image descriptors or bytes. */
+  draftKey?: string;
+  candidateTaskIds?: string[];
   choices: string[];
   createdAt: string;
   expiresAt: string;

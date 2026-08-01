@@ -515,6 +515,13 @@ class QueueIntentClassifier implements NaturalIntentClassifier {
   async classify(): Promise<unknown> { this.calls += 1; return this.decisions.shift() ?? { intent: "ordinary", confidence: 1 }; }
 }
 
+class PartiallyFailingImageDraftSender extends ImageDraftSender {
+  override async downloadAttachment(message: IncomingTextMessage, attachment: IncomingAttachment): Promise<DownloadedAttachment> {
+    if (attachment.key === "fail") throw new Error("simulated second download failure");
+    return super.downloadAttachment(message, attachment);
+  }
+}
+
 class QueueTaskClassifier implements NaturalIntentClassifier, NaturalTaskClassifier {
   readonly taskInputs: NaturalTaskRoutingInput[] = [];
 
@@ -7335,6 +7342,158 @@ describe("MessageRouter access control", () => {
     });
   });
 
+  test("Phase 1 image draft attaches to a resolved task and durable job atomically", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }),
+      (input) => ({ action: { kind: "continue_task", taskId: input.candidates[0]?.taskId, instruction: "分析这张图片" }, imageDisposition: "attach", confidence: 1 }),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, sender, codex, store }) => {
+      await router.accept(taskImageMessage("create-image-task", "日本酒店任务"));
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept(taskImageMessage("task-image", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("已收到 1 张图片")));
+      await router.accept(taskImageMessage("attach-image", "把这张图放到日本酒店任务分析"));
+      await waitFor(() => codex.runs.length === 2);
+
+      const state = await store.load(); const job = state.jobs["attach-image"];
+      expect(classifier.taskInputs.at(-1)?.pendingImageCount).toBe(1);
+      expect(codex.runs[1]?.localImages).toHaveLength(1);
+      expect(job?.taskId).toBe(Object.values(state.tasks).find((task) => task.title === "日本酒店")?.taskId);
+      expect(job?.localImages).toEqual(codex.runs[1]?.localImages);
+      expect(Object.keys(state.imageDrafts ?? {})).toHaveLength(0);
+    });
+  });
+
+  test("Phase 1 image draft discard deletes files before creating a separate Learning task", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "课程学习", workspaceKind: "learning" }, imageDisposition: "discard", confidence: 1 }),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, sender, codex, store }) => {
+      await router.accept(taskImageMessage("discard-source", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await waitFor(() => sender.downloadedPaths.length === 1); const stagedPath = sender.downloadedPaths[0]!;
+      await router.accept(taskImageMessage("discard-text", "放弃前面的图片，另建课程学习任务"));
+      await waitFor(() => codex.runs.length === 1);
+
+      const state = await store.load();
+      expect(classifier.taskInputs[0]?.pendingImageCount).toBe(1);
+      expect(codex.runs[0]?.localImages).toBeUndefined();
+      expect(Object.values(state.tasks).some((task) => task.workspaceKind === "learning")).toBe(true);
+      expect(Object.keys(state.imageDrafts ?? {})).toHaveLength(0);
+      expect(await stat(stagedPath).catch(() => null)).toBeNull();
+    });
+  });
+
+  test("Phase 1 image draft ambiguity preserves the draft and bounded task references", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "clarify", question: "这些图片属于哪个任务？", candidateTaskIds: [] }, imageDisposition: "clarify", confidence: 1 }),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, sender, codex, store }) => {
+      await router.accept(taskImageMessage("ambiguous-source", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("已收到 1 张图片")));
+      await router.accept(taskImageMessage("ambiguous-text", "帮我处理一下"));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("这些图片属于哪个任务")));
+
+      const state = await store.load(); const pending = Object.values(state.clarifications ?? {})[0];
+      expect(codex.runs).toHaveLength(0);
+      expect(Object.values(state.imageDrafts ?? {})[0]?.images).toHaveLength(1);
+      expect(pending?.draftKey).toBe(Object.keys(state.imageDrafts ?? {})[0]);
+      expect(pending?.candidateTaskIds).toEqual([]);
+    });
+  });
+
+  test("Phase 1 image draft clarification can later attach without losing durable job state", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "clarify", question: "这些图片属于哪个任务？", candidateTaskIds: [] }, imageDisposition: "clarify", confidence: 1 }),
+      () => ({ action: { kind: "create_task", instruction: "用图片学习课程", workspaceKind: "learning" }, imageDisposition: "attach", confidence: 1 }),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, sender, codex, store }) => {
+      await router.accept(taskImageMessage("clarify-source", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await router.accept(taskImageMessage("clarify-text", "帮我处理一下"));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("这些图片属于哪个任务")));
+      await router.accept(taskImageMessage("clarify-answer", "图片属于新的课程学习任务"));
+      await waitFor(() => codex.runs.length === 1);
+
+      const state = await store.load();
+      expect(codex.runs[0]?.localImages).toHaveLength(1);
+      expect(state.jobs["clarify-answer:clarified"]?.localImages).toEqual(codex.runs[0]?.localImages);
+      expect(Object.keys(state.imageDrafts ?? {})).toHaveLength(0);
+      expect(Object.keys(state.clarifications ?? {})).toHaveLength(0);
+    });
+  });
+
+  test("Phase 1 image draft submit_images action targets an existing idle task", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "图片分析", workspaceKind: "work" }, imageDisposition: "none", confidence: 1 }),
+      (input) => ({ action: { kind: "submit_images", taskId: input.candidates[0]?.taskId, instruction: "分析暂存图片" }, imageDisposition: "attach", confidence: 1 }),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, codex }) => {
+      await router.accept(taskImageMessage("submit-task", "新建图片分析任务"));
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept(taskImageMessage("submit-source", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await router.accept(taskImageMessage("submit-text", "把图片提交到图片分析任务"));
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[1]?.localImages).toHaveLength(1);
+      expect(codex.runs[1]?.sessionScope?.taskId).toBe(codex.runs[0]?.sessionScope?.taskId);
+    });
+  });
+
+  test("Phase 1 image draft does not silently steer images into an active task", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "运行中的图片任务", workspaceKind: "work" }, imageDisposition: "none", confidence: 1 }),
+      (input) => ({ action: { kind: "continue_task", taskId: input.candidates[0]?.taskId, instruction: "分析图片" }, imageDisposition: "attach", confidence: 1 }),
+    ]);
+    const codex = new ConcurrentTaskCodex();
+    await withTaskImageRouter(classifier, new ImageDraftSender(), codex, async ({ router, sender, store }) => {
+      await router.accept(taskImageMessage("active-task", "新建运行中的图片任务"));
+      await waitFor(() => codex.runs.length === 1);
+      await router.accept(taskImageMessage("active-source", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]));
+      await router.accept(taskImageMessage("active-text", "把图片补充到运行中的图片任务"));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("图片仍保留")));
+      expect(codex.runs).toHaveLength(1);
+      expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(1);
+    });
+  });
+
+  test("Phase 1 image draft rolls back a multi-image batch when a later download fails", async () => {
+    const sender = new PartiallyFailingImageDraftSender();
+    await withTaskImageRouter(new QueueTaskClassifier([]), sender, new FakeCodex(), async ({ router, store }) => {
+      await router.accept(taskImageMessage("partial-batch", "", [
+        { kind: "image", key: "one", mediaType: "image/jpeg" },
+        { kind: "image", key: "fail", mediaType: "image/jpeg" },
+      ]));
+      await waitFor(() => sender.messages.some((item) => item.text.includes("图片暂存失败")));
+
+      expect(Object.keys((await store.load()).imageDrafts ?? {})).toHaveLength(0);
+      expect(sender.downloadedPaths).toHaveLength(1);
+      expect(await stat(sender.downloadedPaths[0]!).catch(() => null)).toBeNull();
+    });
+  });
+
+  test("Phase 1 image draft acknowledges one through four and rejects the fifth without consuming them", async () => {
+    const sender = new ImageDraftSender();
+    await withTaskImageRouter(new QueueTaskClassifier([]), sender, new FakeCodex(), async ({ router, codex, store }) => {
+      for (let index = 1; index <= 5; index++) {
+        await router.accept(taskImageMessage(`limit-${index}`, "", [{ kind: "image", key: `image-${index}`, mediaType: "image/jpeg" }]));
+      }
+      await waitFor(() => sender.messages.some((item) => item.text.includes("Image draft limit is 4")));
+      const state = await store.load();
+      expect(codex.runs).toHaveLength(0);
+      expect(Object.values(state.imageDrafts ?? {})[0]?.images).toHaveLength(4);
+      for (let count = 1; count <= 4; count++) expect(sender.messages.some((item) => item.text.includes(`已收到 ${count} 张图片`))).toBe(true);
+      expect(await stat(sender.downloadedPaths[4]!).catch(() => null)).toBeNull();
+    });
+  });
+
+  test("Phase 1 image draft treats a duplicate image event idempotently", async () => {
+    const sender = new ImageDraftSender();
+    await withTaskImageRouter(new QueueTaskClassifier([]), sender, new FakeCodex(), async ({ router, store }) => {
+      const message = taskImageMessage("duplicate-image", "", [{ kind: "image", key: "one", mediaType: "image/jpeg" }]);
+      await router.accept(message); await router.accept(message);
+      expect(sender.downloads).toHaveLength(1);
+      expect(Object.values((await store.load()).imageDrafts ?? {})[0]?.images).toHaveLength(1);
+    });
+  });
+
   test("runs two named tasks in one Weixin conversation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-routing-"));
     const work = path.join(tempDir, "Work");
@@ -8612,6 +8771,37 @@ async function withRouterAndSender<TCodex extends CodexClient, TSender extends C
     await router?.dispose();
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+function taskImageMessage(messageId: string, text: string, attachments?: IncomingAttachment[]): IncomingTextMessage {
+  return { messageId, chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" }, text, attachments };
+}
+
+async function withTaskImageRouter<TCodex extends CodexClient, TSender extends ImageDraftSender>(
+  classifier: QueueTaskClassifier,
+  sender: TSender,
+  codex: TCodex,
+  testBody: (context: { router: MessageRouter; sender: TSender; codex: TCodex; store: JsonStateStore }) => Promise<void>,
+): Promise<void> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-phase1-image-")); let router: MessageRouter | undefined;
+  try {
+    const roots = Object.fromEntries(
+      await Promise.all(["work", "travel", "personal", "finance", "ai_lab", "learning"].map(async (kind) => { const root = path.join(tempDir, kind); await mkdir(root); return [kind, root] as const; })),
+    );
+    const config = loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", WEIXIN_NATURAL_ROUTING: "true", CODEX_WORKDIR: roots.work,
+      CHAT2CODEX_HOME: path.join(tempDir, "home"), CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(roots),
+      BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user",
+    });
+    sender.setAttachmentRoot(config.attachmentDownloadDir); const store = new JsonStateStore(config.bridgeStatePath);
+    const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+    const executionWorkspaces = await ExecutionWorkspaceService.create({ chat2codexHome: path.join(tempDir, "home"), codexBin: config.codexBin, sandboxProbe: async () => ({ verified: false, reason: "not needed" }) });
+    router = new MessageRouter(config, store, sender, silentLogger, codex, {}, {
+      classifier, imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }),
+      taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+    });
+    await router.start(); await testBody({ router, sender, codex, store });
+  } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
 }
 
 function naturalDeps(config: TestBridgeConfig, classifier: NaturalIntentClassifier): NaturalConversationDependencies {

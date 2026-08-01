@@ -38,6 +38,47 @@ describe("ImageDraftService", () => {
     expect(submitted?.images).toHaveLength(1); expect(drafts["c:u1"]).toBeUndefined(); expect(drafts["c:u2"]).toBeTruthy();
   });
 
+  test("peek is non-consuming and consume removes exactly one sender draft", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {};
+    await f.service.stage(drafts, { chatId: "c", senderKey: "u1", sourceMessageId: "m1", path: await image(f.root, "peek.jpg"), mediaType: "image/jpeg" });
+    await f.service.stage(drafts, { chatId: "c", senderKey: "u2", sourceMessageId: "m2", path: await image(f.root, "other.jpg"), mediaType: "image/jpeg" });
+
+    const first = f.service.peek(drafts, "c", "u1");
+    const second = f.service.peek(drafts, "c", "u1");
+
+    expect(first).toBe(second);
+    expect(drafts["c:u1"]).toBe(first);
+    expect(f.service.consume(drafts, "c", "u1")).toBe(first);
+    expect(drafts["c:u1"]).toBeUndefined();
+    expect(drafts["c:u2"]).toBeTruthy();
+  });
+
+  test("discard consumes the draft and securely deletes its files", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {};
+    const file = await image(f.root, "discard.jpg");
+    await f.service.stage(drafts, { chatId: "c", senderKey: "u", sourceMessageId: "m", path: file, mediaType: "image/jpeg" });
+
+    expect(await f.service.discard(drafts, "c", "u")).toBe(true);
+
+    expect(drafts["c:u"]).toBeUndefined();
+    expect(await fs.stat(file).catch(() => null)).toBeNull();
+  });
+
+  test("deletes a fifth image while preserving the first four", async () => {
+    const f = await fixture(); const drafts: Record<string, ImageDraft> = {}; const firstFour: string[] = [];
+    for (let i = 1; i <= 4; i++) {
+      const file = await image(f.root, `kept-${i}.jpg`); firstFour.push(file);
+      await f.service.stage(drafts, { chatId: "c", senderKey: "u", sourceMessageId: `m${i}`, path: file, mediaType: "image/jpeg" });
+    }
+    const fifth = await image(f.root, "rejected.jpg");
+
+    await expect(f.service.stage(drafts, { chatId: "c", senderKey: "u", sourceMessageId: "m5", path: fifth, mediaType: "image/jpeg" })).rejects.toThrow(/4/);
+
+    expect(drafts["c:u"]?.images.map((item) => path.normalize(item.path).toLocaleLowerCase())).toEqual(firstFour.map((item) => path.normalize(item).toLocaleLowerCase()));
+    expect(await Promise.all(firstFour.map((file) => fs.stat(file).then(() => true)))).toEqual([true, true, true, true]);
+    expect(await fs.stat(fifth).catch(() => null)).toBeNull();
+  });
+
   test("rejects non-images, outside files, and byte limits", async () => {
     const f = await fixture({ maxFileBytes: 8, maxTotalBytes: 12 }); const drafts: Record<string, ImageDraft> = {};
     const text = path.join(f.root, "bad.jpg"); await fs.writeFile(text, "bad");

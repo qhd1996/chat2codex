@@ -28,6 +28,9 @@ export async function resolveNaturalTaskDecision(input: NaturalTaskRoutingInput,
     const action = validateAction(parsed.data.action, input);
     if (!action) return fallback(input.candidates.map((item) => item.taskId));
     if (input.pendingImageCount > 0 && parsed.data.imageDisposition === "none") return fallback(input.candidates.map((item) => item.taskId));
+    if (input.pendingImageCount === 0 && parsed.data.imageDisposition !== "none") return fallback(input.candidates.map((item) => item.taskId));
+    if (parsed.data.imageDisposition === "attach" && !["create_task","continue_task","submit_images"].includes(action.kind)) return fallback(input.candidates.map((item) => item.taskId));
+    if (parsed.data.imageDisposition === "clarify" && action.kind !== "clarify") return fallback(input.candidates.map((item) => item.taskId));
     return { action, imageDisposition: parsed.data.imageDisposition, confidence: parsed.data.confidence };
   } catch { return fallback(input.candidates.map((item) => item.taskId)); }
 }

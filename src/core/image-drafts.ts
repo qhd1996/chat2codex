@@ -36,12 +36,25 @@ export class ImageDraftService {
     }
   }
 
-  take(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): ImageDraft | undefined {
+  peek(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): ImageDraft | undefined {
+    return drafts[this.key(chatId, senderKey)];
+  }
+
+  consume(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): ImageDraft | undefined {
     const key = this.key(chatId, senderKey); const draft = drafts[key]; if (draft) delete drafts[key]; return draft;
   }
 
+  /** @deprecated Use consume for explicit disposition semantics. */
+  take(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): ImageDraft | undefined {
+    return this.consume(drafts, chatId, senderKey);
+  }
+
+  async discard(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): Promise<boolean> {
+    const draft = this.consume(drafts, chatId, senderKey); if (!draft) return false; await this.deleteDraftFiles(draft); return true;
+  }
+
   async cancel(drafts: Record<string, ImageDraft>, chatId: string, senderKey: string): Promise<boolean> {
-    const draft = this.take(drafts, chatId, senderKey); if (!draft) return false; await this.deleteDraftFiles(draft); return true;
+    return this.discard(drafts, chatId, senderKey);
   }
 
   takeExpired(drafts: Record<string, ImageDraft>): Array<{ key: string; draft: ImageDraft }> {

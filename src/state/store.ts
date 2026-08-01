@@ -263,13 +263,17 @@ function coerceClarifications(value: unknown): BridgeState["clarifications"] {
   if (!isRecord(value)) return {};
   const clarifications: Record<string, PendingClarification> = {};
   for (const [key, item] of Object.entries(value)) {
-    if (isPendingClarification(item)) clarifications[key] = item;
+    if (isPendingClarification(item)) clarifications[key] = {
+      chatId: item.chatId, senderKey: item.senderKey, question: item.question, originalText: item.originalText,
+      draftKey: item.draftKey, candidateTaskIds: item.candidateTaskIds?.slice(0, 12), choices: [...item.choices],
+      createdAt: item.createdAt, expiresAt: item.expiresAt,
+    };
   }
   return clarifications;
 }
 
 function isPendingClarification(value: unknown): value is PendingClarification {
-  return Boolean(isRecord(value) && typeof value.chatId === "string" && typeof value.senderKey === "string" && typeof value.question === "string" && (value.originalText === undefined || typeof value.originalText === "string") && Array.isArray(value.choices) && value.choices.every((choice) => typeof choice === "string") && typeof value.createdAt === "string" && typeof value.expiresAt === "string");
+  return Boolean(isRecord(value) && typeof value.chatId === "string" && typeof value.senderKey === "string" && typeof value.question === "string" && (value.originalText === undefined || typeof value.originalText === "string") && (value.draftKey === undefined || typeof value.draftKey === "string") && (value.candidateTaskIds === undefined || (Array.isArray(value.candidateTaskIds) && value.candidateTaskIds.length <= 12 && value.candidateTaskIds.every((taskId) => typeof taskId === "string"))) && Array.isArray(value.choices) && value.choices.every((choice) => typeof choice === "string") && typeof value.createdAt === "string" && typeof value.expiresAt === "string");
 }
 
 function normalizeChatSessionEpochs(state: BridgeState): void {

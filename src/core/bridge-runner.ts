@@ -1128,6 +1128,8 @@ export class BridgeRunner {
   private async handleOrchestratedMessage(message: IncomingTextMessage, text: string): Promise<void> {
     const orchestrator = this.orchestrator!;
     const senderKey = stableSenderKey(message.sender);
+    const draftKey = orchestrator.imageDrafts.key(message.chatId, senderKey);
+    const draft = orchestrator.imageDrafts.peek(this.requireState().imageDrafts ??= {}, message.chatId, senderKey);
     const tasks = orchestrator.taskRegistry.listConversation(this.requireState(), message.chatId, senderKey);
     const decision = await resolveNaturalTaskDecision({
       text,
@@ -1137,10 +1139,37 @@ export class BridgeRunner {
         status: task.status, objectiveSummary: task.objectiveSummary, recentRequests: task.recentRequests,
       })),
       workspaces: orchestrator.workspaceRouter.candidatesForClassifier(),
-      pendingImageCount: 0,
+      pendingImageCount: draft?.images.length ?? 0,
       pendingInteractions: [],
     }, orchestrator.classifier, this.config.weixinIntentMinConfidence);
     const action = decision.action;
+    if (draft && decision.imageDisposition === "discard") {
+      let discarded;
+      await this.mutateState((state) => { discarded = orchestrator.imageDrafts.consume(state.imageDrafts ??= {}, message.chatId, senderKey); });
+      if (discarded) {
+        try { await orchestrator.imageDrafts.deleteFiles(discarded); }
+        catch (error) {
+          await this.mutateState((state) => { (state.imageDrafts ??= {})[draftKey] = discarded!; });
+          await this.sender.sendText(message.chatId, `无法安全删除暂存图片，未执行后续任务：${truncateInline(formatError(error), 120)}`);
+          return;
+        }
+      }
+    }
+    if (draft && decision.imageDisposition === "clarify") {
+      const question = action.kind === "clarify" ? action.question : "这些图片要用于哪个任务？";
+      const candidateTaskIds = (action.kind === "clarify" ? action.candidateTaskIds : tasks.map((task) => task.taskId)).slice(0, 12);
+      const now = Date.now();
+      await this.mutateState((state) => {
+        (state.clarifications ??= {})[`${message.chatId}:${senderKey}`] = {
+          chatId: message.chatId, senderKey, question, originalText: text, draftKey, candidateTaskIds,
+          choices: candidateTaskIds, createdAt: new Date(now).toISOString(), expiresAt: new Date(now + 5 * 60_000).toISOString(),
+        };
+      });
+      await this.sender.sendText(message.chatId, question);
+      return;
+    }
+    const attachedImages = draft && decision.imageDisposition === "attach" ? draft.images.map((image) => image.path) : undefined;
+    const attachedDraftKey = attachedImages ? draftKey : undefined;
     if (action.kind === "create_task") {
       let route;
       try {
@@ -1160,7 +1189,7 @@ export class BridgeRunner {
         orchestrator.taskRegistry.transition(state, task.taskId, "queued");
         orchestrator.taskRegistry.appendRequest(state, task.taskId, action.instruction);
       });
-      await this.startOrchestratedRun(task.taskId, action.instruction, message, action.collaborationMode ?? "default", action.executionIntent ?? "general");
+      await this.startOrchestratedRun(task.taskId, action.instruction, message, action.collaborationMode ?? "default", action.executionIntent ?? "general", attachedImages, attachedDraftKey);
       return;
     }
     if (action.kind === "clarify") {
@@ -1171,7 +1200,7 @@ export class BridgeRunner {
       await this.sendTaskStatus(message.chatId, tasks);
       return;
     }
-    if (action.kind === "steer_task" || action.kind === "continue_task" || action.kind === "stop_task" || action.kind === "retry_task" || action.kind === "inspect_task") {
+    if (action.kind === "steer_task" || action.kind === "continue_task" || action.kind === "submit_images" || action.kind === "stop_task" || action.kind === "retry_task" || action.kind === "inspect_task") {
       const resolution = orchestrator.taskTargetResolver.resolve({
         tasks, conversationId: message.chatId, senderKey, explicitTaskId: action.taskId,
         actionKind: action.kind, allowRecency: action.kind !== "stop_task",
@@ -1187,8 +1216,12 @@ export class BridgeRunner {
         await this.sendTaskStatus(message.chatId, [task]);
       } else if (action.kind === "retry_task") {
         await this.retryTask(task, message);
-      } else if (action.kind === "steer_task" || action.kind === "continue_task") {
+      } else if (action.kind === "steer_task" || action.kind === "continue_task" || action.kind === "submit_images") {
         const instruction = action.instruction;
+        if (attachedImages && (this.activeRuns.has(task.taskId) || this.queuedRuns.has(task.taskId))) {
+          await this.sender.sendText(task.conversationId, prefixTaskMessage(task, "任务正在运行或排队，暂不能附加图片；图片仍保留，请等任务空闲后重试。"));
+          return;
+        }
         if (this.activeRuns.has(task.taskId)) {
           await this.steerTask(task, instruction);
           return;
@@ -1207,6 +1240,8 @@ export class BridgeRunner {
           message,
           "default",
           executionIntentForTask(task),
+          attachedImages,
+          attachedDraftKey,
         );
       }
       return;
@@ -1358,7 +1393,7 @@ export class BridgeRunner {
     await this.sender.sendText(conversationId, ["任务状态", ...lines].join("\n"));
   }
 
-  private async startOrchestratedRun(taskId: string, prompt: string, message: IncomingTextMessage, collaborationMode: CodexCollaborationMode = "default", executionIntent: "general" | "output_only" = "general"): Promise<void> {
+  private async startOrchestratedRun(taskId: string, prompt: string, message: IncomingTextMessage, collaborationMode: CodexCollaborationMode = "default", executionIntent: "general" | "output_only" = "general", localImages?: string[], imageDraftKey?: string): Promise<void> {
     const orchestrator = this.orchestrator!;
     const execution = await orchestrator.executionWorkspaces.prepare({ taskId, workspaceRoot: this.requireState().tasks[taskId]!.workspaceRoot, intent: executionIntent });
     await this.mutateState((state) => {
@@ -1369,6 +1404,12 @@ export class BridgeRunner {
       if (job) {
         job.taskId = taskId; job.workspaceRoot = execution.workspaceRoot; job.executionCwd = execution.executionCwd; job.isolationMode = execution.isolationMode;
         job.cwd = execution.executionCwd; job.threadId = task.threadId; job.collaborationMode = collaborationMode;
+        job.localImages = localImages;
+      }
+      if (imageDraftKey) {
+        const currentDraft = (state.imageDrafts ??= {})[imageDraftKey];
+        if (!currentDraft || !localImages || currentDraft.images.length !== localImages.length || currentDraft.images.some((image, index) => image.path !== localImages[index])) throw new Error("The image draft changed before it could be bound to the task.");
+        delete state.imageDrafts![imageDraftKey];
       }
     });
     const task = this.requireState().tasks[taskId]!;
@@ -1376,6 +1417,7 @@ export class BridgeRunner {
       controller: new AbortController(), taskId, conversationId: task.conversationId, taskTitle: task.title,
       workspaceRoot: execution.workspaceRoot, isolationMode: execution.isolationMode, sandboxPolicy: execution.sandboxPolicy,
       cwd: execution.executionCwd, prompt, collaborationMode, sessionEpoch: task.sessionEpoch, messageId: message.messageId,
+      localImages,
       threadId: task.threadId, chatType: message.chatType, originSender: { ...message.sender }, queuedAtMs: Date.now(), waitingFor: "workspace",
     };
     this.queuedRuns.set(taskId, queuedRun);
@@ -1567,13 +1609,13 @@ export class BridgeRunner {
     const senderKey = stableSenderKey(message.sender);
     const images = message.attachments?.filter((attachment) => attachment.kind === "image") ?? [];
     const pending: Array<{ attachment: IncomingAttachment; downloaded: DownloadedAttachment; sourceMessageId: string }> = [];
-    for (const attachment of images) {
-      const sourceMessageId = `${message.messageId}:${attachment.key}`;
-      const key = this.naturalConversation.imageDrafts.key(message.chatId, senderKey);
-      if (this.requireState().imageDrafts?.[key]?.images.some((image) => image.sourceMessageId === sourceMessageId)) continue;
-      pending.push({ attachment, downloaded: await this.sender.downloadAttachment(message, attachment), sourceMessageId });
-    }
     try {
+      for (const attachment of images) {
+        const sourceMessageId = `${message.messageId}:${attachment.key}`;
+        const key = this.naturalConversation.imageDrafts.key(message.chatId, senderKey);
+        if (this.requireState().imageDrafts?.[key]?.images.some((image) => image.sourceMessageId === sourceMessageId)) continue;
+        pending.push({ attachment, downloaded: await this.sender.downloadAttachment(message, attachment), sourceMessageId });
+      }
       await this.mutateState(async (state) => {
         for (const item of pending) await this.naturalConversation!.imageDrafts.stage(state.imageDrafts ??= {}, { chatId: message.chatId, senderKey, sourceMessageId: item.sourceMessageId, path: item.downloaded.path, mediaType: item.downloaded.mediaType ?? item.attachment.mediaType ?? "image/jpeg" });
       });
@@ -1659,6 +1701,11 @@ export class BridgeRunner {
       if (Date.parse(pending.expiresAt) <= Date.now()) {
         await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
         await this.sender.sendText(message.chatId, "刚才的确认已过期，请重新描述任务。");
+        return;
+      }
+      if (pending.draftKey && this.orchestrator) {
+        await this.mutateState((state) => { delete (state.clarifications ??= {})[key]; });
+        await this.accept({ ...message, messageId: `${message.messageId}:clarified` });
         return;
       }
       const answer = await this.resolveClarificationAnswer(message, naturalControlText(routedText(message)) || routedText(message));
