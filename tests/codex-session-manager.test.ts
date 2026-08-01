@@ -29,6 +29,33 @@ describe("Codex app-server session manager", () => {
     } finally { await runner.dispose?.(); await rm(fixture.tempDir, { recursive: true, force: true }); }
   });
 
+  test("does not reuse one task session across different conversations", async () => {
+    const fixture = await createSessionFakeCodex();
+    const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
+    const taskScope = { taskId: "tsk_bound", sessionEpoch: "epoch-bound" };
+
+    try {
+      const first = await runner.run({
+        prompt: "first-conversation",
+        cwd: fixture.tempDir,
+        sessionScope: scope({ ...taskScope, conversationId: "wx_a" }),
+      });
+      await runner.run({
+        prompt: "second-conversation",
+        cwd: fixture.tempDir,
+        threadId: first.threadId,
+        sessionScope: scope({ ...taskScope, conversationId: "wx_b" }),
+      });
+
+      const received = await readMessages(fixture.receivedPath);
+      expect(received.filter(({ message }) => message.method === "initialize")).toHaveLength(2);
+      expect(new Set(received.map((entry) => entry.pid))).toHaveLength(2);
+    } finally {
+      await runner.dispose?.();
+      await rm(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("passes a custom workspace-write sandbox policy to turn start", async () => {
     const fixture = await createSessionFakeCodex(); const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
     try {
@@ -36,6 +63,23 @@ describe("Codex app-server session manager", () => {
       await runner.run({ prompt: "policy", cwd: fixture.tempDir, sessionScope: scope({ conversationId: "wx", taskId: "tsk_policy" }), sandboxPolicy: policy });
       const turn = (await readMessages(fixture.receivedPath)).find(({ message }) => message.method === "turn/start")?.message; expect(turn?.params).toMatchObject({ sandboxPolicy: policy });
     } finally { await runner.dispose?.(); await rm(fixture.tempDir, { recursive: true, force: true }); }
+  });
+
+  test("passes a custom sandbox policy to single-use turn start", async () => {
+    const fixture = await createSessionFakeCodex();
+    const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
+    const policy = { type: "readOnly" as const, networkAccess: false };
+
+    try {
+      await runner.run({ prompt: "single-use-policy", cwd: fixture.tempDir, sandboxPolicy: policy });
+      const turn = (await readMessages(fixture.receivedPath)).find(
+        ({ message }) => message.method === "turn/start",
+      )?.message;
+      expect(turn?.params).toMatchObject({ sandboxPolicy: policy });
+    } finally {
+      await runner.dispose?.();
+      await rm(fixture.tempDir, { recursive: true, force: true });
+    }
   });
   test("reuses one app-server process for consecutive turns in the same scoped thread", async () => {
     const fixture = await createSessionFakeCodex();

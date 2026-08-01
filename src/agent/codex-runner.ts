@@ -106,8 +106,7 @@ export type CodexSessionPrincipal = SenderIdentity;
 export type CodexSandboxPolicy =
   | { type: "dangerFullAccess" }
   | { type: "readOnly"; networkAccess?: boolean }
-  | { type: "externalSandbox"; networkAccess?: "restricted" | "enabled" }
-  | { type: "workspaceWrite"; writableRoots?: string[]; networkAccess?: boolean; excludeTmpdirEnvVar?: boolean; excludeSlashTmp?: boolean };
+  | { type: "workspaceWrite"; writableRoots: string[]; networkAccess?: boolean; excludeTmpdirEnvVar?: boolean; excludeSlashTmp?: boolean };
 
 export interface CodexRunResult {
   threadId?: string;
@@ -2086,6 +2085,7 @@ class CodexAppServerSession {
       this.isHealthy() &&
       this.descriptor.scope.adapterId === expected.scope.adapterId &&
       this.descriptor.sessionKey === expected.sessionKey &&
+      this.descriptor.conversationId === expected.conversationId &&
       this.descriptor.scope.sessionEpoch === expected.scope.sessionEpoch &&
       sameStableSessionPrincipal(
         this.descriptor.scope.principal,
@@ -2921,21 +2921,6 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
         type: "readOnly",
         ...(record.networkAccess !== undefined ? { networkAccess: record.networkAccess } : {}),
       };
-    case "externalSandbox":
-      if (!hasOnlyKeys(record, ["type", "networkAccess"])) {
-        throw new Error("The external sandbox policy contains an unsupported field.");
-      }
-      if (
-        record.networkAccess !== undefined &&
-        record.networkAccess !== "restricted" &&
-        record.networkAccess !== "enabled"
-      ) {
-        throw new Error("The external sandbox networkAccess value is unsupported.");
-      }
-      return {
-        type: "externalSandbox",
-        ...(record.networkAccess !== undefined ? { networkAccess: record.networkAccess } : {}),
-      };
     case "workspaceWrite": {
       if (
         !hasOnlyKeys(record, [
@@ -2953,7 +2938,13 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
       }
       if (
         record.writableRoots.length > 32 ||
-        record.writableRoots.some((root) => typeof root !== "string" || !path.isAbsolute(root))
+        record.writableRoots.some(
+          (root) =>
+            typeof root !== "string" ||
+            root.length === 0 ||
+            root.length > maxPermissionPathLength ||
+            !path.isAbsolute(root),
+        )
       ) {
         throw new Error("Sandbox writable roots must be bounded absolute paths.");
       }
@@ -2967,7 +2958,7 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
       const excludeSlashTmp = record.excludeSlashTmp as boolean | undefined;
       return {
         type: "workspaceWrite",
-        writableRoots: [...new Set(record.writableRoots.map((root) => path.resolve(root)))],
+        writableRoots: [...record.writableRoots] as string[],
         ...(networkAccess !== undefined ? { networkAccess } : {}),
         ...(excludeTmpdirEnvVar !== undefined ? { excludeTmpdirEnvVar } : {}),
         ...(excludeSlashTmp !== undefined ? { excludeSlashTmp } : {}),

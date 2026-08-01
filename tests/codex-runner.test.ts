@@ -49,6 +49,12 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
     }),
   ).toThrow(/bounded/);
   expect(() =>
+    validateSandboxPolicy({
+      type: "workspaceWrite",
+      writableRoots: [path.resolve(`root-${"x".repeat(4_096)}`)],
+    }),
+  ).toThrow(/bounded/);
+  expect(() =>
     validateSandboxPolicy({ type: "workspaceWrite" } as unknown as CodexSandboxPolicy),
   ).toThrow(/writableRoots/);
   expect(() =>
@@ -71,7 +77,13 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
       type: "externalSandbox",
       networkAccess: "unknown",
     } as unknown as CodexSandboxPolicy),
-  ).toThrow(/networkAccess/);
+  ).toThrow(/unsupported/);
+  expect(() =>
+    validateSandboxPolicy({
+      type: "externalSandbox",
+      networkAccess: "restricted",
+    } as unknown as CodexSandboxPolicy),
+  ).toThrow(/unsupported/);
   expect(validateSandboxPolicy({ type: "readOnly", networkAccess: false })).toEqual({
     type: "readOnly",
     networkAccess: false,
@@ -79,12 +91,11 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
   expect(validateSandboxPolicy({ type: "dangerFullAccess" })).toEqual({
     type: "dangerFullAccess",
   });
-  expect(
-    validateSandboxPolicy({
-      type: "workspaceWrite",
-      writableRoots: [path.resolve("out"), path.resolve("out")],
-    }),
-  ).toMatchObject({ writableRoots: [path.resolve("out")] });
+  const unchangedPolicy = {
+    type: "workspaceWrite" as const,
+    writableRoots: [path.resolve("out"), path.resolve("out")],
+  };
+  expect(validateSandboxPolicy(unchangedPolicy)).toEqual(unchangedPolicy);
 });
 import { loadConfig } from "../src/config/env.js";
 import { createNodeTestLauncher } from "./helpers/platform.js";
