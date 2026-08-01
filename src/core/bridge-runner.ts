@@ -1639,7 +1639,6 @@ export class BridgeRunner {
         runState.timedOut = true;
         controller.abort();
       }, this.config.codexRunTimeoutMs);
-      runState.timeoutTimer.unref?.();
     }
     const reportProgress = this.createProgressReporter(chatId, controller.signal, runState);
     this.activeRuns.set(chatId, runState);
@@ -4589,7 +4588,6 @@ export class BridgeRunner {
           const input = this.finishPendingPermissionApproval(pending, "expired", "deny");
           void this.updatePermissionApprovalCard(pending.handle, input);
         }, this.config.codexApprovalTimeoutMs);
-        pending.timeoutTimer.unref?.();
       }
       this.activePermissionApprovals.set(key, pending);
       signal.addEventListener("abort", abortListener, { once: true });
@@ -4842,7 +4840,6 @@ export class BridgeRunner {
           );
           void this.updateMcpElicitationCard(pending.handle, input);
         }, this.config.codexApprovalTimeoutMs);
-        pending.timeoutTimer.unref?.();
       }
       this.activeMcpElicitations.set(key, pending);
       signal.addEventListener("abort", abortListener, { once: true });
@@ -5520,7 +5517,6 @@ export class BridgeRunner {
             this.logger.warn("Failed to record approval timeout", error);
           });
         }, this.config.codexApprovalTimeoutMs);
-        pending.timeoutTimer.unref?.();
       }
 
       const presentation = this.sender.createApprovalCard && this.sender.updateApprovalCard
