@@ -39,4 +39,11 @@ describe("OpenAiIntentClassifier", () => {
     const slow = await fixture(() => ({ body: "{}", delay: 100 }));
     await expect(new OpenAiIntentClassifier({ baseUrl: slow.baseUrl, model: "x", timeoutMs: 10 }).classify({ text: "x", context: { hasThread: false, activeRun: false, pendingApprovalCount: 0, pendingPermissionCount: 0, hasImageDraft: false } })).rejects.toThrow();
   });
+  test("sends task candidates without secret values", async () => {
+    const f = await fixture(() => ({ body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({ action: { kind: "stop_task", taskId: "tsk_1" }, imageDisposition: "none", confidence: 0.9 }) } }] }) }));
+    const client = new OpenAiIntentClassifier({ baseUrl: f.baseUrl, model: "intent", timeoutMs: 1000 });
+    expect(await client.classifyTask({ text: "停止酒店任务", conversationId: "wx", candidates: [{ taskId: "tsk_1", title: "酒店", aliases: [], workspaceKind: "travel", status: "running", objectiveSummary: "比较酒店", recentRequests: [] }], workspaces: [], pendingImageCount: 0, pendingInteractions: [] })).toMatchObject({ action: { taskId: "tsk_1" } });
+    expect(f.received()).toContain("tsk_1");
+    expect(f.received()).not.toMatch(/authorization|token|secret|replyCode/i);
+  });
 });

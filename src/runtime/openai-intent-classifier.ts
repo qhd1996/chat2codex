@@ -1,4 +1,5 @@
 import { naturalIntentDecisionSchema, type NaturalIntentClassifier, type NaturalIntentInput } from "../core/natural-intent.js";
+import { type NaturalTaskClassifier, type NaturalTaskRoutingInput } from "../core/natural-task-router.js";
 
 export interface OpenAiIntentClassifierOptions {
   baseUrl: string;
@@ -7,7 +8,7 @@ export interface OpenAiIntentClassifierOptions {
   fetchImpl?: typeof fetch;
 }
 
-export class OpenAiIntentClassifier implements NaturalIntentClassifier {
+export class OpenAiIntentClassifier implements NaturalIntentClassifier, NaturalTaskClassifier {
   private readonly fetchImpl: typeof fetch;
 
   constructor(private readonly options: OpenAiIntentClassifierOptions) {
@@ -15,6 +16,14 @@ export class OpenAiIntentClassifier implements NaturalIntentClassifier {
   }
 
   async classify(input: NaturalIntentInput, signal?: AbortSignal): Promise<unknown> {
+    return this.complete(classifierPrompt, { text: input.text.slice(0, 4000), context: input.context }, naturalIntentDecisionSchema.parse, signal);
+  }
+
+  async classifyTask(input: NaturalTaskRoutingInput, signal?: AbortSignal): Promise<unknown> {
+    return this.complete(taskClassifierPrompt, input, (value) => value, signal);
+  }
+
+  private async complete(system: string, input: unknown, parse: (value: unknown) => unknown, signal?: AbortSignal): Promise<unknown> {
     const timeout = AbortSignal.timeout(this.options.timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     const response = await this.fetchImpl(`${this.options.baseUrl.replace(/\/+$/u, "")}/chat/completions`, {
@@ -25,8 +34,8 @@ export class OpenAiIntentClassifier implements NaturalIntentClassifier {
         model: this.options.model,
         temperature: 0,
         messages: [
-          { role: "system", content: classifierPrompt },
-          { role: "user", content: JSON.stringify({ text: input.text.slice(0, 4000), context: input.context }) },
+          { role: "system", content: system },
+          { role: "user", content: JSON.stringify(input) },
         ],
       }),
     });
@@ -34,8 +43,7 @@ export class OpenAiIntentClassifier implements NaturalIntentClassifier {
     const payload = await response.json() as { choices?: Array<{ message?: { content?: unknown } }> };
     const content = payload.choices?.[0]?.message?.content;
     if (typeof content !== "string") throw new Error("Intent classifier returned no text content");
-    const parsed = naturalIntentDecisionSchema.parse(JSON.parse(stripFence(content)));
-    return parsed;
+    return parse(JSON.parse(stripFence(content)));
   }
 }
 
@@ -45,6 +53,13 @@ const classifierPrompt = [
   "Allowed intents: new_task, continue_task, steer_active, stop, approve, deny, cancel_draft, submit_image_draft, ordinary, clarify.",
   "Use context strictly. When ambiguous, use clarify and ask one short Chinese question. Never invent approval context.",
 ].join(" ");
+
+const taskClassifierPrompt = [
+  "Classify one Chinese mobile message for a multi-task coding-agent bridge.",
+  "Return strict JSON only: {action,imageDisposition,confidence}.",
+  "Choose only supplied task and pending-interaction ids. Never invent approval, permission, path, or output data.",
+  "When the target or image ownership is ambiguous, return action.kind clarify with one short Chinese question.",
+].join(" " );
 
 function stripFence(value: string): string {
   const trimmed = value.trim();
