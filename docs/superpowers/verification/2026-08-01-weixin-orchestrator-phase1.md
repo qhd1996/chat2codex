@@ -2,7 +2,7 @@
 
 ## Verdict
 
-**Incomplete as of 2026-08-02 01:00 Asia/Shanghai.** The candidate is deployed and one repaired natural-language `create_task` flow completed through the real Weixin bot, but the complete Phase 1 acceptance matrix has not been exercised through Weixin. In particular, real multi-task control, concurrency, task-scoped approvals, the four-image state machine, queued-task recovery, and rollback remain unverified. Phase 1 must not be called accepted yet.
+**Incomplete as of 2026-08-02 01:05 Asia/Shanghai.** Candidate `0.8.0-orchestrator.4` is deployed. A real natural-language `create_task` flow proved Weixin ingress, Travel routing, Codex execution, and text egress, but it also exposed that the new task incorrectly resumed the imported legacy chat thread. The regression is repaired and covered by automated tests in `.4`, but has not yet been repeated through real Weixin. The complete Phase 1 acceptance matrix, including real multi-task control, concurrency, task-scoped approvals, the four-image state machine, queued-task recovery, and rollback, remains unverified. Phase 1 must not be called accepted yet.
 
 This record distinguishes three evidence levels:
 
@@ -16,12 +16,12 @@ All user, conversation, task, thread, job, and outbox identifiers below are reda
 
 | Item | Evidence | Result |
 | --- | --- | --- |
-| Installed candidate | `chat2codex version` returned `0.8.0-orchestrator.3`. Installed `package.json` SHA-256: `ACED28E6697B1D8BE408F703B4534F9AC8EAA1E099A6E44A18758867F0113C67`. | Pass |
-| Candidate archive | `chat2codex-0.8.0-orchestrator.3.tgz`, 280,386 bytes, SHA-256 `A568CD834456DB80F993A340125AED396CC3C62B3D681588FC4BEB5AF283892D`. The archive remains untracked and was not staged. | Recorded |
+| Installed candidate | Installed `package.json` reports `0.8.0-orchestrator.4`; SHA-256 `AD2038C339716A4C0ACB91C996529FE32698D71960F5C58EE07E3A9C3F6DEDA7`. | Pass |
+| Candidate archive | `chat2codex-0.8.0-orchestrator.4.tgz`, 280,396 bytes, SHA-256 `918BDDC97AD9233AAC1A8735033FEE464F2B9D521D7FA5064ED009E8539C349B`. The archive remains untracked and was not staged. | Recorded |
 | Installed/build identity | SHA-256 equality was checked for `dist/core/bridge-runner.js`, `execution-workspaces.js`, `runtime/openai-intent-classifier.js`, and `state/store.js`; all four installed files equal the freshly built worktree files. | Pass |
-| Scheduled gateway | Scheduled task `Chat2Codex-Weixin` was `Running` at 2026-08-02 00:58 local; last start 00:24:09; result `0x41301` means the task is still running. Exactly one gateway process used `F:\Chat2Codex\node\node.exe` (PID 53596 at observation time), with one PowerShell launcher and one `cmd.exe` wrapper. | Pass |
+| Scheduled gateway | Scheduled task `Chat2Codex-Weixin` last started at 00:46:05 local and reports `0x41301`, meaning it is still running. Exactly one gateway process used `F:\Chat2Codex\node\node.exe` (PID 39384 at 01:03 local). | Pass |
 | Instance lock | One active `state.json.lock` exists. Older locks are retained with `.stale-*` names and are not active locks. | Pass |
-| Runtime log | The last production ready event before the real repaired flow was `2026-08-01T16:24:28.735Z`. No repeated auth or poll failure followed it in the captured log. Earlier network `fetch failed` bursts are retained in the log and predate this deployment. | Pass with historical warnings |
+| Runtime log | Candidate `.4` emitted `Chat adapter ready` at `2026-08-01T16:46:26.403Z`. No repeated auth or poll failure followed it in the captured log. Earlier network `fetch failed` bursts are retained in the log and predate this deployment. | Pass with historical warnings |
 | Non-secret launcher policy | `workspace-write`, `on-request`, `ALLOW_GROUPS=false`, `CODEX_MAX_CONCURRENT_RUNS=4`, and `CODEX_MAX_APP_SERVER_SESSIONS=8` are set in `F:\Chat2Codex\Start-Chat2Codex.ps1`. | Pass |
 | Six roots | Work, Travel, Personal, Finance, AI-Lab, and Learning all exist, canonicalize to six distinct directories under `F:\workspace\workbuddy`, and are supplied by launcher JSON. | Pass |
 
@@ -42,7 +42,7 @@ A second hotfix backup exists at `F:\Chat2Codex\rollback\phase1-probe-hotfix-202
 
 ## Fresh local gates
 
-Commands were run on 2026-08-02 between 00:39 and 00:55 Asia/Shanghai.
+Commands were run on 2026-08-02 between 00:39 and 01:05 Asia/Shanghai. The full repository check was rerun after the `.4` task-thread-isolation hotfix.
 
 ### Installed runtime
 
@@ -92,7 +92,7 @@ Regression repair:
 - Focused classifier tests: 14/14 passed; typecheck and build passed before deployment.
 - Release commit `1320f6e` produced and deployed `0.8.0-orchestrator.3`.
 
-### Repaired create flow: passed
+### Repaired classifier flow: transport and routing passed; task-thread isolation failed
 
 At `2026-08-01T16:30:07.984Z` (2026-08-02 00:30 local), a real Weixin natural-language message created task `***7d6d6f`. Current durable evidence shows:
 
@@ -103,13 +103,22 @@ At `2026-08-01T16:30:07.984Z` (2026-08-02 00:30 local), a real Weixin natural-la
 - one task-scoped Markdown outbox item `***312c0f` was delivered once at `16:30:22.722Z`;
 - the task reached `completed`; the prior imported task retained its own state and thread.
 
-This directly proves Weixin connection, inbound natural-language `create_task` classification, Travel routing, Codex execution, and outbound text delivery for one task. It does not prove the rest of the multi-task control surface.
+This directly proves Weixin connection, inbound natural-language `create_task` classification, Travel routing, Codex execution, and outbound text delivery. It does **not** prove a correctly isolated new task: runtime logs show `threadId: ***3b8dc8` with `resume: true`, matching the imported legacy task's thread, while the new task record itself had no bound `threadId`. Therefore the flow is retained as positive transport/routing evidence and negative task-isolation evidence, not as an end-to-end task-creation pass.
+
+Root cause and `.4` repair:
+
+- `runThreadId` used `task?.threadId ?? session.threadId`; a new task with no thread therefore fell back to the conversation's legacy thread.
+- Commit `b705890` changes the selection to `task ? task.threadId : session.threadId`, so a registered new task starts without any legacy fallback.
+- The two-task integration fixture now seeds a legacy chat thread and asserts both new task runs receive `threadId === undefined`, after which each binds its own distinct thread.
+- Release commit `eebb86c` produced and deployed `0.8.0-orchestrator.4`. Installed and freshly built hashes match for `bridge-runner.js`, `execution-workspaces.js`, `openai-intent-classifier.js`, and `state/store.js`.
+- A fresh `.4` `bun run check` passed: **489 pass, 8 skip, 0 fail**, 2,123 assertions.
+- No post-hotfix real Weixin task has yet appeared in durable state or logs, so the regression remains awaiting real E2E confirmation.
 
 ## Phase 1 acceptance matrix
 
 | Requirement | Strongest current evidence | Status |
 | --- | --- | --- |
-| Natural create in named workspace | Real Weixin repaired flow above | **Pass** |
+| Natural create in named workspace | Real Weixin flow proved classification and Travel routing, but leaked into the imported legacy thread; `.4` automated regression passes | **Real post-hotfix E2E missing** |
 | Natural continue and steer by task | Automated task/session/router tests only | **Real E2E missing** |
 | Natural stop of one named task | Automated cancellation and scheduler tests only | **Real E2E missing** |
 | Concurrent named Travel and Finance tasks in one conversation | Unit/integration test `runs two named tasks in one Weixin conversation` | **Real E2E missing** |
@@ -130,15 +139,15 @@ This directly proves Weixin connection, inbound natural-language `create_task` c
 | Queued task survives restart | Automated recovery test only | **Real restart E2E missing** |
 | Running controlled task becomes interrupted and is not replayed | Real migration shows one legacy running job became `interrupted` | **Pass for migrated legacy run; controlled Phase 1 restart still missing** |
 | Rollback restores candidate and health from disposable copied state | Backups and hashes exist | **Exercise missing** |
-| Existing text delivery has no regression | Real repaired task produced one exactly-once delivered Markdown outbox item | **Pass for one flow** |
+| Existing text delivery has no regression | The pre-`.4` task produced one exactly-once delivered Markdown outbox item | **Pass for text transport; post-hotfix task E2E missing** |
 
 No real image was sent during this verification record. Current durable image-draft count is zero; therefore image counts cannot be inferred from the presence of local fixture files.
 
 ## Next acceptance session
 
-Before any additional external Weixin messages, obtain a fresh action-time confirmation describing the exact target conversation and non-sensitive payloads. Then execute, timestamp, and capture in order:
+The user granted action-time confirmation and unattended authority for the previously defined non-sensitive test range, with a pause required for CAPTCHA or irreversible actions. Execute, timestamp, and capture in order:
 
-1. Travel and Finance concurrent named tasks, targeted steer, targeted stop, ambiguity, and no-action clarification.
+1. First repeat one new task on `.4` and prove it starts with no legacy thread and binds a distinct thread; then run Travel and Finance concurrent named tasks, targeted steer, targeted stop, ambiguity, and no-action clarification.
 2. Two simultaneous task-scoped approvals plus a generic-consent negative case.
 3. Different-root, same-Git, output-only, and canonical non-Git FIFO timing probes.
 4. Four images without text, fifth-image rejection, text submission, discard-to-Learning, ambiguity preservation, TTL expiry, and restart revalidation.
