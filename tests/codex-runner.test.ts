@@ -7,6 +7,8 @@ import {
   buildCodexArgs,
   buildCodexTurnInput,
   validateLocalImages,
+  validateSandboxPolicy,
+  type CodexSandboxPolicy,
   CodexRunner,
   parseCodexJsonLine,
   summarizeCodexProgress,
@@ -34,6 +36,55 @@ test("validateLocalImages canonicalizes regular files and rejects missing or rel
     await expect(validateLocalImages([path.join(directory, "missing.png")])).rejects.toThrow();
     await expect(validateLocalImages(["relative.png"])).rejects.toThrow(/absolute/);
   } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+test("validateSandboxPolicy accepts only bounded supported policy shapes", () => {
+  expect(() =>
+    validateSandboxPolicy({ type: "workspaceWrite", writableRoots: ["relative"] }),
+  ).toThrow(/absolute/);
+  expect(() =>
+    validateSandboxPolicy({
+      type: "workspaceWrite",
+      writableRoots: Array.from({ length: 33 }, (_, index) => path.resolve(String(index))),
+    }),
+  ).toThrow(/bounded/);
+  expect(() =>
+    validateSandboxPolicy({ type: "workspaceWrite" } as unknown as CodexSandboxPolicy),
+  ).toThrow(/writableRoots/);
+  expect(() =>
+    validateSandboxPolicy({ type: "unsupported" } as unknown as CodexSandboxPolicy),
+  ).toThrow(/unsupported/);
+  expect(() =>
+    validateSandboxPolicy({
+      type: "readOnly",
+      networkAccess: "yes",
+    } as unknown as CodexSandboxPolicy),
+  ).toThrow(/networkAccess/);
+  expect(() =>
+    validateSandboxPolicy({
+      type: "dangerFullAccess",
+      writableRoots: [path.resolve("out")],
+    } as unknown as CodexSandboxPolicy),
+  ).toThrow(/field/);
+  expect(() =>
+    validateSandboxPolicy({
+      type: "externalSandbox",
+      networkAccess: "unknown",
+    } as unknown as CodexSandboxPolicy),
+  ).toThrow(/networkAccess/);
+  expect(validateSandboxPolicy({ type: "readOnly", networkAccess: false })).toEqual({
+    type: "readOnly",
+    networkAccess: false,
+  });
+  expect(validateSandboxPolicy({ type: "dangerFullAccess" })).toEqual({
+    type: "dangerFullAccess",
+  });
+  expect(
+    validateSandboxPolicy({
+      type: "workspaceWrite",
+      writableRoots: [path.resolve("out"), path.resolve("out")],
+    }),
+  ).toMatchObject({ writableRoots: [path.resolve("out")] });
 });
 import { loadConfig } from "../src/config/env.js";
 import { createNodeTestLauncher } from "./helpers/platform.js";

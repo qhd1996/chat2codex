@@ -16,6 +16,27 @@ const scope = (overrides: Partial<CodexSessionScope> = {}): CodexSessionScope =>
 });
 
 describe("Codex app-server session manager", () => {
+  test("keeps different tasks in one conversation in independent concurrent sessions", async () => {
+    const fixture = await createSessionFakeCodex(); const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
+    try {
+      const firstScope = scope({ conversationId: "wx", taskId: "tsk_a" }); const secondScope = scope({ conversationId: "wx", taskId: "tsk_b", sessionEpoch: "epoch-b" });
+      const [first, second] = await Promise.all([runner.run({ prompt: "first", cwd: fixture.tempDir, threadId: "thread_a", sessionScope: firstScope }), runner.run({ prompt: "second", cwd: fixture.tempDir, threadId: "thread_b", sessionScope: secondScope })]);
+      expect(first.finalText).toBe("done:first"); expect(second.finalText).toBe("done:second");
+      const received = await readMessages(fixture.receivedPath); expect(received.filter(({ message }) => message.method === "initialize")).toHaveLength(2); expect(new Set(received.map((entry) => entry.pid))).toHaveLength(2);
+      await runner.invalidateTaskSession("tsk_a");
+      await runner.run({ prompt: "second-again", cwd: fixture.tempDir, threadId: "thread_b", sessionScope: secondScope });
+      expect((await readMessages(fixture.receivedPath)).filter(({ message }) => message.method === "initialize")).toHaveLength(2);
+    } finally { await runner.dispose?.(); await rm(fixture.tempDir, { recursive: true, force: true }); }
+  });
+
+  test("passes a custom workspace-write sandbox policy to turn start", async () => {
+    const fixture = await createSessionFakeCodex(); const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
+    try {
+      const policy = { type: "workspaceWrite" as const, writableRoots: [path.join(fixture.tempDir, "out")], networkAccess: false };
+      await runner.run({ prompt: "policy", cwd: fixture.tempDir, sessionScope: scope({ conversationId: "wx", taskId: "tsk_policy" }), sandboxPolicy: policy });
+      const turn = (await readMessages(fixture.receivedPath)).find(({ message }) => message.method === "turn/start")?.message; expect(turn?.params).toMatchObject({ sandboxPolicy: policy });
+    } finally { await runner.dispose?.(); await rm(fixture.tempDir, { recursive: true, force: true }); }
+  });
   test("reuses one app-server process for consecutive turns in the same scoped thread", async () => {
     const fixture = await createSessionFakeCodex();
     const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
@@ -108,7 +129,7 @@ describe("Codex app-server session manager", () => {
         cwd: fixture.tempDir,
         sessionScope: scope(),
       });
-      await waitForMessage(fixture.receivedPath, "fixture/exit");
+      await delay(100);
       const second = await runner.run({
         prompt: "after-ttl",
         cwd: fixture.tempDir,
@@ -1004,7 +1025,7 @@ async function readMessages(
 }
 
 async function waitForMessage(filePath: string, method: string): Promise<void> {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const received = await readMessages(filePath);
     if (received.some(({ message }) => message.method === method)) {

@@ -67,6 +67,7 @@ export interface CodexRunInput {
   prompt: string;
   cwd: string;
   localImages?: string[];
+  sandboxPolicy?: CodexSandboxPolicy;
   threadId?: string;
   collaborationMode?: CodexCollaborationMode;
   sessionScope?: CodexSessionScope;
@@ -93,12 +94,20 @@ export type CodexCollaborationMode = "default" | "plan";
 
 export interface CodexSessionScope {
   adapterId?: string;
-  chatId: string;
+  /** Legacy scope key retained until all bridge callers migrate in Phase 1 Task 7. */
+  chatId?: string;
+  conversationId?: string;
+  taskId?: string;
   sessionEpoch: string;
   principal: CodexSessionPrincipal;
 }
 
 export type CodexSessionPrincipal = SenderIdentity;
+export type CodexSandboxPolicy =
+  | { type: "dangerFullAccess" }
+  | { type: "readOnly"; networkAccess?: boolean }
+  | { type: "externalSandbox"; networkAccess?: "restricted" | "enabled" }
+  | { type: "workspaceWrite"; writableRoots?: string[]; networkAccess?: boolean; excludeTmpdirEnvVar?: boolean; excludeSlashTmp?: boolean };
 
 export interface CodexRunResult {
   threadId?: string;
@@ -539,7 +548,7 @@ const knownUnsupportedServerRequestMethods = new Set([
 
 export class CodexRunner {
   private appServerCliVersion?: string;
-  private readonly sessionsByChat = new Map<string, CodexAppServerSession>();
+  private readonly sessionsByTask = new Map<string, CodexAppServerSession>();
   private readonly ownerByThread = new Map<string, CodexAppServerSession>();
   private readonly sessionExpiryTimers = new Map<CodexAppServerSession, NodeJS.Timeout>();
   private readonly singleUseChildren = new Set<ChildProcessWithoutNullStreams>();
@@ -710,7 +719,7 @@ export class CodexRunner {
     if (input.signal?.aborted) {
       return cancelledRunResult(input.threadId);
     }
-    input = { ...input, localImages: await validateLocalImages(input.localImages) };
+    input = { ...input, localImages: await validateLocalImages(input.localImages), sandboxPolicy: validateSandboxPolicy(input.sandboxPolicy) };
     if (!isReusableSessionScope(input.sessionScope)) {
       return this.runSingleUse(input);
     }
@@ -740,7 +749,7 @@ export class CodexRunner {
       }
       await this.evictExpiredSessions();
       const descriptor = createSessionDescriptor(this.config, input.sessionScope!, cwdKey, input.threadId);
-      let session = this.sessionsByChat.get(descriptor.scope.chatId);
+      let session = this.sessionsByTask.get(descriptor.sessionKey);
       if (session && !session.matches(descriptor)) {
         if (session.isActive()) {
           throw new Error("The current Codex chat session is still running and cannot be rotated.");
@@ -801,10 +810,15 @@ export class CodexRunner {
 
   async invalidateChatSession(chatId: string, reason = "chat_invalidated"): Promise<void> {
     await this.mutateSessions(async () => {
-      const session = this.sessionsByChat.get(chatId);
-      if (session) {
-        await this.removeSession(session, reason);
-      }
+      const matches = [...this.sessionsByTask.values()].filter((session) => session.chatId === chatId);
+      await Promise.all(matches.map((session) => this.removeSession(session, reason)));
+    });
+  }
+
+  async invalidateTaskSession(taskId: string, reason = "task_invalidated"): Promise<void> {
+    await this.mutateSessions(async () => {
+      const matches = [...this.sessionsByTask.values()].filter((session) => session.taskId === taskId);
+      await Promise.all(matches.map((session) => this.removeSession(session, reason)));
     });
   }
 
@@ -814,9 +828,9 @@ export class CodexRunner {
         return;
       }
       this.disposed = true;
-      const sessions = [...this.sessionsByChat.values()];
+      const sessions = [...this.sessionsByTask.values()];
       const singleUseChildren = [...this.singleUseChildren];
-      this.sessionsByChat.clear();
+      this.sessionsByTask.clear();
       this.ownerByThread.clear();
       await Promise.all([
         ...sessions.map((session) => session.close("manager_disposed")),
@@ -1152,7 +1166,7 @@ export class CodexRunner {
         input: buildCodexTurnInput(input),
         cwd: input.cwd,
         approvalPolicy: this.config.codexApprovalPolicy,
-        sandboxPolicy: sandboxModeToPolicy(this.config.codexSandbox),
+        sandboxPolicy: input.sandboxPolicy ?? sandboxModeToPolicy(this.config.codexSandbox),
         ...(this.config.codexModel ? { model: this.config.codexModel } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
       });
@@ -1248,7 +1262,7 @@ export class CodexRunner {
         onIdle: (idleSession) => this.scheduleSessionExpiry(idleSession),
       },
     );
-    this.sessionsByChat.set(descriptor.scope.chatId, session);
+    this.sessionsByTask.set(descriptor.sessionKey, session);
     if (descriptor.threadId) {
       this.ownerByThread.set(descriptor.threadId, session);
     }
@@ -1260,7 +1274,7 @@ export class CodexRunner {
     threadId: string,
   ): Promise<void> {
     await this.mutateSessions(async () => {
-      if (this.sessionsByChat.get(session.chatId) !== session || !session.isHealthy()) {
+      if (this.sessionsByTask.get(session.sessionKey) !== session || !session.isHealthy()) {
         throw new Error("The Codex app-server session expired before its thread was bound.");
       }
       const owner = this.ownerByThread.get(threadId);
@@ -1280,8 +1294,8 @@ export class CodexRunner {
   }
 
   private forgetDeadSession(session: CodexAppServerSession): void {
-    if (this.sessionsByChat.get(session.chatId) === session) {
-      this.sessionsByChat.delete(session.chatId);
+    if (this.sessionsByTask.get(session.sessionKey) === session) {
+      this.sessionsByTask.delete(session.sessionKey);
     }
     if (session.threadId && this.ownerByThread.get(session.threadId) === session) {
       this.ownerByThread.delete(session.threadId);
@@ -1298,7 +1312,7 @@ export class CodexRunner {
     const timer = setTimeout(() => {
       void this.mutateSessions(async () => {
         if (
-          this.sessionsByChat.get(session.chatId) === session &&
+          this.sessionsByTask.get(session.sessionKey) === session &&
           !session.isActive() &&
           Date.now() - session.lastUsedAt >= ttlMs
         ) {
@@ -1325,7 +1339,7 @@ export class CodexRunner {
     if (ttlMs <= 0) {
       return;
     }
-    const expired = [...this.sessionsByChat.values()].filter(
+    const expired = [...this.sessionsByTask.values()].filter(
       (session) => !session.isActive() && Date.now() - session.lastUsedAt >= ttlMs,
     );
     for (const session of expired) {
@@ -1334,8 +1348,8 @@ export class CodexRunner {
   }
 
   private async ensureSessionCapacity(): Promise<void> {
-    while (this.sessionsByChat.size >= this.config.codexMaxAppServerSessions) {
-      const candidate = [...this.sessionsByChat.values()]
+    while (this.sessionsByTask.size >= this.config.codexMaxAppServerSessions) {
+      const candidate = [...this.sessionsByTask.values()]
         .filter((session) => !session.isActive())
         .sort((left, right) => left.lastUsedAt - right.lastUsedAt)[0];
       if (!candidate) {
@@ -1346,8 +1360,8 @@ export class CodexRunner {
   }
 
   private async removeSession(session: CodexAppServerSession, reason: string): Promise<void> {
-    if (this.sessionsByChat.get(session.chatId) === session) {
-      this.sessionsByChat.delete(session.chatId);
+    if (this.sessionsByTask.get(session.sessionKey) === session) {
+      this.sessionsByTask.delete(session.sessionKey);
     }
     if (session.threadId && this.ownerByThread.get(session.threadId) === session) {
       this.ownerByThread.delete(session.threadId);
@@ -1904,6 +1918,9 @@ export class CodexRunner {
 
 interface CodexSessionDescriptor {
   scope: CodexSessionScope;
+  sessionKey: string;
+  conversationId: string;
+  taskId?: string;
   cwdKey: string;
   threadId?: string;
   policyKey: string;
@@ -1959,6 +1976,8 @@ interface CodexAppServerSessionCallbacks {
 class CodexAppServerSession {
   readonly generation = randomUUID();
   readonly chatId: string;
+  readonly sessionKey: string;
+  readonly taskId?: string;
   lastUsedAt = Date.now();
 
   private readonly child: ChildProcessWithoutNullStreams;
@@ -1992,7 +2011,9 @@ class CodexAppServerSession {
     private readonly descriptor: CodexSessionDescriptor,
     private readonly callbacks: CodexAppServerSessionCallbacks,
   ) {
-    this.chatId = descriptor.scope.chatId;
+    this.chatId = descriptor.conversationId;
+    this.sessionKey = descriptor.sessionKey;
+    this.taskId = descriptor.taskId;
     this.logger.info("Starting reusable Codex app-server session", {
       chatId: this.chatId,
       cwd: descriptor.cwdKey,
@@ -2064,7 +2085,7 @@ class CodexAppServerSession {
     return (
       this.isHealthy() &&
       this.descriptor.scope.adapterId === expected.scope.adapterId &&
-      this.descriptor.scope.chatId === expected.scope.chatId &&
+      this.descriptor.sessionKey === expected.sessionKey &&
       this.descriptor.scope.sessionEpoch === expected.scope.sessionEpoch &&
       sameStableSessionPrincipal(
         this.descriptor.scope.principal,
@@ -2150,7 +2171,7 @@ class CodexAppServerSession {
           input: buildCodexTurnInput(input),
           cwd: input.cwd,
           approvalPolicy: this.config.codexApprovalPolicy,
-          sandboxPolicy: sandboxModeToPolicy(this.config.codexSandbox),
+          sandboxPolicy: input.sandboxPolicy ?? sandboxModeToPolicy(this.config.codexSandbox),
           ...(this.config.codexModel ? { model: this.config.codexModel } : {}),
           ...(collaborationMode ? { collaborationMode } : {}),
         },
@@ -2661,9 +2682,14 @@ function createSessionDescriptor(
   cwdKey: string,
   threadId: string | undefined,
 ): CodexSessionDescriptor {
+  const conversationId = scope.conversationId?.trim() || scope.chatId?.trim() || "";
+  const taskId = scope.taskId?.trim() || undefined;
+  const sessionKey = taskId ? taskSessionKey(scope.adapterId, taskId) : legacySessionKey(scope.adapterId, conversationId);
   return {
     scope: {
       adapterId: scope.adapterId,
+      conversationId,
+      taskId,
       chatId: scope.chatId,
       sessionEpoch: scope.sessionEpoch,
       principal: {
@@ -2671,6 +2697,9 @@ function createSessionDescriptor(
         keys: identityKeys(scope.principal),
       },
     },
+    sessionKey,
+    conversationId,
+    taskId,
     cwdKey,
     threadId,
     policyKey: JSON.stringify({
@@ -2686,11 +2715,15 @@ function createSessionDescriptor(
 function isReusableSessionScope(scope: CodexSessionScope | undefined): scope is CodexSessionScope {
   return Boolean(
     scope &&
-      scope.chatId.trim() &&
+      (scope.taskId?.trim() || scope.chatId?.trim()) &&
+      (scope.conversationId?.trim() || scope.chatId?.trim()) &&
       scope.sessionEpoch.trim() &&
       hasStableIdentity(scope.principal),
   );
 }
+
+function taskSessionKey(adapterId: string | undefined, taskId: string): string { return (adapterId?.trim() || "default") + "::task::" + taskId; }
+function legacySessionKey(adapterId: string | undefined, chatId: string): string { return (adapterId?.trim() || "default") + "::chat::" + chatId; }
 
 function sameStableSessionPrincipal(
   left: CodexSessionPrincipal,
@@ -2863,6 +2896,86 @@ export async function validateLocalImages(localImages: string[] | undefined): Pr
     validated.push(canonical);
   }
   return validated;
+}
+
+export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): CodexSandboxPolicy | undefined {
+  if (!policy) return undefined;
+  const record = asObjectRecord(policy);
+  if (!record || typeof record.type !== "string") {
+    throw new Error("The requested Codex sandbox policy is unsupported.");
+  }
+  switch (record.type) {
+    case "dangerFullAccess":
+      if (!hasOnlyKeys(record, ["type"])) {
+        throw new Error("The danger-full-access sandbox policy contains an unsupported field.");
+      }
+      return { type: "dangerFullAccess" };
+    case "readOnly":
+      if (!hasOnlyKeys(record, ["type", "networkAccess"])) {
+        throw new Error("The read-only sandbox policy contains an unsupported field.");
+      }
+      if (record.networkAccess !== undefined && typeof record.networkAccess !== "boolean") {
+        throw new Error("The read-only sandbox networkAccess value must be boolean.");
+      }
+      return {
+        type: "readOnly",
+        ...(record.networkAccess !== undefined ? { networkAccess: record.networkAccess } : {}),
+      };
+    case "externalSandbox":
+      if (!hasOnlyKeys(record, ["type", "networkAccess"])) {
+        throw new Error("The external sandbox policy contains an unsupported field.");
+      }
+      if (
+        record.networkAccess !== undefined &&
+        record.networkAccess !== "restricted" &&
+        record.networkAccess !== "enabled"
+      ) {
+        throw new Error("The external sandbox networkAccess value is unsupported.");
+      }
+      return {
+        type: "externalSandbox",
+        ...(record.networkAccess !== undefined ? { networkAccess: record.networkAccess } : {}),
+      };
+    case "workspaceWrite": {
+      if (
+        !hasOnlyKeys(record, [
+          "type",
+          "writableRoots",
+          "networkAccess",
+          "excludeTmpdirEnvVar",
+          "excludeSlashTmp",
+        ])
+      ) {
+        throw new Error("The workspace-write sandbox policy contains an unsupported field.");
+      }
+      if (!Array.isArray(record.writableRoots)) {
+        throw new Error("A workspace-write sandbox policy must include explicit writableRoots.");
+      }
+      if (
+        record.writableRoots.length > 32 ||
+        record.writableRoots.some((root) => typeof root !== "string" || !path.isAbsolute(root))
+      ) {
+        throw new Error("Sandbox writable roots must be bounded absolute paths.");
+      }
+      for (const field of ["networkAccess", "excludeTmpdirEnvVar", "excludeSlashTmp"] as const) {
+        if (record[field] !== undefined && typeof record[field] !== "boolean") {
+          throw new Error(`The workspace-write sandbox ${field} value must be boolean.`);
+        }
+      }
+      const networkAccess = record.networkAccess as boolean | undefined;
+      const excludeTmpdirEnvVar = record.excludeTmpdirEnvVar as boolean | undefined;
+      const excludeSlashTmp = record.excludeSlashTmp as boolean | undefined;
+      return {
+        type: "workspaceWrite",
+        writableRoots: [...new Set(record.writableRoots.map((root) => path.resolve(root)))],
+        ...(networkAccess !== undefined ? { networkAccess } : {}),
+        ...(excludeTmpdirEnvVar !== undefined ? { excludeTmpdirEnvVar } : {}),
+        ...(excludeSlashTmp !== undefined ? { excludeSlashTmp } : {}),
+      };
+    }
+    default:
+      throw new Error("The requested Codex sandbox policy is unsupported.");
+  }
 }
 
 export function buildCodexAppServerArgs(): string[] {
