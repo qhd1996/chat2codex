@@ -57,6 +57,7 @@ import {
 } from "../src/bot/message-router.js";
 import { loadConfig } from "../src/config/env.js";
 import { JsonStateStore } from "../src/state/store.js";
+import { emptyState } from "../src/state/types.js";
 import { ImageDraftService } from "../src/core/image-drafts.js";
 import { ExecutionWorkspaceService } from "../src/core/execution-workspaces.js";
 import { TaskRegistry } from "../src/core/task-registry.js";
@@ -7652,6 +7653,117 @@ describe("MessageRouter access control", () => {
       await router?.dispose();
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("task recovery status is bounded, task-scoped, and redacted", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }),
+      () => ({ action: { kind: "show_status" }, imageDisposition: "none", confidence: 1 }),
+    ]);
+    const codex = new ConcurrentTaskCodex();
+    await withTaskImageRouter(classifier, new ImageDraftSender(), codex, async ({ router, sender, store }) => {
+      await router.accept(taskImageMessage("task-status-create", "新建日本酒店任务"));
+      await waitFor(() => codex.runs.length === 1);
+      const state = await store.load(); const task = Object.values(state.tasks).find((item) => item.title === "日本酒店")!;
+      codex.releaseRunControl(task.taskId);
+      await router.accept(taskImageMessage("task-status-show", "查看任务状态"));
+      await waitFor(() => sender.messages.some((item) => item.text.startsWith("任务状态")));
+      const status = sender.messages.at(-1)!.text;
+      expect(status).toContain("[日本酒店] running");
+      expect(status).toContain("工作区：travel");
+      expect(status).toContain("模式：canonical_fifo");
+      expect(status).toContain("年龄：");
+      expect(status).toContain("thread：thread-ts");
+      expect(status).not.toContain("新建日本酒店任务");
+      expect(status.length).toBeLessThan(2000);
+      codex.finish(task.taskId);
+    });
+  });
+
+  test("task recovery fails closed for an orphaned queued task job", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-orphan-"));
+    let router: MessageRouter | undefined;
+    try {
+      const config = loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
+      const store = new JsonStateStore(config.bridgeStatePath); const state = emptyState(); const now = new Date().toISOString();
+      state.jobs.orphan = { id: "orphan", kind: "codex_run", messageId: "orphan", chatId: "weixin-chat", chatType: "direct", cwd: tempDir, prompt: "secret orphan prompt", taskId: "tsk_missing", workspaceRoot: tempDir, executionCwd: tempDir, isolationMode: "canonical_fifo", status: "queued", createdAt: now, updatedAt: now, deliveryIds: [] };
+      state.pendingMessages.orphan = { messageId: "orphan", chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" }, text: "secret orphan prompt", acceptedAt: now, attempts: 0, route: "codex" };
+      await store.save(state); const codex = new FakeCodex(); const sender = new CollectingSender();
+      router = new MessageRouter(config, store, sender, silentLogger, codex, {}); await router.start();
+      await waitForState(store, (current) => current.jobs.orphan?.status === "interrupted");
+      const recovered = await store.load();
+      expect(codex.runs).toHaveLength(0);
+      expect(recovered.jobs.orphan).toMatchObject({ interruptionReason: "orphaned_task_reference" });
+      expect(recovered.processedMessageIds).toContain("orphan");
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("task recovery resumes two queued task jobs independently with persisted isolation metadata", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-resume-"));
+    let router: MessageRouter | undefined;
+    try {
+      const roots = Object.fromEntries(await Promise.all(["work", "travel", "personal", "finance", "ai_lab", "learning"].map(async (kind) => { const root = path.join(tempDir, kind); await mkdir(root); return [kind, root] as const; })));
+      const config = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", WEIXIN_NATURAL_ROUTING: "true", CODEX_WORKDIR: roots.work, CHAT2CODEX_HOME: path.join(tempDir, "home"), CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(roots), BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user", CODEX_MAX_CONCURRENT_RUNS: "2" });
+      const store = new JsonStateStore(config.bridgeStatePath); const state = emptyState(); const now = new Date().toISOString();
+      const definitions = [
+        { taskId: "tsk_111111111111111111111111", title: "日本酒店", kind: "travel" as const, root: roots.travel, messageId: "recover-hotel" },
+        { taskId: "tsk_222222222222222222222222", title: "财报分析", kind: "finance" as const, root: roots.finance, messageId: "recover-finance" },
+      ];
+      for (const item of definitions) {
+        state.tasks[item.taskId] = { taskId: item.taskId, conversationId: "weixin-chat", chatType: "direct", senderKey: "open_id:ou_user", title: item.title, aliases: [], workspaceKind: item.kind, workspaceRoot: item.root, executionCwd: item.root, isolationMode: "canonical_fifo", sessionEpoch: `epoch-${item.taskId}`, status: "waiting_workspace", objectiveSummary: item.title, recentRequests: [item.title], createdAt: now, updatedAt: now, lastActiveAt: now };
+        state.jobs[item.messageId] = { id: item.messageId, kind: "codex_run", messageId: item.messageId, chatId: "weixin-chat", chatType: "direct", cwd: item.root, prompt: item.title, taskId: item.taskId, workspaceRoot: item.root, executionCwd: item.root, isolationMode: "canonical_fifo", status: "queued", createdAt: now, updatedAt: now, deliveryIds: [] };
+        state.pendingMessages[item.messageId] = { messageId: item.messageId, chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" }, text: `untrusted classifier text ${item.title}`, acceptedAt: now, attempts: 0, route: "codex" };
+      }
+      state.conversations["weixin-chat"] = { taskIds: definitions.map((item) => item.taskId), lastTaskId: definitions[1]!.taskId };
+      await store.save(state);
+      const classifier = new QueueTaskClassifier([]); const codex = new ConcurrentTaskCodex(); const sender = new CollectingSender();
+      const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+      const executionWorkspaces = await ExecutionWorkspaceService.create({ chat2codexHome: path.join(tempDir, "home"), codexBin: config.codexBin, sandboxProbe: async () => ({ verified: false, reason: "not needed" }) });
+      router = new MessageRouter(config, store, sender, silentLogger, codex, {}, { classifier, imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }), taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }) });
+      await router.start(); await waitFor(() => codex.runs.length === 2);
+      expect(classifier.taskInputs).toHaveLength(0);
+      expect(new Set(codex.runs.map((run) => run.sessionScope?.taskId))).toEqual(new Set(definitions.map((item) => item.taskId)));
+      expect(new Set(codex.runs.map((run) => run.cwd))).toEqual(new Set(definitions.map((item) => item.root)));
+      for (const item of definitions) codex.finish(item.taskId);
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("task recovery does not downgrade unverified output-only isolation", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-output-recovery-"));
+    let router: MessageRouter | undefined;
+    try {
+      const roots = Object.fromEntries(await Promise.all(["work", "travel", "personal", "finance", "ai_lab", "learning"].map(async (kind) => { const root = path.join(tempDir, kind); await mkdir(root); return [kind, root] as const; })));
+      const taskId = "tsk_333333333333333333333333"; const executionCwd = path.join(roots.learning, "outputs", "tasks", taskId); await mkdir(executionCwd, { recursive: true });
+      const config = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", WEIXIN_NATURAL_ROUTING: "true", CODEX_WORKDIR: roots.work, CHAT2CODEX_HOME: path.join(tempDir, "home"), CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(roots), BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
+      const store = new JsonStateStore(config.bridgeStatePath); const state = emptyState(); const now = new Date().toISOString();
+      state.tasks[taskId] = { taskId, conversationId: "weixin-chat", chatType: "direct", senderKey: "open_id:ou_user", title: "课程报告", aliases: [], workspaceKind: "learning", workspaceRoot: roots.learning, executionCwd, isolationMode: "output_only", sessionEpoch: "epoch-output", status: "waiting_workspace", objectiveSummary: "课程报告", recentRequests: [], createdAt: now, updatedAt: now, lastActiveAt: now };
+      state.conversations["weixin-chat"] = { taskIds: [taskId], lastTaskId: taskId };
+      state.jobs.output = { id: "output", kind: "codex_run", messageId: "output", chatId: "weixin-chat", chatType: "direct", cwd: executionCwd, prompt: "课程报告", taskId, workspaceRoot: roots.learning, executionCwd, isolationMode: "output_only", status: "queued", createdAt: now, updatedAt: now, deliveryIds: [] };
+      state.pendingMessages.output = { messageId: "output", chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" }, text: "课程报告", acceptedAt: now, attempts: 0, route: "codex" }; await store.save(state);
+      const classifier = new QueueTaskClassifier([]); const codex = new FakeCodex(); const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+      const executionWorkspaces = await ExecutionWorkspaceService.create({ chat2codexHome: path.join(tempDir, "home"), codexBin: config.codexBin, sandboxProbe: async () => ({ verified: false, reason: "unverified after restart" }) });
+      router = new MessageRouter(config, store, new CollectingSender(), silentLogger, codex, {}, { classifier, imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }), taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 1 }) });
+      await router.start(); await waitForState(store, (current) => current.jobs.output?.status === "interrupted");
+      expect(codex.runs).toHaveLength(0); expect((await store.load()).jobs.output?.interruptionReason).toBe("recovery_execution_metadata_invalid");
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("task recovery shutdown aborts and awaits every active task run", async () => {
+    const classifier = new QueueTaskClassifier([
+      () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }),
+      () => ({ action: { kind: "create_task", instruction: "财报分析", workspaceKind: "finance" }, imageDisposition: "none", confidence: 1 }),
+    ]);
+    const codex = new ConcurrentTaskCodex();
+    await withTaskImageRouter(classifier, new ImageDraftSender(), codex, async ({ router, store }) => {
+      await router.accept(taskImageMessage("shutdown-hotel", "新建日本酒店任务"));
+      await router.accept(taskImageMessage("shutdown-finance", "新建财报分析任务"));
+      await waitFor(() => codex.runs.length === 2);
+      await router.dispose();
+      expect(codex.runs.every((run) => run.signal?.aborted)).toBe(true);
+      const stopped = await store.load();
+      expect(Object.values(stopped.jobs).filter((job) => job.taskId).every((job) => job.status === "interrupted")).toBe(true);
+      expect(Object.values(stopped.tasks).filter((task) => ["日本酒店", "财报分析"].includes(task.title)).every((task) => task.status === "interrupted")).toBe(true);
+    });
   });
 
   test("same conversation pending interactions stay bound to the named task", async () => {

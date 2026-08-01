@@ -254,6 +254,8 @@ export type DurableOutboxStatus = "pending" | "sending" | "delivered";
 export interface DurableOutboxMessage {
   id: string;
   jobId: string;
+  /** Stable owner used to prevent cross-task delivery/recovery mixups. */
+  taskId?: string;
   chatId: string;
   kind: "text" | "markdown";
   text: string;

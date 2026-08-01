@@ -11,6 +11,7 @@ import type {
   DurableCodexJobStatus,
   DurableOutboxMessage,
   DurableOutboxStatus,
+  RegisteredTask,
 } from "../src/state/types.js";
 import { emptyState } from "../src/state/types.js";
 
@@ -534,6 +535,54 @@ describe("JsonStateStore", () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+  test("task recovery normalizes durable task references", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-references-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const state = emptyState();
+      const first = registeredTask("tsk_first", "conversation", tempDir, "thread_first");
+      const second = registeredTask("tsk_second", "conversation", tempDir);
+      state.tasks[first.taskId] = first; state.tasks[second.taskId] = second;
+      state.conversations.conversation = { taskIds: ["missing", first.taskId, first.taskId], lastTaskId: "missing" };
+      const draftKey = "conversation:sender";
+      state.imageDrafts![draftKey] = { chatId: "conversation", senderKey: "sender", createdAt: timestamp(1), updatedAt: timestamp(1), expiresAt: timestamp(59), images: [], totalBytes: 0 };
+      state.clarifications![draftKey] = { chatId: "conversation", senderKey: "sender", question: "选择任务", draftKey, candidateTaskIds: [first.taskId, "missing", second.taskId], choices: [first.taskId, "missing", second.taskId], createdAt: timestamp(1), expiresAt: timestamp(59) };
+      const job = durableJob("job_task", "completed", timestamp(2), ["outbox_task"]);
+      job.chatId = "conversation"; job.taskId = first.taskId; state.jobs[job.id] = job;
+      const delivery = durableOutbox("outbox_task", job.id, "delivered", timestamp(2));
+      delivery.chatId = "conversation"; delivery.taskId = second.taskId; state.outbox[delivery.id] = delivery;
+
+      const store = new JsonStateStore(statePath); await store.save(state); const loaded = await store.load();
+      expect(loaded.conversations.conversation?.taskIds).toEqual([first.taskId, second.taskId]);
+      expect(loaded.conversations.conversation?.lastTaskId).toBe(second.taskId);
+      expect(loaded.clarifications?.[draftKey]).toMatchObject({ draftKey, candidateTaskIds: [first.taskId, second.taskId], choices: [first.taskId, second.taskId] });
+      expect(loaded.outbox.outbox_task?.taskId).toBe(first.taskId);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("task recovery rejects duplicate task thread ownership", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-thread-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const state = emptyState();
+      state.tasks.tsk_first = registeredTask("tsk_first", "conversation", tempDir, "thread_shared");
+      state.tasks.tsk_second = registeredTask("tsk_second", "conversation", tempDir, "thread_shared");
+      state.conversations.conversation = { taskIds: ["tsk_first", "tsk_second"] };
+      await expect(new JsonStateStore(statePath).save(state)).rejects.toThrow("Codex thread is bound to multiple tasks");
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("task recovery retention keeps jobs backing active task obligations", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-retention-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const state = emptyState(); const task = registeredTask("tsk_waiting", "conversation", tempDir); task.status = "waiting_approval";
+      state.tasks[task.taskId] = task; state.conversations.conversation = { taskIds: [task.taskId], lastTaskId: task.taskId };
+      const job = durableJob("job_waiting", "completed", timestamp(1), []); job.chatId = "conversation"; job.taskId = task.taskId; state.jobs[job.id] = job;
+      const store = new JsonStateStore(statePath, { jobRetentionCount: 0, outboxRetentionCount: 0 }); await store.save(state);
+      expect((await store.load()).jobs.job_waiting?.taskId).toBe(task.taskId);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
 });
 
 function durableState(
@@ -596,4 +645,8 @@ function durableOutbox(
 
 function timestamp(minute: number): string {
   return `2026-06-29T00:${String(minute).padStart(2, "0")}:00.000Z`;
+}
+
+function registeredTask(taskId: string, conversationId: string, workspaceRoot: string, threadId?: string): RegisteredTask {
+  return { taskId, conversationId, chatType: "direct", senderKey: "sender", title: taskId, aliases: [], workspaceKind: "work", workspaceRoot, executionCwd: workspaceRoot, isolationMode: "canonical_fifo", sessionEpoch: `epoch_${taskId}`, threadId, status: "completed", objectiveSummary: "", recentRequests: [], createdAt: timestamp(0), updatedAt: timestamp(0), lastActiveAt: timestamp(0) };
 }

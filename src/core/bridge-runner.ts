@@ -495,6 +495,13 @@ export class BridgeRunner {
                 continue;
               }
               interruptDurableJob(state, job, now, "bridge_shutdown");
+              if (job.taskId) {
+                const task = state.tasks[job.taskId];
+                if (task && !["completed", "failed", "interrupted", "archived"].includes(task.status)) {
+                  task.status = "interrupted";
+                  task.updatedAt = now; task.lastActiveAt = now; task.activeTurnId = undefined;
+                }
+              }
               markMessageProcessed(state, job.messageId);
             }
           });
@@ -557,7 +564,11 @@ export class BridgeRunner {
       if (route === "control_replay_safe" || route === "message") {
         this.scheduleAcceptedMessage(fromPendingMessage(pending));
       } else if (route === "codex" && job?.status === "queued") {
-        this.scheduleAcceptedMessage(fromPendingMessage(pending));
+        if (this.orchestrator && job.taskId && this.state.tasks[job.taskId]) {
+          await this.scheduleRecoveredTask(job, pending);
+        } else {
+          this.scheduleAcceptedMessage(fromPendingMessage(pending));
+        }
       }
     }
   }
@@ -1388,9 +1399,21 @@ export class BridgeRunner {
     const lines = tasks.slice(0, 12).map((task) => {
       const scheduled = scheduler.jobs.find((job) => job.taskId === task.taskId);
       const queue = scheduled?.queueReason ? `，等待：${scheduled.queueReason}` : "";
-      return `${prefixTaskMessage(task, task.status)}，工作区：${task.workspaceKind}，模式：${task.isolationMode}${queue}`;
+      const approvalWait = this.taskInteractionWait(task.taskId);
+      const thread = task.threadId ? `，thread：${truncateInline(task.threadId, 12)}` : "";
+      const age = `，年龄：${formatDuration(Math.max(0, Date.now() - parsedTimestamp(task.lastActiveAt)))}`;
+      return truncateInline(`${prefixTaskMessage(task, task.status)}，工作区：${task.workspaceKind}，模式：${task.isolationMode}${queue}${age}${approvalWait}${thread}`, 320);
     });
     await this.sender.sendText(conversationId, ["任务状态", ...lines].join("\n"));
+  }
+
+  private taskInteractionWait(taskId: string): string {
+    const count = <T extends { taskId?: string }>(values: Iterable<T>): number =>
+      [...values].filter((value) => value.taskId === taskId).length;
+    const approval = count(this.activeApprovals.values()) + count(this.activePermissionApprovals.values());
+    const input = count(this.activeUserInputs.values()) + count(this.activeMcpElicitations.values());
+    if (!approval && !input) return "";
+    return `，交互等待：审批 ${approval} / 输入 ${input}`;
   }
 
   private async startOrchestratedRun(taskId: string, prompt: string, message: IncomingTextMessage, collaborationMode: CodexCollaborationMode = "default", executionIntent: "general" | "output_only" = "general", localImages?: string[], imageDraftKey?: string): Promise<void> {
@@ -1434,6 +1457,47 @@ export class BridgeRunner {
     });
     this.orchestratedRunTasks.add(run);
     void run.catch((error: unknown) => this.logger.error("Orchestrated task failed", error)).finally(() => this.orchestratedRunTasks.delete(run));
+  }
+
+  private async scheduleRecoveredTask(job: DurableCodexJob, pending: PendingMessageDelivery): Promise<void> {
+    const orchestrator = this.orchestrator!;
+    const task = this.requireState().tasks[job.taskId!];
+    const workspaceRoot = canonicalExistingPath(job.workspaceRoot ?? task.workspaceRoot);
+    const executionCwd = canonicalExistingPath(job.executionCwd ?? task.executionCwd);
+    const isolationMode = job.isolationMode ?? task.isolationMode;
+    const expectedOutputCwd = workspaceRoot && canonicalExistingPath(path.join(workspaceRoot, "outputs", "tasks", task.taskId));
+    if (!workspaceRoot || !executionCwd || (isolationMode === "output_only" && (!orchestrator.executionWorkspaces.sandboxVerified || expectedOutputCwd !== executionCwd))) {
+      await this.failRecoveredTask(job, "recovery_execution_metadata_invalid");
+      return;
+    }
+    const queuedRun: QueuedRunState = {
+      controller: new AbortController(), taskId: task.taskId, conversationId: task.conversationId, taskTitle: task.title,
+      workspaceRoot, isolationMode,
+      sandboxPolicy: isolationMode === "output_only" ? { type: "workspaceWrite", writableRoots: [executionCwd], networkAccess: false, excludeTmpdirEnvVar: true, excludeSlashTmp: true } : undefined,
+      cwd: executionCwd, prompt: job.prompt, localImages: job.localImages,
+      collaborationMode: job.collaborationMode ?? "default", sessionEpoch: task.sessionEpoch, messageId: job.messageId,
+      threadId: task.threadId, chatType: pending.chatType, originSender: { ...pending.sender }, queuedAtMs: Date.now(), waitingFor: "workspace",
+    };
+    this.queuedRuns.set(task.taskId, queuedRun);
+    const run = orchestrator.taskScheduler.schedule({ taskId: task.taskId, workspaceRoot, isolationMode }, async () => {
+      await this.runTask(task.taskId, queuedRun);
+    });
+    this.orchestratedRunTasks.add(run);
+    void run.catch((error: unknown) => this.logger.error("Recovered orchestrated task failed", error)).finally(() => this.orchestratedRunTasks.delete(run));
+  }
+
+  private async failRecoveredTask(job: DurableCodexJob, reason: string): Promise<void> {
+    const now = new Date().toISOString();
+    await this.mutateState((state) => {
+      const current = state.jobs[job.id];
+      if (!current || current.status !== "queued") return;
+      interruptDurableJob(state, current, now, reason);
+      const task = current.taskId ? state.tasks[current.taskId] : undefined;
+      if (task && !["completed", "failed", "interrupted", "archived"].includes(task.status)) {
+        task.status = "interrupted"; task.updatedAt = now; task.lastActiveAt = now;
+      }
+      markMessageProcessed(state, current.messageId);
+    });
   }
 
   private async runTask(taskId: string, queuedRun: QueuedRunState): Promise<void> {
@@ -2663,6 +2727,11 @@ export class BridgeRunner {
       }
 
       for (const job of Object.values(state.jobs)) {
+        if (job.status === "queued" && job.taskId && !state.tasks[job.taskId]) {
+          interruptDurableJob(state, job, now, "orphaned_task_reference");
+          markMessageProcessed(state, job.messageId);
+          continue;
+        }
         if (job.status === "running") {
           interruptDurableJob(state, job, now);
           markMessageProcessed(state, job.messageId);
@@ -7734,6 +7803,7 @@ function appendOutboxDeliveries(
     const outbox: DurableOutboxMessage = {
       id,
       jobId: job.id,
+      taskId: job.taskId,
       chatId: job.chatId,
       kind: delivery.kind,
       text: delivery.text,
@@ -7772,6 +7842,9 @@ function interruptDurableJob(
 }
 
 function interruptedJobMessage(job: DurableCodexJob): string {
+  if (job.interruptionReason === "orphaned_task_reference") {
+    return "Chat2Codex 恢复时找不到这条排队工作的任务绑定；为避免投递到错误任务，已停止且不会自动重放。";
+  }
   return [
     "Chat2Codex 在任务执行期间重启，无法确认此前的 Codex 进程是否已经产生副作用。",
     "为避免重复修改，系统不会自动重新执行这条任务。",
@@ -8035,6 +8108,11 @@ function parseJsonStringToken(text: string): { value: string; rest: string } | n
 
 function interactiveRequestKey(chatId: string, requestId: string): string {
   return `${chatId}\u0000${requestId}`;
+}
+
+function parsedTimestamp(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
 function taskInteractionKey(taskId: string, threadId: string, turnId: string, requestId: string): string {

@@ -57,6 +57,7 @@ export class JsonStateStore {
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
       importLegacyChatTasks(state, this.adapterId);
+      normalizeTaskReferences(state);
       enforceDurableRetention(
         state,
         this.jobRetentionCount,
@@ -76,6 +77,7 @@ export class JsonStateStore {
     state.conversations ??= {};
     normalizeChatSessionEpochs(state);
     importLegacyChatTasks(state, this.adapterId);
+    normalizeTaskReferences(state);
     enforceDurableRetention(
       state,
       this.jobRetentionCount,
@@ -303,6 +305,76 @@ function importLegacyChatTasks(state: BridgeState, adapterId: string): void {
   }
 }
 
+function normalizeTaskReferences(state: BridgeState): void {
+  const threadOwners = new Map<string, string>();
+  for (const [taskId, task] of Object.entries(state.tasks)) {
+    if (task.taskId !== taskId || !task.conversationId) {
+      delete state.tasks[taskId];
+      continue;
+    }
+    if (task.threadId) {
+      const owner = threadOwners.get(task.threadId);
+      if (owner && owner !== taskId) {
+        const existing = state.tasks[owner];
+        if (task.senderKey.startsWith("legacy:")) {
+          task.threadId = undefined;
+          continue;
+        }
+        if (existing?.senderKey.startsWith("legacy:")) {
+          existing.threadId = undefined;
+        } else {
+          throw new Error(`Codex thread is bound to multiple tasks: ${task.threadId}`);
+        }
+      }
+      threadOwners.set(task.threadId, taskId);
+    }
+  }
+
+  for (const [conversationId, conversation] of Object.entries(state.conversations)) {
+    const listed = conversation.taskIds.filter((taskId) =>
+      state.tasks[taskId]?.conversationId === conversationId
+    );
+    const missing = Object.values(state.tasks)
+      .filter((task) => task.conversationId === conversationId && !listed.includes(task.taskId))
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.taskId.localeCompare(right.taskId))
+      .map((task) => task.taskId);
+    conversation.taskIds = [...new Set([...listed, ...missing])];
+    if (!conversation.lastTaskId || !conversation.taskIds.includes(conversation.lastTaskId)) {
+      conversation.lastTaskId = conversation.taskIds.at(-1);
+    }
+  }
+  for (const task of Object.values(state.tasks)) {
+    state.conversations[task.conversationId] ??= { taskIds: [] };
+    const conversation = state.conversations[task.conversationId]!;
+    if (!conversation.taskIds.includes(task.taskId)) conversation.taskIds.push(task.taskId);
+    conversation.lastTaskId ??= task.taskId;
+  }
+
+  for (const clarification of Object.values(state.clarifications ?? {})) {
+    if (clarification.candidateTaskIds && Object.keys(state.tasks).length > 0) {
+      clarification.candidateTaskIds = [...new Set(clarification.candidateTaskIds)]
+        .filter((taskId) => state.tasks[taskId]?.conversationId === clarification.chatId)
+        .slice(0, 12);
+      const candidates = new Set(clarification.candidateTaskIds);
+      clarification.choices = clarification.choices.filter((choice) => candidates.has(choice));
+    }
+  }
+
+  for (const job of Object.values(state.jobs)) {
+    if (!job.taskId) continue;
+    const task = state.tasks[job.taskId];
+    if (task && task.conversationId !== job.chatId) {
+      job.taskId = undefined;
+      job.workspaceRoot = undefined;
+      job.executionCwd = undefined;
+      job.isolationMode = undefined;
+    }
+  }
+  for (const delivery of Object.values(state.outbox)) {
+    delivery.taskId = state.jobs[delivery.jobId]?.taskId;
+  }
+}
+
 function legacyTaskId(adapterId: string, conversationId: string, sessionEpoch: string): string {
   return "tsk_" + createHash("sha256").update(adapterId).update("\0").update(conversationId).update("\0").update(sessionEpoch).digest("hex").slice(0, 24);
 }
@@ -361,12 +433,18 @@ function pruneTerminalJobs(state: BridgeState, retentionCount: number): void {
       .filter((message) => message.status !== "delivered")
       .map((message) => message.jobId),
   );
+  const jobsWithActiveTaskObligations = new Set(
+    Object.values(state.jobs)
+      .filter((job) => job.taskId && isActiveTaskObligation(state.tasks[job.taskId]?.status))
+      .map((job) => job.id),
+  );
   const candidates = Object.values(state.jobs)
     .filter(
       (job) =>
         isTerminalJob(job) &&
         job.capacityNoticeActive !== true &&
-        !jobsWithActiveOutbox.has(job.id),
+        !jobsWithActiveOutbox.has(job.id) &&
+        !jobsWithActiveTaskObligations.has(job.id),
     )
     .sort(compareJobAge);
 
@@ -382,6 +460,10 @@ function pruneTerminalJobs(state: BridgeState, retentionCount: number): void {
     delete state.jobs[job.id];
     jobCount -= 1;
   }
+}
+
+function isActiveTaskObligation(status: RegisteredTask["status"] | undefined): boolean {
+  return status !== undefined && !["completed", "failed", "interrupted", "archived"].includes(status);
 }
 
 function normalizeDeliveryReferences(state: BridgeState): void {
