@@ -16,6 +16,7 @@ import {
   identityKeys,
   type SenderIdentity,
 } from "../core/identity.js";
+import { parseOutputDeclaration } from "../core/output-declarations.js";
 
 const appServerSteerRetryDelaysMs = [0, 100, 250, 500, 1000, 1500];
 const maxUserInputQuestions = 3;
@@ -111,6 +112,8 @@ export type CodexSandboxPolicy =
 export interface CodexRunResult {
   threadId?: string;
   finalText: string;
+  outputFiles?: string[];
+  outputDeclarationError?: string;
   stderr: string;
   exitCode: number | null;
   signal?: NodeJS.Signals | null;
@@ -1050,7 +1053,7 @@ export class CodexRunner {
         if (getString(item, "type") === "agentMessage") {
           const text = getString(item, "text");
           if (text && /\S/u.test(text) && getString(item, "phase") !== "commentary") {
-            finalText = truncateTextChars(text, this.config.chatOutputMaxChars);
+            finalText = text;
           }
         }
         recordCompletedItem(
@@ -1213,11 +1216,17 @@ export class CodexRunner {
           ? "(Codex finished without a final text response.)"
           : [turnError, stderr].filter(Boolean).join("\n");
     }
-    finalText = truncateTextChars(finalText.trim(), this.config.chatOutputMaxChars);
+    const parsedOutput = parseOutputDeclaration(finalText);
+    finalText = truncateTextChars(
+      parsedOutput.visibleText.trim(),
+      this.config.chatOutputMaxChars,
+    );
 
     return {
       threadId,
       finalText,
+      outputFiles: parsedOutput.outputFiles,
+      ...(parsedOutput.error ? { outputDeclarationError: parsedOutput.error } : {}),
       stderr,
       exitCode: cancelled || (turnCompleted && !turnError) ? 0 : exit.code,
       signal: exit.signal,
@@ -2218,13 +2227,16 @@ class CodexAppServerSession {
             ? "(Codex finished without a final text response.)"
             : [context.turnError, stderr].filter(Boolean).join("\n");
       }
+      const parsedOutput = parseOutputDeclaration(context.finalText);
       context.finalText = truncateTextChars(
-        context.finalText.trim(),
+        parsedOutput.visibleText.trim(),
         this.config.chatOutputMaxChars,
       );
       return {
         threadId: context.threadId,
         finalText: context.finalText,
+        outputFiles: parsedOutput.outputFiles,
+        ...(parsedOutput.error ? { outputDeclarationError: parsedOutput.error } : {}),
         stderr,
         exitCode:
           cancelled || (context.turnCompleted && !context.turnError)
@@ -2545,7 +2557,7 @@ class CodexAppServerSession {
       if (getString(item, "type") === "agentMessage") {
         const text = getString(item, "text");
         if (text && /\S/u.test(text) && getString(item, "phase") !== "commentary") {
-          context.finalText = truncateTextChars(text, this.config.chatOutputMaxChars);
+          context.finalText = text;
         }
       }
       recordCompletedItem(

@@ -121,6 +121,32 @@ describe("Codex app-server session manager", () => {
     }
   });
 
+  test("parses output declarations before truncating reusable-session final text", async () => {
+    const fixture = await createSessionFakeCodex();
+    const runner = createRunner(fixture.fakeCodex, fixture.tempDir, {
+      CHAT_OUTPUT_MAX_CHARS: "400",
+    });
+    const outputPath = path.join(fixture.tempDir, "report.png");
+    const prompt = `${"Visible result. ".repeat(40)}\nCHAT2CODEX_OUTPUT_FILES: ${JSON.stringify([outputPath])}`;
+
+    try {
+      const result = await runner.run({
+        prompt,
+        cwd: fixture.tempDir,
+        sessionScope: scope(),
+      });
+
+      expect(result.outputFiles).toEqual([outputPath]);
+      expect(result.outputDeclarationError).toBeUndefined();
+      expect([...result.finalText]).toHaveLength(400);
+      expect(result.finalText).toContain("[truncated]");
+      expect(result.finalText).not.toContain("CHAT2CODEX_OUTPUT_FILES");
+    } finally {
+      await runner.dispose?.();
+      await rm(fixture.tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("sets Plan mode for one turn and restores Default mode on the reused session", async () => {
     const fixture = await createSessionFakeCodex();
     const runner = createRunner(fixture.fakeCodex, fixture.tempDir);

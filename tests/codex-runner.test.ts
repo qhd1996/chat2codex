@@ -3216,6 +3216,51 @@ if (message.method === "turn/start") {
     }
   });
 
+  test("parses output declarations before truncating single-use final text", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
+    const outputPath = path.join(tempDir, "report.png");
+    const fullText = `${"Visible result. ".repeat(40)}\nCHAT2CODEX_OUTPUT_FILES: ${JSON.stringify([outputPath])}`;
+    const { fakeCodex } = await createRecordingFakeCodex(
+      tempDir,
+      `
+if (message.method === "initialize") {
+  send({ id: message.id, result: { userAgent: "fake", codexHome: "/tmp/codex", platformFamily: "unix", platformOs: "macos" } });
+  return;
+}
+if (message.method === "thread/start") {
+  send({ id: message.id, result: { thread: { id: "thread_fake" } } });
+  return;
+}
+if (message.method === "turn/start") {
+  send({ id: message.id, result: { turn: { id: "turn_fake" } } });
+  completeTurn(${JSON.stringify(fullText)});
+  return;
+}
+`,
+    );
+
+    try {
+      const result = await new CodexRunner(
+        loadConfig({
+          FEISHU_APP_ID: "cli_test",
+          FEISHU_APP_SECRET: "secret",
+          CODEX_BIN: fakeCodex,
+          CODEX_WORKDIR: tempDir,
+          CHAT_OUTPUT_MAX_CHARS: "400",
+        }),
+        new ConsoleLogger("error"),
+      ).run({ prompt: "declare output", cwd: tempDir });
+
+      expect(result.outputFiles).toEqual([outputPath]);
+      expect(result.outputDeclarationError).toBeUndefined();
+      expect([...result.finalText]).toHaveLength(400);
+      expect(result.finalText).toContain("[truncated]");
+      expect(result.finalText).not.toContain("CHAT2CODEX_OUTPUT_FILES");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("bounds command output buffers and summaries by configured UTF-8 bytes", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
     const { fakeCodex } = await createRecordingFakeCodex(
