@@ -63,6 +63,7 @@ import { hasStableIdentity, identitiesIntersect, identityKeys } from "./identity
 import type { NaturalIntentClassifier } from "./natural-intent.js";
 import { pruneExpiredClarifications, resolveNaturalIntent } from "./natural-intent.js";
 import { chooseNaturalApprovalDecision } from "./natural-interactions.js";
+import { parseSlashCommand, type CommandAction } from "./command-actions.js";
 import { ImageDraftService } from "./image-drafts.js";
 import { ExecutionWorkspaceService } from "./execution-workspaces.js";
 import { resolveNaturalTaskDecision, type NaturalTaskClassifier } from "./natural-task-router.js";
@@ -1066,7 +1067,8 @@ export class BridgeRunner {
       return;
     }
 
-    if (!hasAttachments && text === "/whoami") {
+    const slashAction = !hasAttachments ? parseSlashCommand(text) : null;
+    if (slashAction?.kind === "show_identity") {
       await this.sendWhoami(message);
       return;
     }
@@ -1087,107 +1089,7 @@ export class BridgeRunner {
       if (naturalHandled) return;
     }
 
-    if (!hasAttachments && text === "/help") {
-      await this.sendHelp(message.chatId);
-      return;
-    }
-    if (!hasAttachments && text === "/retry") {
-      await this.retryLastRun(message);
-      return;
-    }
-    if (!hasAttachments && text === "/usage") {
-      await this.sendTokenUsage(message.chatId);
-      return;
-    }
-    if (!hasAttachments && (text === "/service" || text.startsWith("/service "))) {
-      await this.handleServiceCommand(message, text.slice("/service".length).trim());
-      return;
-    }
-
-    if (!hasAttachments && text === "/status") {
-      await this.sendStatus(message.chatId);
-      return;
-    }
-    if (!hasAttachments && text === "/host") {
-      await this.sendHostHealth(message.chatId);
-      return;
-    }
-    if (!hasAttachments && (text === "/diff" || text === "/logs" || text === "/files" || text === "/summary")) {
-      await this.sendRunDetail(message.chatId, commandDetailKind(text));
-      return;
-    }
-    if (!hasAttachments && (text === "/steer" || text.startsWith("/steer "))) {
-      await this.steerActiveRun(message.chatId, text.slice("/steer".length).trim());
-      return;
-    }
-    if (!hasAttachments && text === "/stop") {
-      await this.stopCodex(message.chatId);
-      return;
-    }
-    if (!hasAttachments && text === "/projects") {
-      await this.sendProjects(message.chatId, message.chatType);
-      return;
-    }
-    if (!hasAttachments && (text === "/project" || text.startsWith("/project "))) {
-      await this.selectProject(message.chatId, message.chatType, text.slice("/project".length).trim());
-      return;
-    }
-    if (!hasAttachments && (text === "/threads" || text === "/sessions")) {
-      await this.sendThreads(message.chatId, message.chatType);
-      return;
-    }
-    if (!hasAttachments && text === "/archived") {
-      await this.sendArchivedThreads(message.chatId, message.chatType);
-      return;
-    }
-    if (!hasAttachments && (text === "/history" || text.startsWith("/history "))) {
-      await this.sendHistory(message.chatId, message.chatType, text.slice("/history".length).trim());
-      return;
-    }
-    if (!hasAttachments && (text === "/search" || text.startsWith("/search "))) {
-      await this.searchThreads(message.chatId, message.chatType, text.slice("/search".length).trim());
-      return;
-    }
-    if (!hasAttachments && (text === "/resume" || text.startsWith("/resume "))) {
-      await this.resumeThread(message.chatId, message.chatType, text.slice("/resume".length).trim());
-      return;
-    }
-    if (!hasAttachments && (text === "/fork" || text.startsWith("/fork "))) {
-      await this.forkThread(
-        message.chatId,
-        message.chatType,
-        text.slice("/fork".length).trim(),
-        message.messageId,
-      );
-      return;
-    }
-    if (!hasAttachments && text === "/compact") {
-      await this.compactThread(message.chatId, message.chatType);
-      return;
-    }
-    if (!hasAttachments && text === "/archive") {
-      await this.archiveCurrentThread(message.chatId, message.messageId);
-      return;
-    }
-    if (!hasAttachments && (text === "/unarchive" || text.startsWith("/unarchive "))) {
-      await this.unarchiveThread(
-        message.chatId,
-        message.chatType,
-        text.slice("/unarchive".length).trim(),
-        message.messageId,
-      );
-      return;
-    }
-    if (!hasAttachments && text === "/plan") {
-      await this.sender.sendText(message.chatId, "用法：/plan <任务>（以 Plan 模式执行这一轮）");
-      return;
-    }
-    if (!hasAttachments && (text === "/new" || text === "/reset")) {
-      await this.resetSession(message.chatId);
-      return;
-    }
-    if (!hasAttachments && text.startsWith("/cd ")) {
-      await this.changeDirectory(message.chatId, message.chatType, text.slice(4).trim());
+    if (slashAction && await this.dispatchCommandAction(message, slashAction)) {
       return;
     }
 
@@ -1333,6 +1235,113 @@ export class BridgeRunner {
       remembered.collaborationMode,
       executionIntentForTask(task),
     );
+  }
+
+  private async dispatchCommandAction(message: IncomingTextMessage, action: CommandAction): Promise<boolean> {
+    const { chatId, chatType, messageId } = message;
+    switch (action.kind) {
+      case "show_identity":
+        await this.sendWhoami(message);
+        return true;
+      case "show_help":
+        await this.sendHelp(chatId);
+        return true;
+      case "retry_task":
+        await this.retryLastRun(message);
+        return true;
+      case "show_usage":
+        await this.sendTokenUsage(chatId);
+        return true;
+      case "service_status":
+      case "service_logs":
+      case "service_restart":
+        await this.handleServiceCommand(message, action.kind.slice("service_".length));
+        return true;
+      case "show_status":
+        await this.sendStatus(chatId);
+        return true;
+      case "show_host":
+        await this.sendHostHealth(chatId);
+        return true;
+      case "show_diff":
+      case "show_logs":
+      case "show_files":
+      case "show_summary":
+        await this.sendRunDetail(chatId, action.kind.slice("show_".length) as RunDetailKind);
+        return true;
+      case "steer_task":
+        await this.steerActiveRun(chatId, action.instruction);
+        return true;
+      case "stop_task":
+        await this.stopCodex(chatId);
+        return true;
+      case "list_projects":
+        await this.sendProjects(chatId, chatType);
+        return true;
+      case "select_project":
+        if (action.explicitPath) await this.changeDirectory(chatId, chatType, action.selector);
+        else await this.selectProject(chatId, chatType, action.selector);
+        return true;
+      case "list_threads":
+        await this.sendThreads(chatId, chatType);
+        return true;
+      case "list_archived":
+        await this.sendArchivedThreads(chatId, chatType);
+        return true;
+      case "show_history":
+        await this.sendHistory(chatId, chatType, action.selector ?? "");
+        return true;
+      case "search_threads":
+        await this.searchThreads(chatId, chatType, action.query);
+        return true;
+      case "resume_task":
+        await this.resumeThread(chatId, chatType, action.selector ?? "");
+        return true;
+      case "fork_task":
+        await this.forkThread(chatId, chatType, action.selector ?? "", messageId);
+        return true;
+      case "compact_task":
+        await this.compactThread(chatId, chatType);
+        return true;
+      case "archive_task":
+        await this.archiveCurrentThread(chatId, messageId);
+        return true;
+      case "unarchive_thread":
+        await this.unarchiveThread(chatId, chatType, action.selector, messageId);
+        return true;
+      case "reset_task":
+        await this.resetSession(chatId);
+        return true;
+      case "approve":
+        await this.answerApprovalFromText(message);
+        return true;
+      case "deny":
+      case "grant_turn":
+      case "grant_session":
+        await this.answerPermissionFromText(message);
+        return true;
+      case "answer_user_input":
+        await this.answerUserInputFromText(message);
+        return true;
+      case "answer_mcp_field":
+        await this.answerMcpElicitationFromText(message);
+        return true;
+      case "decide_mcp_url":
+        await this.decideMcpFromText(message);
+        return true;
+      case "clarify":
+        await this.sender.sendText(chatId, action.question);
+        return true;
+      case "create_task":
+        if (!action.instruction) {
+          await this.sender.sendText(chatId, "用法：/plan <任务>（以 Plan 模式执行这一轮）");
+          return true;
+        }
+        return false;
+      default:
+        await this.sender.sendText(chatId, "当前命令需要指定任务后才能执行。");
+        return true;
+    }
   }
 
   private async sendTaskStatus(conversationId: string, tasks: RegisteredTask[]): Promise<void> {

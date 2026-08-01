@@ -8430,6 +8430,21 @@ describe("MessageRouter access control", () => {
     }
   });
 
+  test("routes slash commands through the shared command action dispatcher", async () => {
+    await withRouter({}, async ({ router, sender, codex }) => {
+      await router.enqueue({
+        messageId: "m_service_default_action",
+        chatId: "oc_chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text: "/service",
+      });
+
+      expect(codex.runs).toHaveLength(0);
+      expect(sender.messages.at(-1)?.text).toContain("**Chat2Codex 服务状态**");
+    });
+  });
+
   test("text retry reruns the latest in-memory prompt for the original sender", async () => {
     const codex = new SequencedCodex([
       {

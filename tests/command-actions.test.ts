@@ -7,4 +7,18 @@ describe("command actions", () => {
     for (const [input, kind] of cases) expect(parseSlashCommand(input)?.kind, input).toBe(kind);
   });
   test("does not manufacture privileged actions from unknown input", () => { expect(parseSlashCommand("ordinary task")).toBeNull(); expect(parseSlashCommand("/future unsafe")).toBeNull(); expect(parseSlashCommand("/service destroy")).toBeNull(); });
+
+  test("preserves whether project selection came from an explicit path command", () => {
+    expect(parseSlashCommand("/project 2")).toEqual({ kind: "select_project", selector: "2" });
+    expect(parseSlashCommand("/cd C:\\repo")).toEqual({
+      kind: "select_project",
+      selector: "C:\\repo",
+      explicitPath: true,
+    });
+  });
+
+  test("rejects invalid permission decisions instead of manufacturing a denial", () => {
+    expect(parseSlashCommand("/permit abc later")).toBeNull();
+    expect(parseSlashCommand("/permit abc")).toBeNull();
+  });
 });
