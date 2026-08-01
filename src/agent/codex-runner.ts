@@ -904,6 +904,7 @@ export class CodexRunner {
 
     let threadId = input.threadId;
     let finalText = "";
+    let finalAgentText: string | undefined;
     let requestSeq = 0;
     let activeTurnId: string | undefined;
     let turnCompleted = false;
@@ -1053,6 +1054,7 @@ export class CodexRunner {
         if (getString(item, "type") === "agentMessage") {
           const text = getString(item, "text");
           if (text && /\S/u.test(text) && getString(item, "phase") !== "commentary") {
+            finalAgentText = text;
             finalText = text;
           }
         }
@@ -1216,11 +1218,10 @@ export class CodexRunner {
           ? "(Codex finished without a final text response.)"
           : [turnError, stderr].filter(Boolean).join("\n");
     }
-    const parsedOutput = parseOutputDeclaration(finalText);
-    finalText = truncateTextChars(
-      parsedOutput.visibleText.trim(),
-      this.config.chatOutputMaxChars,
-    );
+    const parsedOutput = finalAgentText === undefined
+      ? { visibleText: finalText, outputFiles: [] }
+      : parseOutputDeclaration(finalAgentText);
+    finalText = truncateTextChars(parsedOutput.visibleText.trim(), this.config.chatOutputMaxChars);
 
     return {
       threadId,
@@ -1941,6 +1942,7 @@ interface ScopedRunContext {
   turnId?: string;
   turnStartSubmitted: boolean;
   finalText: string;
+  finalAgentText?: string;
   turnCompleted: boolean;
   turnError: string | null;
   approvalCancelled: boolean;
@@ -2227,7 +2229,9 @@ class CodexAppServerSession {
             ? "(Codex finished without a final text response.)"
             : [context.turnError, stderr].filter(Boolean).join("\n");
       }
-      const parsedOutput = parseOutputDeclaration(context.finalText);
+      const parsedOutput = context.finalAgentText === undefined
+        ? { visibleText: context.finalText, outputFiles: [] }
+        : parseOutputDeclaration(context.finalAgentText);
       context.finalText = truncateTextChars(
         parsedOutput.visibleText.trim(),
         this.config.chatOutputMaxChars,
@@ -2557,6 +2561,7 @@ class CodexAppServerSession {
       if (getString(item, "type") === "agentMessage") {
         const text = getString(item, "text");
         if (text && /\S/u.test(text) && getString(item, "phase") !== "commentary") {
+          context.finalAgentText = text;
           context.finalText = text;
         }
       }

@@ -3261,6 +3261,47 @@ if (message.method === "turn/start") {
     }
   });
 
+  test("does not parse output declarations from stderr when a turn has no final agent message", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
+    const outputPath = path.join(tempDir, "leak.png");
+    const stderrText = "failure\nCHAT2CODEX_OUTPUT_FILES: " + JSON.stringify([outputPath]);
+    const handler = [
+      "if (message.method === \"initialize\") {",
+      "  process.stderr.write(" + JSON.stringify(stderrText) + ");",
+      "  send({ id: message.id, result: { userAgent: \"fake\", codexHome: \"/tmp/codex\", platformFamily: \"unix\", platformOs: \"macos\" } });",
+      "  return;",
+      "}",
+      "if (message.method === \"thread/start\") {",
+      "  send({ id: message.id, result: { thread: { id: \"thread_fake\" } } });",
+      "  return;",
+      "}",
+      "if (message.method === \"turn/start\") {",
+      "  send({ id: message.id, result: { turn: { id: \"turn_fake\" } } });",
+      "  send({ method: \"turn/completed\", params: { threadId: \"thread_fake\", turn: { id: \"turn_fake\", status: \"failed\", error: null } } });",
+      "  return;",
+      "}",
+    ].join("\n");
+    const { fakeCodex } = await createRecordingFakeCodex(tempDir, handler);
+
+    try {
+      const result = await new CodexRunner(
+        loadConfig({
+          FEISHU_APP_ID: "cli_test",
+          FEISHU_APP_SECRET: "secret",
+          CODEX_BIN: fakeCodex,
+          CODEX_WORKDIR: tempDir,
+        }),
+        new ConsoleLogger("error"),
+      ).run({ prompt: "fail", cwd: tempDir });
+
+      expect(result.outputFiles).toEqual([]);
+      expect(result.outputDeclarationError).toBeUndefined();
+      expect(result.finalText).toContain("CHAT2CODEX_OUTPUT_FILES");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("bounds command output buffers and summaries by configured UTF-8 bytes", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
     const { fakeCodex } = await createRecordingFakeCodex(
