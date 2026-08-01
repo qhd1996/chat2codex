@@ -21,6 +21,7 @@ describe("JsonStateStore", () => {
       const stateDirectory = path.join(tempDir, "nested");
       const store = new JsonStateStore(path.join(stateDirectory, "state.json"));
       expect(await store.load()).toEqual({
+        tasks: {}, conversations: {},
         chats: {},
         jobs: {},
         outbox: {},
@@ -195,7 +196,7 @@ describe("JsonStateStore", () => {
       await store.save(loaded);
 
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(3);
+      expect(persisted.schemaVersion).toBe(4);
       expect(persisted.adapters["lark:default"].processedMessageIds).toEqual(["m_legacy"]);
       expect(JSON.parse(await readFile(`${statePath}.v0.6.bak`, "utf8"))).toEqual(legacy);
       if (process.platform !== "win32") {
@@ -223,6 +224,7 @@ describe("JsonStateStore", () => {
 
       const slackState = await slack.load();
       expect(slackState).toEqual({
+        tasks: {}, conversations: {},
         chats: {},
         jobs: {},
         outbox: {},
@@ -252,17 +254,37 @@ describe("JsonStateStore", () => {
     }
   });
 
+  test("migrates schema v3 chats into deterministic tasks and preserves a v3 backup", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-v3-"));
+    const statePath = path.join(tempDir, "state.json");
+    const legacy = { schemaVersion: 3, adapters: { "weixin:bot": { chats: { wx_chat: { sessionEpoch: "epoch-v3", cwd: tempDir, threadId: "thread-v3", chatType: "direct", updatedAt: "2026-08-01T00:00:00.000Z" } }, jobs: {}, outbox: {}, pendingMessages: {}, processedMessageIds: [], diagnostics: {}, imageDrafts: {}, clarifications: {} } } };
+    try {
+      await writeFile(statePath, JSON.stringify(legacy));
+      const store = new JsonStateStore(statePath, { adapterId: "weixin:bot" });
+      const loaded = await store.load();
+      const imported = Object.values(loaded.tasks);
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ conversationId: "wx_chat", workspaceRoot: tempDir, executionCwd: tempDir, isolationMode: "canonical_fifo", threadId: "thread-v3", sessionEpoch: "epoch-v3", status: "completed" });
+      expect(loaded.conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
+      await store.save(loaded);
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+      expect(persisted.schemaVersion).toBe(4);
+      expect(JSON.parse(await readFile(`${statePath}.v3.bak`, "utf8"))).toEqual(legacy);
+      expect((await store.load()).conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
   test("refuses to overwrite an unknown future state schema", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-"));
     const statePath = path.join(tempDir, "state.json");
-    const futureState = `${JSON.stringify({ schemaVersion: 4, adapters: {} }, null, 2)}\n`;
+    const futureState = `${JSON.stringify({ schemaVersion: 5, adapters: {} }, null, 2)}\n`;
     try {
       await writeFile(statePath, futureState, { mode: 0o600 });
       const store = new JsonStateStore(statePath, { adapterId: "feishu:default" });
 
-      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 4");
+      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 5");
       await expect(store.save(emptyState())).rejects.toThrow(
-        "Unsupported bridge state schema version: 4",
+        "Unsupported bridge state schema version: 5",
       );
       expect(await readFile(statePath, "utf8")).toBe(futureState);
       expect(await stat(`${statePath}.v0.6.bak`).catch(() => null)).toBeNull();
@@ -293,7 +315,7 @@ describe("JsonStateStore", () => {
       };
       await store.save(state);
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(3);
+      expect(persisted.schemaVersion).toBe(4);
       expect((await store.load()).imageDrafts["chat:user"]?.images).toHaveLength(1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });

@@ -1,14 +1,15 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
   type BridgeState,
-  type BridgeStateEnvelopeV3,
+  type BridgeStateEnvelopeV4,
   type DurableCodexJob,
   type DurableOutboxMessage,
   type ImageDraft,
   type PendingClarification,
+  type RegisteredTask,
   bridgeStateSchemaVersion,
   createSessionEpoch,
   emptyState,
@@ -51,10 +52,11 @@ export class JsonStateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const persisted = JSON.parse(raw) as unknown;
       assertSupportedSchema(persisted);
-      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV2(persisted)
+      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV3(persisted) || isBridgeStateEnvelopeV2(persisted)
         ? coerceBridgeState(persisted.adapters[this.adapterId])
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
+      importLegacyChatTasks(state, this.adapterId);
       enforceDurableRetention(
         state,
         this.jobRetentionCount,
@@ -70,7 +72,10 @@ export class JsonStateStore {
   }
 
   async save(state: BridgeState): Promise<void> {
+    state.tasks ??= {};
+    state.conversations ??= {};
     normalizeChatSessionEpochs(state);
+    importLegacyChatTasks(state, this.adapterId);
     enforceDurableRetention(
       state,
       this.jobRetentionCount,
@@ -96,10 +101,13 @@ export class JsonStateStore {
 
       const currentPersisted = await readPersistedState(this.filePath);
       assertSupportedSchema(currentPersisted);
-      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted);
+      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted) && !isBridgeStateEnvelopeV3(currentPersisted) && !isBridgeStateEnvelopeV2(currentPersisted);
+      const migratedV3 = isBridgeStateEnvelopeV3(currentPersisted);
       const migratedV2 = isBridgeStateEnvelopeV2(currentPersisted);
-      const envelope: BridgeStateEnvelopeV3 = isBridgeStateEnvelope(currentPersisted)
+      const envelope: BridgeStateEnvelopeV4 = isBridgeStateEnvelope(currentPersisted)
         ? currentPersisted
+        : migratedV3
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
         : migratedV2
           ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
         : {
@@ -113,6 +121,9 @@ export class JsonStateStore {
 
       if (migratedLegacy) {
         await preserveLegacyBackup(this.filePath);
+      }
+      if (migratedV3) {
+        await preserveVersionedBackup(this.filePath, "v3");
       }
       if (migratedV2) {
         await preserveVersionedBackup(this.filePath, "v2");
@@ -155,6 +166,8 @@ function normalizeAdapterId(value: string): string {
 function coerceBridgeState(value: unknown): BridgeState {
   const parsed = isRecord(value) ? value as Partial<BridgeState> : {};
   return {
+    tasks: isRecord(parsed.tasks) ? parsed.tasks as Record<string, RegisteredTask> : {},
+    conversations: isRecord(parsed.conversations) ? parsed.conversations : {},
     chats: parsed.chats ?? {},
     jobs: parsed.jobs ?? {},
     outbox: parsed.outbox ?? {},
@@ -166,12 +179,16 @@ function coerceBridgeState(value: unknown): BridgeState {
   };
 }
 
-function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV3 {
+function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV4 {
   return Boolean(
     isRecord(value) &&
       value.schemaVersion === bridgeStateSchemaVersion &&
       isRecord(value.adapters),
   );
+}
+
+function isBridgeStateEnvelopeV3(value: unknown): value is { schemaVersion: 3; adapters: Record<string, BridgeState> } {
+  return Boolean(isRecord(value) && value.schemaVersion === 3 && isRecord(value.adapters));
 }
 
 function isBridgeStateEnvelopeV2(value: unknown): value is { schemaVersion: 2; adapters: Record<string, BridgeState> } {
@@ -182,7 +199,7 @@ function assertSupportedSchema(value: unknown): void {
   if (
     isRecord(value) &&
     Object.prototype.hasOwnProperty.call(value, "schemaVersion") &&
-    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV2(value)
+    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV3(value) && !isBridgeStateEnvelopeV2(value)
   ) {
     throw new Error(`Unsupported bridge state schema version: ${String(value.schemaVersion)}`);
   }
@@ -264,6 +281,26 @@ function normalizeChatSessionEpochs(state: BridgeState): void {
       session.sessionEpoch = createSessionEpoch();
     }
   }
+}
+
+function importLegacyChatTasks(state: BridgeState, adapterId: string): void {
+  for (const [conversationId, session] of Object.entries(state.chats)) {
+    const taskId = legacyTaskId(adapterId, conversationId, session.sessionEpoch);
+    if (!state.tasks[taskId]) {
+      const at = session.updatedAt || new Date(0).toISOString();
+      const selected = session.lastThreads?.find((item) => item.threadId === session.threadId);
+      state.tasks[taskId] = { taskId, conversationId, chatType: session.chatType ?? "direct", senderKey: "legacy:" + conversationId, title: selected?.title?.trim() || "Imported chat task", aliases: [], workspaceKind: "explicit", workspaceRoot: path.resolve(session.cwd), executionCwd: path.resolve(session.cwd), isolationMode: "canonical_fifo", sessionEpoch: session.sessionEpoch, threadId: session.threadId, status: "completed", objectiveSummary: selected?.preview?.slice(0, 500) ?? "", recentRequests: [], createdAt: at, updatedAt: at, lastActiveAt: at, lastRun: session.lastRun };
+    }
+    const conversation = state.conversations[conversationId] ?? { taskIds: [] };
+    conversation.taskIds = [...new Set([...conversation.taskIds, taskId])];
+    conversation.lastTaskId ??= taskId;
+    conversation.lastProjects ??= session.lastProjects; conversation.lastThreads ??= session.lastThreads; conversation.lastArchivedThreads ??= session.lastArchivedThreads; conversation.lastTurns ??= session.lastTurns;
+    state.conversations[conversationId] = conversation;
+  }
+}
+
+function legacyTaskId(adapterId: string, conversationId: string, sessionEpoch: string): string {
+  return "tsk_" + createHash("sha256").update(adapterId).update("\0").update(conversationId).update("\0").update(sessionEpoch).digest("hex").slice(0, 24);
 }
 
 function isNotFound(error: unknown): boolean {

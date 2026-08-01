@@ -14,6 +14,23 @@ export interface ChatSession {
   lastRun?: LastRunSummary;
 }
 
+export type TaskStatus = "draft" | "queued" | "waiting_workspace" | "running" | "waiting_approval" | "waiting_input" | "stopping" | "completed" | "failed" | "interrupted" | "archived";
+export type WorkspaceKind = "work" | "travel" | "personal" | "finance" | "ai_lab" | "learning" | "explicit";
+export type IsolationMode = "canonical_fifo" | "git_worktree" | "output_only";
+
+export interface RegisteredTask {
+  taskId: string; conversationId: string; chatType: "direct" | "group"; senderKey: string;
+  title: string; aliases: string[]; workspaceKind: WorkspaceKind; workspaceRoot: string;
+  executionCwd: string; isolationMode: IsolationMode; sessionEpoch: string; threadId?: string;
+  activeTurnId?: string; status: TaskStatus; objectiveSummary: string; recentRequests: string[];
+  createdAt: string; updatedAt: string; lastActiveAt: string; lastRun?: LastRunSummary;
+}
+
+export interface ConversationTaskState {
+  taskIds: string[]; lastTaskId?: string; lastProjects?: ProjectSelection[]; lastThreads?: ThreadSelection[];
+  lastArchivedThreads?: ThreadSelection[]; lastTurns?: TurnSelection[];
+}
+
 /**
  * Creates an opaque, non-sensitive identity for one logical chat session.
  * Runtime app-server handles and permission grants must never be persisted here.
@@ -224,6 +241,7 @@ export interface DurableCodexJob {
   completedAt?: string;
   result?: LastRunSummary;
   deliveryIds: string[];
+  taskId?: string; workspaceRoot?: string; executionCwd?: string; isolationMode?: IsolationMode;
   interruptionReason?: string;
   /** A durable singleton used to suppress repeated queue-full replies. */
   capacityNoticeScope?: "global" | "chat";
@@ -278,6 +296,8 @@ export interface PendingClarification {
 }
 
 export interface BridgeState {
+  tasks: Record<string, RegisteredTask>;
+  conversations: Record<string, ConversationTaskState>;
   chats: Record<string, ChatSession>;
   jobs: Record<string, DurableCodexJob>;
   outbox: Record<string, DurableOutboxMessage>;
@@ -288,15 +308,17 @@ export interface BridgeState {
   clarifications?: Record<string, PendingClarification>;
 }
 
-export const bridgeStateSchemaVersion = 3 as const;
+export const bridgeStateSchemaVersion = 4 as const;
 
 /** On-disk envelope. Each adapter receives an isolated v0.6-compatible state partition. */
-export interface BridgeStateEnvelopeV3 {
+export interface BridgeStateEnvelopeV4 {
   schemaVersion: typeof bridgeStateSchemaVersion;
   adapters: Record<string, BridgeState>;
 }
 
 export const emptyState = (): BridgeState => ({
+  tasks: {},
+  conversations: {},
   chats: {},
   jobs: {},
   outbox: {},
