@@ -57,7 +57,9 @@ export class ExecutionWorkspaceService {
     const home = await ensureServiceHome(options.chat2codexHome);
     let probeResult: OutputOnlySandboxProbeResult;
     try {
-      probeResult = await (options.sandboxProbe ?? probeInstalledCodexOutputOnlySandbox)(options.codexBin);
+      probeResult = options.sandboxProbe
+        ? await options.sandboxProbe(options.codexBin)
+        : await probeInstalledCodexOutputOnlySandbox(options.codexBin, home);
     } catch (error) {
       probeResult = {
         verified: false,
@@ -237,7 +239,10 @@ function assertTaskId(taskId: string): void {
   if (!taskIdPattern.test(taskId)) throw new Error("Invalid task ID for execution workspace.");
 }
 
-export async function probeInstalledCodexOutputOnlySandbox(codexBin: string): Promise<OutputOnlySandboxProbeResult> {
+export async function probeInstalledCodexOutputOnlySandbox(
+  codexBin: string,
+  sourceParent = os.homedir(),
+): Promise<OutputOnlySandboxProbeResult> {
   let codexVersion: string | undefined;
   try {
     codexVersion = (await runFile(codexBin, ["--version"], 10_000)).stdout.trim();
@@ -246,12 +251,18 @@ export async function probeInstalledCodexOutputOnlySandbox(codexBin: string): Pr
     return { verified: false, reason: boundedReason("Codex version probe failed: " + errorMessage(error)) };
   }
 
-  const fixtureRoot = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-codex-sandbox-"));
+  let sourceFixtureRoot: string | undefined;
+  let outputFixtureRoot: string | undefined;
   try {
-    const source = path.join(fixtureRoot, "source");
-    const output = path.join(fixtureRoot, "output");
-    await fs.mkdir(source);
-    await fs.mkdir(output);
+    const canonicalSourceParent = await fs.realpath(path.resolve(sourceParent));
+    const canonicalTemp = await fs.realpath(path.resolve(os.tmpdir()));
+    if (inside(canonicalTemp, canonicalSourceParent)) {
+      return { verified: false, codexVersion, reason: "Codex sandbox probe source parent must be outside the writable temporary directory." };
+    }
+    sourceFixtureRoot = await fs.mkdtemp(path.join(canonicalSourceParent, ".chat2codex-codex-sandbox-source-"));
+    outputFixtureRoot = await fs.mkdtemp(path.join(canonicalTemp, "chat2codex-codex-sandbox-output-"));
+    const source = sourceFixtureRoot;
+    const output = outputFixtureRoot;
     const nonce = randomBytes(24).toString("hex");
     const secretFile = path.join(source, "named-source.txt");
     const sentinelFile = path.join(source, "sentinel.txt");
@@ -289,7 +300,10 @@ export async function probeInstalledCodexOutputOnlySandbox(codexBin: string): Pr
     if (sentinelValue !== "UNCHANGED") return { verified: false, codexVersion, reason: "Codex sandbox modified the source workspace sentinel." };
     return { verified: true, codexVersion };
   } finally {
-    await fs.rm(fixtureRoot, { recursive: true, force: true });
+    await Promise.all([
+      sourceFixtureRoot ? fs.rm(sourceFixtureRoot, { recursive: true, force: true }) : Promise.resolve(),
+      outputFixtureRoot ? fs.rm(outputFixtureRoot, { recursive: true, force: true }) : Promise.resolve(),
+    ]);
   }
 }
 

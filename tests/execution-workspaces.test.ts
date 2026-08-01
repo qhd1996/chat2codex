@@ -220,3 +220,42 @@ test("sandbox probe preserves the configured model provider", async () => {
     await cleanup(f.root);
   }
 });
+
+test("sandbox probe places the protected source outside the temporary directory", async () => {
+  const f = await fixture();
+  try {
+    const fakeCodex = await createNodeTestExecutable(f.root, "source-boundary-codex", `
+      "use strict";
+      const fs = require("node:fs");
+      const os = require("node:os");
+      const path = require("node:path");
+      const args = process.argv.slice(2);
+      if (args.length === 1 && args[0] === "--version") {
+        process.stdout.write("codex-test 3.0\\n");
+        process.exit(0);
+      }
+      const output = args[args.indexOf("--cd") + 1];
+      if (!output) process.exit(11);
+      const script = fs.readFileSync(path.join(output, "probe.cjs"), "utf8");
+      const pathsLiteral = /^const p = (.+);$/m.exec(script)?.[1];
+      if (!pathsLiteral) process.exit(12);
+      const paths = JSON.parse(pathsLiteral);
+      const relativeToTemp = path.relative(fs.realpathSync(os.tmpdir()), fs.realpathSync(paths.secretFile));
+      const outsideTemp = relativeToTemp === ".."
+        || (relativeToTemp.startsWith(".." + path.sep) && !path.isAbsolute(relativeToTemp));
+      if (!outsideTemp) {
+        process.stderr.write("probe source remained under the writable temporary root");
+        process.exit(13);
+      }
+      fs.writeFileSync(paths.readProof, fs.readFileSync(paths.secretFile, "utf8"));
+      fs.writeFileSync(paths.writeProof, "OUTPUT_WRITE_OK");
+      fs.writeFileSync(paths.attemptProof, "DENIED:EACCES");
+    `);
+
+    const result = await probeInstalledCodexOutputOnlySandbox(fakeCodex);
+
+    expect(result).toEqual({ verified: true, codexVersion: "codex-test 3.0" });
+  } finally {
+    await cleanup(f.root);
+  }
+});
