@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 
 import { loadConfig } from "../src/config/env.js";
 
@@ -14,7 +15,7 @@ describe("loadConfig", () => {
     expect(config.feishuAppId).toBe("");
     expect(config.feishuAppSecret).toBe("");
     expect(config.weixinCredentialsPath).toBe(
-      "/tmp/chat2codex-weixin-home/weixin/credentials.json",
+      path.resolve("/tmp/chat2codex-weixin-home/weixin/credentials.json"),
     );
     expect(config.weixinNaturalRouting).toBe(true);
     expect(config.weixinIntentBaseUrl).toBe("http://127.0.0.1:23333/api/openai/v1");
@@ -87,13 +88,13 @@ describe("loadConfig", () => {
 
     expect(config.codexSkipGitRepoCheck).toBe(false);
     expect(config.codexApprovalPolicy).toBe("on-request");
-    expect(config.codexGroupAllowedRoots).toEqual(["/tmp/team-a", "/tmp/team-b"]);
+    expect(config.codexGroupAllowedRoots).toEqual([path.resolve("/tmp/team-a"), path.resolve("/tmp/team-b")]);
     expect(config.feishuBotOpenId).toBe("ou_bot");
     expect(config.access.allowDirectMessages).toBe(false);
     expect(config.access.allowGroups).toBe(true);
     expect(config.access.allowedChatIds).toEqual(["oc_a", "oc_b"]);
     expect(config.access.allowedUserIds).toEqual(["ou_1", "on_2"]);
-    expect(config.attachmentDownloadDir).toBe("/tmp/chat2codex-attachments");
+    expect(config.attachmentDownloadDir).toBe(path.resolve("/tmp/chat2codex-attachments"));
     expect(config.codexRunTimeoutMs).toBe(0);
     expect(config.codexApprovalTimeoutMs).toBe(0);
     expect(config.codexMaxConcurrentRuns).toBe(2);
@@ -182,12 +183,12 @@ describe("loadConfig", () => {
       allowedChatIds: [],
       allowedUserIds: [],
     });
-    expect(config.attachmentDownloadDir).toBe("/tmp/chat2codex-home/attachments");
-    expect(config.bridgeStatePath).toBe("/tmp/chat2codex-home/state.json");
+    expect(config.attachmentDownloadDir).toBe(path.resolve("/tmp/chat2codex-home/attachments"));
+    expect(config.bridgeStatePath).toBe(path.resolve("/tmp/chat2codex-home/state.json"));
     expect(config.codexApprovalPolicy).toBe("never");
     expect(config.codexRunTimeoutMs).toBe(0);
     expect(config.codexApprovalTimeoutMs).toBe(0);
-    expect(config.codexGroupAllowedRoots).toEqual(["/tmp/chat2codex"]);
+    expect(config.codexGroupAllowedRoots).toEqual([path.resolve("/tmp/chat2codex")]);
   });
 
   test("parses optional run and approval timeouts", () => {

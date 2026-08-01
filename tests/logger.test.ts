@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { ConsoleLogger, truncateUtf8 } from "../src/util/logger.js";
+import { expectPrivateFileMode } from "./helpers/platform.js";
 
 describe("bounded logger", () => {
   test("truncates entries on UTF-8 boundaries and marks the result", () => {
@@ -43,7 +44,7 @@ describe("bounded logger", () => {
       expect(files[2]?.content).toContain("entry-2");
       expect(files.every((file) => file.size <= 72)).toBe(true);
       expect(files.every((file) => file.content.includes("[truncated]"))).toBe(true);
-      expect((await fs.stat(logPath)).mode & 0o777).toBe(0o600);
+      expectPrivateFileMode((await fs.stat(logPath)).mode);
       await expect(fs.access(`${logPath}.3`)).rejects.toThrow();
       await expect(fs.access(`${logPath}.7`)).rejects.toThrow();
     } finally {

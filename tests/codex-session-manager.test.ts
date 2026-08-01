@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { CodexRunner, type CodexSessionScope } from "../src/agent/codex-runner.js";
 import { loadConfig } from "../src/config/env.js";
 import { ConsoleLogger } from "../src/util/logger.js";
+import { createNodeTestLauncher } from "./helpers/platform.js";
 
 const scope = (overrides: Partial<CodexSessionScope> = {}): CodexSessionScope => ({
   chatId: "chat_1",
@@ -988,8 +989,8 @@ process.on("exit", (code) => fs.appendFileSync(receivedPath, JSON.stringify({ pi
 process.on("SIGTERM", () => process.exit(0));
 `,
   );
-  await chmod(fakeCodex, 0o755);
-  return { tempDir, fakeCodex, receivedPath };
+  const executable = await createNodeTestLauncher(fakeCodex);
+  return { tempDir, fakeCodex: executable, receivedPath };
 }
 
 async function readMessages(

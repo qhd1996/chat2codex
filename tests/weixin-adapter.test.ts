@@ -16,6 +16,7 @@ import {
 import { emptyWeixinRuntimeState } from "../src/adapters/weixin/types.js";
 import { weixinSetupInternals } from "../src/setup/weixin.js";
 import type { Logger } from "../src/util/logger.js";
+import { expectPrivateFileMode } from "./helpers/platform.js";
 
 const temporaryDirectories: string[] = [];
 const logger: Logger = {
@@ -306,8 +307,8 @@ describe("Weixin private state", () => {
     expect(await loadWeixinRuntime(runtimePath)).toEqual(
       emptyWeixinRuntimeState(),
     );
-    expect((await fs.stat(credentialsPath)).mode & 0o777).toBe(0o600);
-    expect((await fs.stat(runtimePath)).mode & 0o777).toBe(0o600);
+    expectPrivateFileMode((await fs.stat(credentialsPath)).mode);
+    expectPrivateFileMode((await fs.stat(runtimePath)).mode);
   });
 });
 

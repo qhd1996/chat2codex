@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseEnv } from "dotenv";
 
 import {
   checkCodexProtocolCompatibility,
@@ -10,6 +11,7 @@ import {
   parseCommand,
   runCli,
 } from "../src/cli.js";
+import { createNodeTestExecutable } from "./helpers/platform.js";
 
 const originalCwd = process.cwd();
 const originalLog = console.log;
@@ -182,10 +184,11 @@ describe("CLI", () => {
 
       await runCli(["init", "--env", envFile, "--workdir", workdir]);
 
-      const env = await fs.readFile(envFile, "utf8");
-      expect(env).toContain("FEISHU_APP_ID=cli_xxx");
-      expect(env).toContain(`CODEX_WORKDIR=${path.resolve(workdir)}`);
+      const env = parseEnv(await fs.readFile(envFile, "utf8"));
+      expect(env.FEISHU_APP_ID).toBe("cli_xxx");
+      expect(path.resolve(env.CODEX_WORKDIR ?? "")).toBe(path.resolve(workdir));
     } finally {
+      process.chdir(originalCwd);
       await fs.rm(tempDir, { recursive: true, force: true });
     }
   });
@@ -199,8 +202,8 @@ describe("CLI", () => {
 
       await runCli(["init", "--workdir", workdir]);
 
-      const env = await fs.readFile(path.join(tempDir, ".env"), "utf8");
-      expect(env).toContain(`CODEX_WORKDIR=${path.resolve(workdir)}`);
+      const env = parseEnv(await fs.readFile(path.join(tempDir, ".env"), "utf8"));
+      expect(path.resolve(env.CODEX_WORKDIR ?? "")).toBe(path.resolve(workdir));
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true });
     }
@@ -285,7 +288,11 @@ describe("CLI", () => {
     const attachmentDir = path.join(tempDir, "attachments");
     const credentialsPath = path.join(tempDir, "credentials.json");
     const envFile = path.join(tempDir, "weixin.env");
-    const fakeCodex = path.join(tempDir, "codex");
+    const fakeCodex = await createNodeTestExecutable(
+      tempDir,
+      "codex-version",
+      'process.stdout.write("codex-cli 0.144.5\\n");',
+    );
     const scanningUserId = "wx_scanning_user@im.wechat";
     const output: string[] = [];
     const envKeys = [
@@ -308,8 +315,6 @@ describe("CLI", () => {
       await fs.mkdir(workdir);
       await fs.mkdir(stateDir);
       await fs.mkdir(attachmentDir);
-      await fs.writeFile(fakeCodex, "#!/bin/sh\nprintf 'codex-cli 0.144.5\\n'\n");
-      await fs.chmod(fakeCodex, 0o755);
       await fs.writeFile(
         credentialsPath,
         JSON.stringify({
@@ -451,7 +456,11 @@ async function runDoctorWithCodexVersion(
   const workdir = path.join(tempDir, "workspace");
   const stateDir = path.join(tempDir, "state");
   const attachmentDir = path.join(tempDir, "attachments");
-  const fakeCodex = path.join(tempDir, "codex");
+  const fakeCodex = await createNodeTestExecutable(
+    tempDir,
+    "codex-version",
+    `process.stdout.write(${JSON.stringify("__VERSION__" + "\n")}.replace("__VERSION__", ${JSON.stringify(codexVersion)}));`,
+  );
   const output: string[] = [];
   const envKeys = [
     "FEISHU_APP_ID",
@@ -478,8 +487,6 @@ async function runDoctorWithCodexVersion(
     await fs.mkdir(workdir);
     await fs.mkdir(stateDir);
     await fs.mkdir(attachmentDir);
-    await fs.writeFile(fakeCodex, `#!/bin/sh\nprintf '%s\\n' '${codexVersion}'\n`);
-    await fs.chmod(fakeCodex, 0o755);
     await fs.writeFile(
       path.join(tempDir, ".env"),
       [

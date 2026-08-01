@@ -7,8 +7,10 @@ import {
   enforceAttachmentStoreLimits,
   removeAttachmentFiles,
 } from "../src/bot/attachment-store.js";
+import { supportsFileSymlinks } from "./helpers/platform.js";
 
 const tempDirectories: string[] = [];
+const symlinkTest = await supportsFileSymlinks() ? test : test.skip;
 
 afterEach(async () => {
   await Promise.all(
@@ -49,7 +51,7 @@ describe("attachment store", () => {
     expect(await fs.readFile(fresh, "utf8")).toBe("xxxx");
   });
 
-  test("does not follow file or directory symlinks while cleaning and measuring", async () => {
+  symlinkTest("does not follow file or directory symlinks while cleaning and measuring", async () => {
     const { container, root } = await storeFixture();
     const outsideDirectory = path.join(container, "outside");
     const outsideFile = path.join(outsideDirectory, "old.txt");
@@ -80,7 +82,7 @@ describe("attachment store", () => {
     expect(await fs.readFile(outsideFile, "utf8")).toHaveLength(50);
   });
 
-  test("rejects downloaded files outside the root and symlinks inside it", async () => {
+  symlinkTest("rejects downloaded files outside the root and symlinks inside it", async () => {
     const { container, root } = await storeFixture();
     const inside = path.join(root, "message", "inside.txt");
     const outside = path.join(container, "outside.txt");
@@ -198,7 +200,7 @@ describe("attachment store", () => {
     expect(await exists(root)).toBe(true);
   });
 
-  test("unlinks an in-root symlink without touching its outside target", async () => {
+  symlinkTest("unlinks an in-root symlink without touching its outside target", async () => {
     const { container, root } = await storeFixture();
     const outside = path.join(container, "outside.txt");
     const linked = path.join(root, "message", "linked.txt");
@@ -213,7 +215,7 @@ describe("attachment store", () => {
     expect(await fs.readFile(outside, "utf8")).toBe("xxx");
   });
 
-  test("refuses root and directory-symlink paths without touching outside directories", async () => {
+  symlinkTest("refuses root and directory-symlink paths without touching outside directories", async () => {
     const { container, root } = await storeFixture();
     const outsideDirectory = path.join(container, "outside");
     const outsideFile = path.join(outsideDirectory, "outside.txt");

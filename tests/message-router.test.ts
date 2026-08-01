@@ -61,6 +61,9 @@ import { ImageDraftService } from "../src/core/image-drafts.js";
 import type { NaturalIntentClassifier, NaturalIntentDecision } from "../src/core/natural-intent.js";
 import type { NaturalConversationDependencies } from "../src/core/bridge-runner.js";
 import type { Logger } from "../src/util/logger.js";
+import { supportsFileSymlinks } from "./helpers/platform.js";
+
+const symlinkTest = await supportsFileSymlinks() ? test : test.skip;
 
 type TestBridgeConfig = ReturnType<typeof loadConfig>;
 
@@ -4088,7 +4091,7 @@ describe("MessageRouter access control", () => {
         chatId: "oc_chat",
         chatType: "direct",
         sender: { openId: "ou_user" },
-        text: "/cd /tmp",
+        text: `/cd ${os.tmpdir()}`,
       });
       await router.enqueue({
         messageId: "m_run",
@@ -4098,7 +4101,7 @@ describe("MessageRouter access control", () => {
         text: "run outside default workdir",
       });
 
-      expect(codex.runs[0]?.cwd).toBe(await realpath("/tmp"));
+      expect(codex.runs[0]?.cwd).toBe(await realpath(os.tmpdir()));
     });
   });
 
@@ -4114,7 +4117,7 @@ describe("MessageRouter access control", () => {
           chatId: "oc_group",
           chatType: "group",
           sender: { openId: "ou_user" },
-          text: "@_user_1 /cd /tmp",
+          text: `@_user_1 /cd ${os.tmpdir()}`,
         });
         await router.enqueue({
           messageId: "m_allowed",
@@ -4138,7 +4141,7 @@ describe("MessageRouter access control", () => {
     );
   });
 
-  test("rejects group cwd changes that escape an allowed root through a symlink", async () => {
+  symlinkTest("rejects group cwd changes that escape an allowed root through a symlink", async () => {
     await withRouter(
       { ALLOW_GROUPS: "true", ALLOWED_CHAT_IDS: "oc_group" },
       async ({ router, sender, codex, config }) => {
@@ -4309,7 +4312,7 @@ describe("MessageRouter access control", () => {
 
       for (const [command, expected] of [
         ["/summary", "状态：success"],
-        ["/files", "src/app.ts"],
+        ["/files", path.join("src", "app.ts")],
         ["/diff", "diff --git a/src/app.ts b/src/app.ts"],
         ["/logs", "bun test"],
         ["/usage", "累计占 context：10.0%"],

@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { runAppServerSmoke } from "../src/setup/smoke-app-server.js";
+import { createNodeTestLauncher } from "./helpers/platform.js";
 
 describe("app-server smoke approval validation", () => {
   test("fails fast when command availableDecisions contains a malformed entry", async () => {
@@ -164,10 +165,10 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => setTimeout(() => process.exit(0), 50));
 `,
   );
-  await chmod(executable, 0o755);
+  const command = await createNodeTestLauncher(executable);
   return {
     cwd,
-    executable,
+    executable: command,
     receivedPath,
     cleanup: () => rm(cwd, { recursive: true, force: true }),
   };

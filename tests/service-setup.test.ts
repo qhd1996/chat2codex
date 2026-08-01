@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import path from "node:path";
 
 import {
   createServiceOptions,
@@ -9,15 +10,17 @@ import {
 } from "../src/setup/service.js";
 
 describe("service setup", () => {
-  test("renders a launchd plist for the built Node entrypoint", () => {
+  const posixServiceTest = process.platform === "win32" ? test.skip : test;
+
+  posixServiceTest("renders a launchd plist for the built Node entrypoint", () => {
     const options = createServiceOptions({
       target: "launchd",
-      projectDir: "/tmp/chat&codex",
-      envFile: "/tmp/chat&codex/.env",
+      projectDir: path.posix.join("/tmp", "chat&codex"),
+      envFile: path.posix.join("/tmp", "chat&codex", ".env"),
       nodeBin: "/opt/node/bin/node",
       pathEnv: "/opt/node/bin:/usr/bin",
       launchdLabel: "com.example.chat2codex",
-      stderrPath: "/tmp/chat&codex/runtime.log",
+      stderrPath: path.posix.join("/tmp", "chat&codex", "runtime.log"),
     });
 
     const plist = renderLaunchdPlist(options);
@@ -40,11 +43,11 @@ describe("service setup", () => {
     expect(options.stderrPath).toBe("/tmp/chat&codex/runtime.log");
   });
 
-  test("renders a systemd user unit with quoted paths and env file", () => {
+  posixServiceTest("renders a systemd user unit with quoted paths and env file", () => {
     const options = createServiceOptions({
       target: "systemd",
-      projectDir: "/tmp/chat 2 codex",
-      envFile: "/tmp/chat 2 codex/.env",
+      projectDir: path.posix.join("/tmp", "chat 2 codex"),
+      envFile: path.posix.join("/tmp", "chat 2 codex", ".env"),
       nodeBin: "/usr/local/bin/node",
       pathEnv: "/usr/local/bin:/usr/bin",
       systemdServiceName: "chat2codex-test.service",

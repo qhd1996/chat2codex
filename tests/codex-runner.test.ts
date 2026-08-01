@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -36,6 +36,7 @@ test("validateLocalImages canonicalizes regular files and rejects missing or rel
   } finally { await rm(directory, { recursive: true, force: true }); }
 });
 import { loadConfig } from "../src/config/env.js";
+import { createNodeTestLauncher } from "./helpers/platform.js";
 import { ConsoleLogger } from "../src/util/logger.js";
 
 describe("codex runner helpers", () => {
@@ -154,7 +155,7 @@ describe("codex runner helpers", () => {
 
   test("marks app-server threads from other Codex CLI versions unavailable", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -182,7 +183,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -210,7 +211,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("allows threads from the same Codex CLI version family", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -238,7 +239,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -264,7 +265,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("wraps app-server thread control requests", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -314,7 +315,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -501,7 +502,7 @@ if (message.method === "thread/fork") {
 
   test("reads messages from schema-shaped app-server error notifications", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -527,7 +528,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -549,7 +550,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("captures schema-shaped token usage for the active turn", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -576,7 +577,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -614,7 +615,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("does not retain retryable app-server errors after the turn succeeds", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -641,7 +642,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -2867,7 +2868,7 @@ if (message.id === "reused_rpc_id") completeTurn("declined");
 
   test("runs through app-server approval requests", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -2913,7 +2914,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -2953,7 +2954,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("collects app-server run summaries and exposes steering control", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     const receivedPath = path.join(tempDir, "received.jsonl");
     await writeFile(
       fakeCodex,
@@ -3013,7 +3014,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     const originalReceivedPath = process.env.RECEIVED_PATH;
     try {
@@ -3259,7 +3260,7 @@ if (message.method === "initialize") {
 
   test("retries app-server steering while the active turn is still settling", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     const receivedPath = path.join(tempDir, "received.jsonl");
     await writeFile(
       fakeCodex,
@@ -3303,7 +3304,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     const originalReceivedPath = process.env.RECEIVED_PATH;
     try {
@@ -3343,7 +3344,7 @@ process.on("SIGTERM", () => process.exit(0));
 
   test("treats a cancelled app-server approval as a cancelled run", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
-    const fakeCodex = path.join(tempDir, "fake-codex.cjs");
+    let fakeCodex = path.join(tempDir, "fake-codex.cjs");
     await writeFile(
       fakeCodex,
       `#!/usr/bin/env node
@@ -3384,7 +3385,7 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
     );
-    await chmod(fakeCodex, 0o755);
+    fakeCodex = await createNodeTestLauncher(fakeCodex);
 
     try {
       const config = loadConfig({
@@ -3450,8 +3451,8 @@ rl.on("line", (line) => {
 process.on("SIGTERM", () => process.exit(0));
 `,
   );
-  await chmod(fakeCodex, 0o755);
-  return { fakeCodex, receivedPath };
+  const executable = await createNodeTestLauncher(fakeCodex);
+  return { fakeCodex: executable, receivedPath };
 }
 
 async function readPackageVersionForTest(): Promise<string> {

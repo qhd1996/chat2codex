@@ -8,6 +8,7 @@ import {
   createBridgeRuntimeForTest,
   writeAttachmentResponseAtomicallyForTest,
 } from "../src/bot/lark-bot.js";
+import { expectPrivateFileMode } from "./helpers/platform.js";
 
 const tempDirectories: string[] = [];
 
@@ -84,7 +85,7 @@ describe("Lark attachment downloads", () => {
 
     expect(byteCount).toBe(6);
     expect(await fs.readFile(filePath, "utf8")).toBe("abcdef");
-    expect((await fs.stat(filePath)).mode & 0o777).toBe(0o600);
+    expectPrivateFileMode((await fs.stat(filePath)).mode);
     expect(await partFiles(directory)).toEqual([]);
   });
 
