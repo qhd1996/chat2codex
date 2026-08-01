@@ -78,6 +78,31 @@ describe("ExecutionWorkspaceService", () => {
     }
   });
 
+  test("creates a task worktree when the configured source is itself a linked worktree", async () => {
+    const f = await fixture();
+    try {
+      await initGitRepository(f.workspace);
+      const linkedSource = path.join(f.root, "linked-source");
+      await execFileAsync("git", ["-C", f.workspace, "worktree", "add", "-b", "linked-source", linkedSource, "HEAD"]);
+      const service = await ExecutionWorkspaceService.create({
+        chat2codexHome: f.home, codexBin: "codex", sandboxProbe: verifiedProbe,
+      });
+
+      const result = await service.prepare({ taskId: taskA, workspaceRoot: linkedSource, intent: "general" });
+
+      expect(result).toMatchObject({
+        isolationMode: "git_worktree",
+        workspaceRoot: await realpath(linkedSource),
+        sourceReadRoot: await realpath(linkedSource),
+        executionCwd: await realpath(path.join(f.home, "worktrees", taskA)),
+      });
+      expect((await execFileAsync("git", ["-C", result.executionCwd, "branch", "--show-current"])).stdout.trim())
+        .toBe(`chat2codex/${taskA}`);
+    } finally {
+      await cleanup(f.root);
+    }
+  });
+
   test("isolates verified non-Git output-only tasks to one private writable root", async () => {
     const f = await fixture();
     try {

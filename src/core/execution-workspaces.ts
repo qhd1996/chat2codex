@@ -189,15 +189,17 @@ async function findGitRoot(workspaceRoot: string): Promise<string | undefined> {
 
 async function verifyReusableWorktree(destination: string, gitRoot: string, branch: string): Promise<void> {
   try {
-    const [topLevel, currentBranch, commonDirectory] = await Promise.all([
+    const [topLevel, currentBranch, commonDirectory, sourceCommonDirectory] = await Promise.all([
       runFile("git", ["-C", destination, "rev-parse", "--show-toplevel"]),
       runFile("git", ["-C", destination, "branch", "--show-current"]),
       runFile("git", ["-C", destination, "rev-parse", "--git-common-dir"]),
+      runFile("git", ["-C", gitRoot, "rev-parse", "--git-common-dir"]),
     ]);
     const canonicalTop = await fs.realpath(topLevel.stdout.trim());
     const commonPath = path.resolve(destination, commonDirectory.stdout.trim());
     const canonicalCommon = await fs.realpath(commonPath);
-    const sourceCommon = await fs.realpath(path.join(gitRoot, ".git"));
+    const sourceCommonPath = path.resolve(gitRoot, sourceCommonDirectory.stdout.trim());
+    const sourceCommon = await fs.realpath(sourceCommonPath);
     if (!samePath(canonicalTop, destination) || currentBranch.stdout.trim() !== branch || !samePath(canonicalCommon, sourceCommon)) {
       throw new Error("destination ownership or branch does not match this task");
     }
