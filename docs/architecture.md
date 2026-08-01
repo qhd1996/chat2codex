@@ -9,17 +9,23 @@ construct or change Router/Runner business logic.
 
 ```mermaid
 flowchart LR
+  Platform["Chat platform"] <--> Adapter["Selected adapter"]
   Selector["CHAT2CODEX_ADAPTER"] --> Composition["Common composition root"]
-  Composition --> Adapter["Selected platform adapter"]
-  Platform["Chat platform"] --> Adapter
-  Adapter --> Supervisor["AdapterSupervisor"]
+  Composition --> Adapter
+  Adapter <--> Supervisor["AdapterSupervisor"]
   Supervisor --> Router["MessageRouter"]
   Router --> Runner["BridgeRunner"]
-  Runner --> Codex["CodexClient"]
-  Runner <--> State["Adapter-partitioned state"]
-  Runner --> Output["Neutral view / reaction"]
+  Runner <--> Drafts["ImageDraftService"]
+  Runner --> Natural["NaturalTaskRouter + target/workspace resolution"]
+  Natural <--> Registry["TaskRegistry"]
+  Registry <--> State["Schema v4 durable state"]
+  Runner <--> State
+  Runner --> Workspace["ExecutionWorkspaceService"]
+  Workspace --> Scheduler["TaskScheduler"]
+  Scheduler --> Sessions["Task-keyed Codex sessions"]
+  Sessions --> Codex["Codex app-server"]
+  Runner --> Output["Task-labelled neutral text view / reaction"]
   Output --> Supervisor
-  Supervisor --> Adapter
 ```
 
 The boundaries are intentionally small:
@@ -31,7 +37,9 @@ The boundaries are intentionally small:
 | AdapterSupervisor | lifecycle, health, strict `adapterId` routing | platform payload parsing, Codex behavior |
 | MessageRouter | normalized ingress dispatch | SDK construction, execution state |
 | BridgeRunner | access control, durable work, approvals, Codex lifecycle | platform SDKs and wire payloads |
-| State store | schema-v2 envelope and isolated adapter partitions | adapter-specific objects |
+| Task orchestration | bounded natural decisions, deterministic target/workspace resolution, task lifecycle | platform payloads or SDK calls |
+| Execution workspace / scheduler | worktree or output isolation, task FIFO, canonical-root FIFO, global capacity | automatic merges or unsafe optimistic writes |
+| State store | schema-v4 envelope, task/job/outbox identity, isolated adapter partitions | adapter-specific objects or runtime permission grants |
 
 ## Adapter contract
 
@@ -47,11 +55,11 @@ state. Interactive-capable adapters use views; text-only adapters use
 sender-bound reply codes for approval and structured decisions. The adapter
 alone maps neutral operations to platform calls.
 
-| Capability | Feishu/Lark | Weixin v1 |
+| Capability | Feishu/Lark | Weixin Phase 1 |
 | --- | --- | --- |
 | Markdown / rich post | yes | no, rendered as text |
 | Interactive/updateable views | yes | no |
-| Inbound attachments | image, file | image, file via encrypted CDN |
+| Inbound attachments | image, file | file, plus durable one-to-four-image-before-text drafts via encrypted CDN |
 | Processing signal | message reaction | typing indicator |
 | Conversation scope | direct and allowlisted groups | direct only |
 
@@ -61,7 +69,42 @@ a failed batch replays through the core message-id deduplicator. Its private
 runtime file retains the cursor, latest per-user `context_token`, typing ticket,
 and short-lived attachment descriptors. Outbox idempotency keys become iLink
 `client_id` values. Groups, voice/video, outbound media, and in-place updates
-are intentionally outside the v1 boundary.
+are intentionally outside the Phase 1 boundary.
+
+## Phase 1 task and concurrency model
+
+Weixin natural routing holds a short conversation-level acceptance section only
+while it validates access, classifies intent, resolves ambiguity, and persists
+task/job ownership. A durable run then moves to `TaskScheduler`; a second message
+in the same conversation can create or control another task without waiting for
+the first Codex turn. Every task owns its session epoch, optional Codex thread,
+execution directory, interactions, retry state, and labelled delivery. One Codex
+thread has one task owner, and one task has at most one active turn.
+
+The scheduler combines three independent constraints: a FIFO per task, a FIFO
+per canonical root only for `canonical_fifo`, and a global semaphore. Git roots
+receive persistent worktrees under `<CHAT2CODEX_HOME>/worktrees/<taskId>`. A
+non-Git `output_only` request receives `<workspace>/outputs/tasks/<taskId>` only
+after an installed-Codex negative write probe succeeds for the detected Codex
+version. Probe failure, general non-Git mutation, or uncertain intent uses the
+canonical root and serializes safely. No automatic merge or snapshot merge is
+performed.
+
+Image-only Weixin messages are validated and staged by conversation plus sender.
+The first four remain durable until text attaches them to one task, explicitly
+discards them, clarification resolves, or TTL cleanup deletes them. A fifth image
+does not consume the earlier four. Durable clarification stores only bounded task
+IDs and the draft key, never image bytes or descriptors.
+
+Schema v4 adds task and conversation registries and task-qualified execution and
+interaction references. A v3 envelope is backed up as `<state>.v3.bak` before
+migration; one previous chat/thread becomes one imported compatibility task.
+Queued jobs recover against their exact task, running jobs become interrupted,
+and orphan or future-schema references fail closed.
+
+This diagram and model describe Phase 1 only. The current durable outbox remains
+text/Markdown. Ordered outbound Weixin media is Phase 2; Codex desktop visibility
+and same-thread handoff are Phase 3; UsageAdvisor is Phase 4.
 
 Run `bun run typecheck:contracts` to compile the reference adapter and
 `bun test tests/architecture-boundaries.test.ts` to verify the isolation rule.

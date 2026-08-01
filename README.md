@@ -7,6 +7,8 @@ Run Codex on your own machine from Feishu/Lark or Weixin chat.
 Chat2Codex turns a chat bot into a message platform for the local Codex CLI.
 Send prompts, files, and images; receive progress and final answers; approve
 Codex actions; and resume local Codex threads without a public webhook server.
+For Weixin direct messages, Phase 1 also keeps multiple named tasks in one
+conversation and routes ordinary language to the intended task and workspace.
 
 ## Current Status
 
@@ -85,10 +87,21 @@ Send a DM to the bot:
 Summarize this repository.
 ```
 
-You can also send a file or image. Chat2Codex downloads supported attachments
-under `ATTACHMENT_DOWNLOAD_DIR` and appends their local paths to the Codex
-prompt. If the message contains only an attachment, it uses a default prompt
-asking Codex to inspect that file or image.
+You can also send files and images. Feishu/Lark keeps the existing immediate
+attachment behavior. Weixin image-only messages instead build a durable draft:
+send one to four images first, then send the instruction text. Images alone do
+not start Codex. A fifth image is rejected and deleted while the first four
+remain staged. A draft expires after `WEIXIN_IMAGE_DRAFT_TTL_MS`; an explicit
+request to abandon the images deletes it, while ambiguous text leaves it intact
+and asks for clarification.
+
+Weixin direct messages also accept ordinary task language such as “start a
+Travel task for Japan hotels”, “continue the Japan hotel task”, “stop the
+finance analysis”, or “approve this turn for the hotel task”. A target is never
+guessed for a destructive or permission-bearing action. When a name could mean
+multiple tasks or workspaces, Chat2Codex asks one bounded question and preserves
+the pending task, interaction, and image state. Slash commands remain available
+as deterministic compatibility and recovery controls.
 
 During a run, Chat2Codex adds a processing reaction below the original message
 and sends throttled plain-text progress at most once every 30 seconds. The
@@ -120,9 +133,10 @@ when you need a separate bot instance.
 
 - Feishu/Lark long connection or native Weixin ClawBot long polling; neither
   requires a public webhook server.
-- One reusable Codex app-server session per chat/thread scope. Consecutive turns
-  keep the same process—and therefore session-scoped grants—while the sender,
-  cwd, thread, policy, and session epoch remain unchanged.
+- One reusable Codex app-server session per logical task/thread scope. Multiple
+  tasks in one Weixin conversation can own distinct sessions and threads; one
+  task still runs only one turn at a time. Session-scoped grants never cross a
+  task boundary.
 - `/help`, `/status`, `/host`, `/projects`, `/project <index|path>`, `/threads`,
   `/history`, `/search`, `/resume`, `/fork`, `/archive`, `/archived`, `/unarchive`,
   `/retry`, `/usage`, `/service status|logs|restart`, `/compact`, `/plan <task>`, `/new`,
@@ -162,6 +176,14 @@ when you need a separate bot instance.
   AES-128-ECB; maps processing reactions to typing; and drops groups,
   voice/video, and unsupported media with diagnostics. Outbound media and
   in-place message updates are not supported.
+- Weixin Phase 1 natural orchestration creates and selects named tasks, routes
+  new tasks across six configured workspace kinds, prefixes task-specific
+  progress, questions, approvals, and terminal replies with a compact label such
+  as `[Japan hotels]`, and keeps task status/recovery independent inside one
+  conversation.
+- Safe task concurrency uses persistent per-task Git worktrees, verified private
+  output directories for non-Git output-only work, or a canonical-workspace FIFO
+  fallback. Different workspaces may overlap up to the global run limit.
 - Feishu/Lark image and file messages downloaded to local paths and passed to
   Codex with the prompt.
 - Event diagnostics in logs and `/status` for recent routed/dropped messages.
@@ -184,6 +206,56 @@ when you need a separate bot instance.
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
 - [Codex app-server protocol snapshot](docs/codex-app-server-protocol/)
+
+## Weixin Phase 1 Orchestration
+
+Set `WEIXIN_NATURAL_ROUTING=true` and provide the strict workspace map as
+single-line JSON. When the value is non-empty, all six keys are required, every
+directory must already exist, and canonical paths must be distinct:
+
+```dotenv
+CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/workspace/workbuddy/Travel","personal":"F:/workspace/workbuddy/Personal","finance":"F:/workspace/workbuddy/Finance","ai_lab":"F:/workspace/workbuddy/AI-Lab","learning":"F:/workspace/workbuddy/Learning"}
+```
+
+If the map is empty, `CODEX_WORKDIR` is the only `work` route. A direct message
+may explicitly select another existing directory; group-path authorization
+continues to use `CODEX_GROUP_ALLOWED_ROOTS`. Existing tasks retain their saved
+workspace even if later text would classify differently.
+
+The scheduler selects the safest available execution mode:
+
+| Workspace and request | Execution directory | Concurrency |
+| --- | --- | --- |
+| Git repository | `<CHAT2CODEX_HOME>/worktrees/<taskId>` on branch `chat2codex/<taskId>` | Distinct tasks may overlap |
+| Non-Git, explicitly output-only | `<workspace>/outputs/tasks/<taskId>` | Overlap only after the installed-Codex sandbox probe proves source writes are denied |
+| Non-Git mutation, unknown intent, or failed isolation probe | Canonical workspace | FIFO per canonical workspace |
+
+Worktrees persist across turns and are not automatically merged, deleted, or
+reset. Use normal Git review and merge operations. Output-only tasks can read the
+canonical source by absolute path but receive a per-turn writable root containing
+only their private output directory. If the installed Codex version cannot prove
+that contract, Chat2Codex reports the fallback and serializes the task. All modes
+remain bounded by `CODEX_MAX_CONCURRENT_RUNS`, and turns for the same task are
+always FIFO.
+
+Task-specific replies start with a sanitized label of at most 20 Unicode code
+points. `/status` reports bounded task state, workspace kind, isolation mode,
+queue reason, age, interaction wait, and a thread preview without returning full
+prompts, reply codes, secrets, or file contents. Existing slash commands in
+[Chat Commands](#chat-commands) are still supported; natural language is the
+primary Weixin interface, especially when naming one of several active tasks.
+
+State schema v3 is migrated deterministically to task-aware schema v4. Before
+the first migrated save, the original state file is retained as
+`<BRIDGE_STATE_PATH>.v3.bak`; the prior chat/thread becomes one imported task.
+Queued task jobs retain their execution metadata, while work that was already
+running is marked interrupted and is never replayed automatically. Future,
+unknown schema versions fail closed.
+
+Phase 1 includes inbound images and text-only Weixin replies. It does **not**
+include outbound Weixin images/files, Codex desktop live status or same-thread
+handoff, controlled Weixin groups, or UsageAdvisor/self-improvement. Those remain
+Phase 2, Phase 3, and Phase 4 work respectively.
 
 ## Codex App-Server Guardrails
 
@@ -478,9 +550,11 @@ mutating or run-targeted controls such as `/new`, `/stop`, and `/steer` are not
 replayed onto another task. A message previously classified as non-Codex cannot
 be promoted into a Codex run solely because access or routing configuration
 changed during restart.
-Codex runs targeting the same workspace are serialized across chats, while
-different workspaces can run in parallel up to `CODEX_MAX_CONCURRENT_RUNS`;
-global and per-chat queue admission is rejected before Codex starts when its
+Codex runs targeting different workspaces can run in parallel up to
+`CODEX_MAX_CONCURRENT_RUNS`. Tasks in one workspace overlap only when each has a
+separate Git worktree or a verified output-only directory; canonical non-Git
+work remains FIFO across conversations. Global and per-chat queue admission is
+rejected before Codex starts when its
 configured limit is reached. `/status` and `/stop` also cover runs waiting for a
 workspace or global permit. Only one bridge process may use a given
 `BRIDGE_STATE_PATH`. Keep approvals and Git review enabled for sensitive work,
@@ -525,7 +599,8 @@ chat or reporting a security issue.
 
 ## Next Features To Add
 
-1. Design and validate safe Weixin outbound media, additional message types,
-   and controlled group-chat support.
-2. Optionally move adapters behind an external gateway when deployments need
+1. Deliver and validate safe ordered Weixin outbound text/image/file media.
+2. Add Codex desktop live status and one-writer same-thread handoff.
+3. Add review-gated UsageAdvisor proposals without autonomous self-modification.
+4. Optionally move adapters behind an external gateway when deployments need
    process-level credential and SDK isolation.

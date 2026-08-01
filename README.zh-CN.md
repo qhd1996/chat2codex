@@ -4,7 +4,7 @@
 
 从飞书/Lark 或个人微信里运行你本机的 Codex。
 
-Chat2Codex 会把聊天机器人变成本机 Codex CLI 的消息平台。你可以发送需求、文件和图片，接收执行进度和最终回复，审批 Codex 动作，也可以继续本机已有的 Codex 会话，而不需要暴露公网 webhook 服务。
+Chat2Codex 会把聊天机器人变成本机 Codex CLI 的消息平台。你可以发送需求、文件和图片，接收执行进度和最终回复，审批 Codex 动作，也可以继续本机已有的 Codex 会话，而不需要暴露公网 webhook 服务。微信私聊 Phase 1 还允许在一个会话中维护多个命名任务，并用自然语言把操作路由到正确任务和工作区。
 
 ## 当前状态
 
@@ -89,7 +89,7 @@ Summarize this repository.
 ## 功能
 
 - 支持飞书/Lark 长连接和原生微信 ClawBot 长轮询，都不需要公网 webhook 服务。
-- 每个 chat/thread scope 复用一个 Codex app-server 进程。只要发送者、cwd、thread、策略和 session epoch 不变，连续 turn 会保留同一进程以及 session 级授权。
+- 每个逻辑 task/thread scope 复用一个 Codex app-server 进程。同一微信会话中的多个任务可以分别拥有 session 和 thread；同一任务始终一次只运行一个 turn，session 级授权不会跨任务继承。
 - 支持 `/help`、`/status`、`/host`、`/projects`、`/project <index|path>`、`/threads`、`/history`、`/search`、`/resume`、`/fork`、`/archive`、`/archived`、`/unarchive`、`/retry`、`/usage`、`/service status|logs|restart`、`/compact`、`/plan <任务>`、`/new`、`/cd <path>`、`/stop`、`/steer`、`/answer`、`/mcp-answer`、`/approve`、`/permit`、`/mcp-decide`、`/summary`、`/files`、`/diff`、`/logs` 和 `/whoami` 命令。
 - 使用 JSON 保存本地状态。
 - 使用 Codex app-server JSON-RPC 获取机器可读的进度、最终输出和审批回调。
@@ -101,6 +101,8 @@ Summarize this repository.
 - 在不支持卡片的平台，每个待处理请求会生成绑定同一会话和原发送者、结束即失效的 8 位回复码。`/approve <code> <编号>` 只能映射到原始 Codex decision 数组，`/permit <code> <deny|turn|session>` 只能映射到三种权限决定，`/mcp-decide <code> <accept|decline|cancel>` 用于 MCP URL 请求。
 - 微信首版只处理个人私聊，支持文本、引用、入站图片和文件；官方 CDN 附件会执行 AES-128-ECB 解密，“处理中”映射为正在输入。普通群聊、语音/视频、出站媒体和消息原地更新暂不支持，并会记录 dropped diagnostic。
 - 微信私聊可以使用受约束的语义分类判断新建、继续、补充、停止与普通审批回复；低置信度、模型失败或上下文冲突时只询问，不会猜测执行。分类请求不持久化对话，也不携带微信凭据。
+- 微信 Phase 1 会为任务命名，在六类工作区中路由新任务，并给任务相关的进度、澄清、审批和最终回复加上类似 `[日本酒店]` 的短标签；同一会话中的任务状态与恢复互不混淆。
+- 安全并发使用持久化的任务 Git worktree、经过验证的非 Git output-only 私有目录，或 canonical workspace FIFO 回退。不同工作区可在全局并发上限内重叠执行。
 - 支持飞书/Lark 图片和文件消息，把附件下载为本地路径后随 prompt 传给 Codex。
 - 在日志和 `/status` 中记录近期消息路由/丢弃诊断信息。
 - `/status` 会显示队列深度、当前运行时长、审批等待时长和近期失败信息。
@@ -119,6 +121,32 @@ Summarize this repository.
 - [更新日志](CHANGELOG.md)
 - [Codex app-server 协议快照](docs/codex-app-server-protocol/)
 - [英文 README](README.md)
+
+## 微信 Phase 1 编排
+
+启用 `WEIXIN_NATURAL_ROUTING=true`，并用单行严格 JSON 配置工作区。只要该值非空，就必须同时提供六个 key；目录必须已经存在，且规范化后的路径不得重复：
+
+```dotenv
+CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/workspace/workbuddy/Travel","personal":"F:/workspace/workbuddy/Personal","finance":"F:/workspace/workbuddy/Finance","ai_lab":"F:/workspace/workbuddy/AI-Lab","learning":"F:/workspace/workbuddy/Learning"}
+```
+
+如果留空，只有 `CODEX_WORKDIR` 会作为 `work` 路由。私聊可以显式选择另一个已经存在的目录；群聊路径仍受 `CODEX_GROUP_ALLOWED_ROOTS` 限制。已有任务始终保留创建时记录的工作区，不会因为后续文字被重新分类。
+
+调度器按以下顺序选择最安全的执行方式：
+
+| 工作区与请求 | 执行目录 | 并发规则 |
+| --- | --- | --- |
+| Git 仓库 | `<CHAT2CODEX_HOME>/worktrees/<taskId>`，分支为 `chat2codex/<taskId>` | 不同任务可以重叠 |
+| 非 Git，明确仅产出新文件 | `<workspace>/outputs/tasks/<taskId>` | 只有已安装 Codex 的 sandbox 探针证明不能写源目录后才并发 |
+| 非 Git 修改、无法判断意图或隔离探针失败 | canonical workspace | 同一规范工作区 FIFO |
+
+任务 worktree 会跨 turn 保留，不会自动合并、删除或 reset；应使用正常 Git 审查与合并流程。output-only 任务可以通过绝对路径读取 canonical source，但每轮只把私有输出目录加入 writable roots。如果当前 Codex 版本无法证明该限制，Chat2Codex 会说明回退原因并安全串行。所有模式都受 `CODEX_MAX_CONCURRENT_RUNS` 限制，同一任务内部始终 FIFO。
+
+任务相关回复使用经过清理、最多 20 个 Unicode code point 的标签。`/status` 只展示有界的任务状态、工作区类型、隔离模式、排队原因、年龄、交互等待和 thread 预览，不展示完整 prompt、回复码、秘密或文件内容。[聊天命令](#聊天命令)中的斜杠命令全部保留；微信主要通过自然语言操作，尤其应在多个候选任务时明确说出任务名。停止、审批、授权、归档等高风险动作不会靠“最近任务”猜测目标；歧义会触发一次澄清，并保留任务、交互和图片草稿状态。
+
+状态会从 schema v3 确定性迁移到 task-aware schema v4。首次保存迁移结果前，原文件保留为 `<BRIDGE_STATE_PATH>.v3.bak`，原 chat/thread 被导入为一个任务。排队任务保留执行元数据；已经运行的任务会标记为 interrupted，绝不自动重放；未知的未来 schema 会安全拒绝。
+
+Phase 1 包含微信入站图片和纯文本出站回复，不包含微信出站图片/文件、Codex 桌面版实时状态与同 thread 接管、受控微信群，或 UsageAdvisor/自我改进。这些分别属于 Phase 2、Phase 3 和 Phase 4。
 
 ## Codex App-Server 防护检查
 
@@ -298,7 +326,7 @@ Chat2Codex 默认使用 `CODEX_SANDBOX=workspace-write`，所以 Codex 可以编
 
 私聊路由默认开启，但除 `/whoami` 外，必须由 `ALLOWED_USER_IDS` 中的发送者发出，或来自 `ALLOWED_CHAT_IDS` 中的私聊 chat。群聊消息必须提到机器人，并且只有同时配置 `ALLOW_GROUPS=true`、允许的 chat 和 `ALLOWED_USER_IDS` 中的发送者才会执行。`ALLOWED_USER_IDS` 接受逗号分隔的 `open_id`、`user_id` 或 `union_id`。授权后的私聊可以切换到任意本机目录；群聊只能切换到 `CODEX_GROUP_ALLOWED_ROOTS` 的真实路径，软链接不能绕过限制。
 
-飞书事件会先写入本地 pending inbox，再向长连接返回；Codex prompt 还会在执行前创建 durable job。尚未开始的 queued job 可在重启后继续；已进入 `running` 的 job 会被标记为 interrupted，由于无法安全判断已产生的副作用，不会自动重新执行。最终回复从 durable outbox 发送，并使用稳定的幂等键，因此聊天发送失败不会重跑 Codex。重启后，`/status` 等只读控制消息可以安全重放；`/new`、`/stop`、`/steer` 等会变更状态或绑定具体运行的命令不会被重放到另一个任务。先前归类为非 Codex 的消息，也不会仅因为重启期间访问或路由配置变化而升级成 Codex 任务。同一个工作区的 Codex 任务会跨 chat 串行执行，不同工作区可以在 `CODEX_MAX_CONCURRENT_RUNS` 范围内并行；达到全局或单 chat 队列上限时，会在启动 Codex 前拒绝接收新任务。等待工作区锁或全局运行许可的任务也会显示在 `/status` 中，并可用 `/stop` 取消。同一份 `BRIDGE_STATE_PATH` 只允许一个桥接进程使用。对敏感任务仍应保留审批和 Git 检查；手动重试 interrupted job 前，先检查 thread 和工作区状态。
+飞书事件会先写入本地 pending inbox，再向长连接返回；Codex prompt 还会在执行前创建 durable job。尚未开始的 queued job 可在重启后继续；已进入 `running` 的 job 会被标记为 interrupted，由于无法安全判断已产生的副作用，不会自动重新执行。最终回复从 durable outbox 发送，并使用稳定的幂等键，因此聊天发送失败不会重跑 Codex。重启后，`/status` 等只读控制消息可以安全重放；`/new`、`/stop`、`/steer` 等会变更状态或绑定具体运行的命令不会被重放到另一个任务。先前归类为非 Codex 的消息，也不会仅因为重启期间访问或路由配置变化而升级成 Codex 任务。不同工作区可在 `CODEX_MAX_CONCURRENT_RUNS` 范围内并行；同一工作区只有在每个任务使用独立 Git worktree 或已验证 output-only 目录时才并行，canonical 非 Git 修改仍跨会话 FIFO。达到全局或单 chat 队列上限时，会在启动 Codex 前拒绝接收新任务。等待工作区锁或全局运行许可的任务也会显示在 `/status` 中，并可用 `/stop` 取消。同一份 `BRIDGE_STATE_PATH` 只允许一个桥接进程使用。对敏感任务仍应保留审批和 Git 检查；手动重试 interrupted job 前，先检查 thread 和工作区状态。
 
 正常退出会自动删除实例锁。若进程被 `SIGKILL` 或运行时发生致命崩溃，可能遗留 `<BRIDGE_STATE_PATH>.lock`；确认没有 Chat2Codex 进程运行后，再手动删除这个锁目录并重启。为避免与另一次启动竞争，程序不会自动回收陈旧实例锁。
 
@@ -331,5 +359,7 @@ bun run check
 
 ## 后续功能
 
-1. 完成微信出站媒体、更多消息类型与受控群聊能力的安全设计和验收。
-2. 对进程级凭据与 SDK 隔离有要求时，可选把 adapter 移到外部 gateway 后面。
+1. 交付并验收安全、有序的微信出站文字/图片/文件。
+2. 增加 Codex 桌面版实时状态和单写者同 thread 接管。
+3. 增加必须经用户审查的 UsageAdvisor 建议，不允许自主修改。
+4. 对进程级凭据与 SDK 隔离有要求时，可选把 adapter 移到外部 gateway 后面。
