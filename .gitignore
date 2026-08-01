@@ -3,5 +3,6 @@ dist/
 .env
 .data/
 .omx/
+.worktrees/
 *.log
 .DS_Store
