@@ -104,6 +104,11 @@ test("validateSandboxPolicy accepts only bounded supported policy shapes", () =>
     type: "workspaceWrite",
     writableRoots: [path.resolve("out"), path.resolve("cache")],
   });
+  const nonCanonicalRoot = `${path.resolve("nested")}${path.sep}..${path.sep}${path.basename(path.resolve("out"))}`;
+  expect(validateSandboxPolicy({ type: "workspaceWrite", writableRoots: [nonCanonicalRoot] })).toEqual({
+    type: "workspaceWrite",
+    writableRoots: [path.resolve("out")],
+  });
 });
 import { loadConfig } from "../src/config/env.js";
 import { createNodeTestLauncher } from "./helpers/platform.js";

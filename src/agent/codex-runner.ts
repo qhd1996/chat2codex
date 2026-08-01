@@ -2957,12 +2957,12 @@ export function validateSandboxPolicy(policy: CodexSandboxPolicy | undefined): C
       const excludeTmpdirEnvVar = record.excludeTmpdirEnvVar as boolean | undefined;
       const excludeSlashTmp = record.excludeSlashTmp as boolean | undefined;
       const seenWritableRoots = new Set<string>();
-      const writableRoots = (record.writableRoots as string[]).filter((root) => {
+      const writableRoots = (record.writableRoots as string[]).flatMap((root) => {
         const normalizedRoot = path.resolve(root);
         const deduplicationKey = process.platform === "win32" ? normalizedRoot.toLowerCase() : normalizedRoot;
-        if (seenWritableRoots.has(deduplicationKey)) return false;
+        if (seenWritableRoots.has(deduplicationKey)) return [];
         seenWritableRoots.add(deduplicationKey);
-        return true;
+        return [normalizedRoot];
       });
       return {
         type: "workspaceWrite",
