@@ -84,6 +84,34 @@ describe("OpenAiIntentClassifier", () => {
     expect(systemPrompt).toContain("otherwise use general");
   });
 
+  test("instructs the task classifier to return only the exact fields for each action kind", async () => {
+    const f = await fixture(() => ({
+      body: JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({ action: { kind: "create_task", instruction: "新建酒店任务", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }) } }],
+      }),
+    }));
+    const client = new OpenAiIntentClassifier({ baseUrl: f.baseUrl, model: "intent", timeoutMs: 1000 });
+
+    await client.classifyTask({
+      text: "新建 C2C-P1-E2E 日本酒店任务，放到旅行工作区",
+      conversationId: "wx",
+      candidates: [],
+      workspaces: [{ kind: "travel", root: "C:\\Travel", aliases: ["旅行"] }],
+      pendingImageCount: 0,
+      pendingInteractions: [],
+    });
+
+    const request = JSON.parse(f.received()) as { messages: Array<{ role: string; content: string }> };
+    const prompt = request.messages.find((message) => message.role === "system")?.content ?? "";
+    expect(prompt).toContain('create_task={"kind":"create_task","instruction":string,"workspaceKind"?:string,"explicitPath"?:string,"collaborationMode"?:"default"|"plan","executionIntent"?:"general"|"output_only"}');
+    expect(prompt).toContain('continue_task={"kind":"continue_task","taskId"?:string,"instruction":string}');
+    expect(prompt).toContain('clarify={"kind":"clarify","question":string,"candidateTaskIds":string[]}');
+    expect(prompt).toContain("Do not add fields such as title");
+    expect(prompt).toContain("Fields marked ? are optional; every other listed field is required");
+    expect(prompt).toContain("Preserve an explicitly requested task name inside create_task.instruction");
+    expect(prompt).toContain("collaborationMode=plan only when the user explicitly asks for Codex Plan mode");
+  });
+
   test("instructs the task classifier to make explicit fail-closed image dispositions", async () => {
     const f = await fixture(() => ({ body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({ action: { kind: "clarify", question: "图片属于哪个任务？", candidateTaskIds: [] }, imageDisposition: "clarify", confidence: 1 }) } }] }) }));
     const client = new OpenAiIntentClassifier({ baseUrl: f.baseUrl, model: "intent", timeoutMs: 1000 });
