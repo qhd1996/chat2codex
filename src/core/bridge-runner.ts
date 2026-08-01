@@ -2752,7 +2752,7 @@ export class BridgeRunner {
     lastRun: LastRunSummary;
     threadId?: string;
     updateSessionThread?: boolean;
-    deliveries: Array<{ kind: DurableOutboxMessage["kind"]; text: string }>;
+    deliveries: Array<{ kind: "text" | "markdown"; text: string }>;
   }): Promise<boolean> {
     return this.mutateState((state) => {
       const job = input.messageId ? state.jobs[input.messageId] : undefined;
@@ -7795,7 +7795,7 @@ function inboxCapacityMessage(config: BridgeConfig): string {
 function appendOutboxDeliveries(
   state: BridgeState,
   job: DurableCodexJob,
-  deliveries: Array<{ kind: DurableOutboxMessage["kind"]; text: string }>,
+  deliveries: Array<{ kind: "text" | "markdown"; text: string }>,
   createdAt: string,
 ): void {
   for (const delivery of deliveries) {

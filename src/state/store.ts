@@ -4,7 +4,7 @@ import path from "node:path";
 
 import {
   type BridgeState,
-  type BridgeStateEnvelopeV4,
+  type BridgeStateEnvelopeV5,
   type DurableCodexJob,
   type DurableOutboxMessage,
   type ImageDraft,
@@ -23,6 +23,7 @@ export interface JsonStateStoreOptions {
   adapterId?: string;
   jobRetentionCount?: number;
   outboxRetentionCount?: number;
+  chat2codexHome?: string;
 }
 
 export const defaultAdapterId = "feishu:default";
@@ -31,6 +32,8 @@ export class JsonStateStore {
   readonly adapterId: string;
   private readonly jobRetentionCount: number;
   private readonly outboxRetentionCount: number;
+  private readonly chat2codexHome: string;
+  private readonly pendingStagingCleanup = new Set<string>();
 
   constructor(
     private readonly filePath: string,
@@ -45,6 +48,7 @@ export class JsonStateStore {
       options.outboxRetentionCount,
       "outboxRetentionCount",
     );
+    this.chat2codexHome = path.resolve(options.chat2codexHome ?? path.dirname(this.filePath));
   }
 
   async load(): Promise<BridgeState> {
@@ -52,17 +56,22 @@ export class JsonStateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const persisted = JSON.parse(raw) as unknown;
       assertSupportedSchema(persisted);
-      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV3(persisted) || isBridgeStateEnvelopeV2(persisted)
+      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV4(persisted) || isBridgeStateEnvelopeV3(persisted) || isBridgeStateEnvelopeV2(persisted)
         ? coerceBridgeState(persisted.adapters[this.adapterId])
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
       importLegacyChatTasks(state, this.adapterId);
       normalizeTaskReferences(state);
+      await validateMediaOutbox(state, this.chat2codexHome, true);
+      const stagingBeforeRetention = mediaStagingDirectories(state);
       enforceDurableRetention(
         state,
         this.jobRetentionCount,
         this.outboxRetentionCount,
       );
+      for (const directory of stagingBeforeRetention) {
+        if (!mediaStagingDirectories(state).has(directory)) this.pendingStagingCleanup.add(directory);
+      }
       return state;
     } catch (error) {
       if (isNotFound(error)) {
@@ -78,6 +87,9 @@ export class JsonStateStore {
     normalizeChatSessionEpochs(state);
     importLegacyChatTasks(state, this.adapterId);
     normalizeTaskReferences(state);
+    await validateMediaOutbox(state, this.chat2codexHome, false);
+    const stagingBeforeRetention = new Set([...this.pendingStagingCleanup, ...mediaStagingDirectories(state)]);
+    for (const directory of stagingBeforeRetention) this.pendingStagingCleanup.add(directory);
     enforceDurableRetention(
       state,
       this.jobRetentionCount,
@@ -103,11 +115,14 @@ export class JsonStateStore {
 
       const currentPersisted = await readPersistedState(this.filePath);
       assertSupportedSchema(currentPersisted);
-      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted) && !isBridgeStateEnvelopeV3(currentPersisted) && !isBridgeStateEnvelopeV2(currentPersisted);
+      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted) && !isBridgeStateEnvelopeV4(currentPersisted) && !isBridgeStateEnvelopeV3(currentPersisted) && !isBridgeStateEnvelopeV2(currentPersisted);
+      const migratedV4 = isBridgeStateEnvelopeV4(currentPersisted);
       const migratedV3 = isBridgeStateEnvelopeV3(currentPersisted);
       const migratedV2 = isBridgeStateEnvelopeV2(currentPersisted);
-      const envelope: BridgeStateEnvelopeV4 = isBridgeStateEnvelope(currentPersisted)
+      const envelope: BridgeStateEnvelopeV5 = isBridgeStateEnvelope(currentPersisted)
         ? currentPersisted
+        : migratedV4
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
         : migratedV3
           ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
         : migratedV2
@@ -119,6 +134,7 @@ export class JsonStateStore {
               : { [this.adapterId]: coerceBridgeState(currentPersisted) },
           };
       envelope.adapters[this.adapterId] = state;
+      const referencedStagingDirectories = mediaStagingDirectoriesAcrossAdapters(envelope.adapters);
       const serializedState = `${JSON.stringify(envelope, null, 2)}\n`;
 
       if (migratedLegacy) {
@@ -126,6 +142,9 @@ export class JsonStateStore {
       }
       if (migratedV3) {
         await preserveVersionedBackup(this.filePath, "v3");
+      }
+      if (migratedV4) {
+        await preserveVersionedBackup(this.filePath, "v4");
       }
       if (migratedV2) {
         await preserveVersionedBackup(this.filePath, "v2");
@@ -140,6 +159,12 @@ export class JsonStateStore {
         });
         await fs.rename(tempPath, this.filePath);
         await fs.chmod(this.filePath, 0o600);
+        try {
+          await cleanupRemovedStagingDirectories(stagingBeforeRetention, referencedStagingDirectories, this.chat2codexHome);
+          for (const directory of stagingBeforeRetention) this.pendingStagingCleanup.delete(directory);
+        } catch {
+          // State is committed; keep candidates for a later safe cleanup retry.
+        }
       } catch (error) {
         await fs.rm(tempPath, { force: true }).catch(() => undefined);
         throw error;
@@ -181,12 +206,16 @@ function coerceBridgeState(value: unknown): BridgeState {
   };
 }
 
-function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV4 {
+function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV5 {
   return Boolean(
     isRecord(value) &&
       value.schemaVersion === bridgeStateSchemaVersion &&
       isRecord(value.adapters),
   );
+}
+
+function isBridgeStateEnvelopeV4(value: unknown): value is { schemaVersion: 4; adapters: Record<string, BridgeState> } {
+  return Boolean(isRecord(value) && value.schemaVersion === 4 && isRecord(value.adapters));
 }
 
 function isBridgeStateEnvelopeV3(value: unknown): value is { schemaVersion: 3; adapters: Record<string, BridgeState> } {
@@ -201,7 +230,7 @@ function assertSupportedSchema(value: unknown): void {
   if (
     isRecord(value) &&
     Object.prototype.hasOwnProperty.call(value, "schemaVersion") &&
-    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV3(value) && !isBridgeStateEnvelopeV2(value)
+    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV4(value) && !isBridgeStateEnvelopeV3(value) && !isBridgeStateEnvelopeV2(value)
   ) {
     throw new Error(`Unsupported bridge state schema version: ${String(value.schemaVersion)}`);
   }
@@ -371,7 +400,9 @@ function normalizeTaskReferences(state: BridgeState): void {
     }
   }
   for (const delivery of Object.values(state.outbox)) {
-    delivery.taskId = state.jobs[delivery.jobId]?.taskId;
+    if (delivery.kind === "text" || delivery.kind === "markdown") {
+      delivery.taskId = state.jobs[delivery.jobId]?.taskId;
+    }
   }
 }
 
@@ -385,6 +416,11 @@ function isNotFound(error: unknown): boolean {
 
 function isAlreadyExists(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST";
+}
+
+function missingOnly(error: unknown): undefined {
+  if (isNotFound(error)) return undefined;
+  throw error;
 }
 
 function retentionCount(value: number | undefined, name: string): number {
@@ -408,18 +444,115 @@ function enforceDurableRetention(
   normalizeDeliveryReferences(state);
 }
 
-function pruneDeliveredOutbox(state: BridgeState, retentionCount: number): void {
-  const removalCount = Object.keys(state.outbox).length - retentionCount;
-  if (removalCount <= 0) {
-    return;
+async function validateMediaOutbox(state: BridgeState, chat2codexHome: string, verifyDigest: boolean): Promise<void> {
+  const outboundRoot = path.resolve(chat2codexHome, "outbound");
+  const sequences = new Set<string>();
+  for (const message of Object.values(state.outbox)) {
+    if (!["text", "markdown", "image", "file"].includes(message.kind)) throw new Error("Invalid outbox delivery kind.");
+    const sequenceKey = message.jobId + "\0" + message.sequence;
+    if (sequences.has(sequenceKey)) throw new Error("Duplicate outbox sequence for job " + message.jobId + ".");
+    sequences.add(sequenceKey);
+    if (message.kind !== "image" && message.kind !== "file") continue;
+    const job = state.jobs[message.jobId];
+    if (!job) throw new Error("Orphaned media job reference: " + message.jobId);
+    if (!message.taskId || !state.tasks[message.taskId]) throw new Error("Orphaned media task reference: " + String(message.taskId));
+    if (!message.id || !message.jobId || !message.chatId) throw new Error("Media delivery identity is incomplete.");
+    if (!Number.isSafeInteger(message.sequence) || message.sequence < 0) throw new Error("Invalid media delivery sequence.");
+    if (message.status !== "pending" && message.status !== "sending" && message.status !== "delivered") throw new Error("Invalid media delivery status.");
+    if (job.taskId !== message.taskId) throw new Error("Media task owner does not match its durable job.");
+    if (job.chatId !== message.chatId || state.tasks[message.taskId]!.conversationId !== message.chatId) throw new Error("Media conversation owner does not match its task.");
+    if (!message.stagedPath || !path.isAbsolute(message.stagedPath) || path.resolve(message.stagedPath) !== message.stagedPath) throw new Error("Media staged path must be absolute and canonical.");
+    if (!inside(outboundRoot, message.stagedPath)) throw new Error("Media staged path is outside the private outbound root.");
+    if (!message.fileName || message.fileName.length > 160 || path.basename(message.fileName) !== message.fileName || !/^\d{2}-/u.test(path.basename(message.stagedPath)) || !path.basename(message.stagedPath).endsWith("-" + message.fileName)) throw new Error("Media filename does not match its staged path.");
+    const expectedJobDirectory = path.join(outboundRoot, message.taskId, safeIdentifierComponent(message.jobId));
+    if (!samePath(path.dirname(message.stagedPath), expectedJobDirectory)) throw new Error("Media staged path does not belong to its job staging directory.");
+    if (!message.mediaType || !/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/iu.test(message.mediaType)) throw new Error("Invalid media type.");
+    if (!Number.isSafeInteger(message.size) || message.size! <= 0) throw new Error("Invalid media size.");
+    if (!message.sha256 || !/^[a-f0-9]{64}$/u.test(message.sha256)) throw new Error("Invalid media SHA-256 hash.");
+    if (!Number.isSafeInteger(message.attempts) || message.attempts < 0) throw new Error("Invalid media delivery attempts.");
+    if (!message.idempotencyKey || message.idempotencyKey.length > 512) throw new Error("Invalid media idempotency key.");
+    const info = await fs.lstat(message.stagedPath).catch(missingOnly);
+    if (!info || !info.isFile() || info.isSymbolicLink()) throw new Error("Media staged path must reference a regular non-symlink file.");
+    const canonical = await fs.realpath(message.stagedPath);
+    if (!samePath(canonical, message.stagedPath)) throw new Error("Media staged path must be canonical.");
+    if (info.size !== message.size) throw new Error("Media staged size does not match durable metadata.");
+    if (verifyDigest) {
+      const digest = createHash("sha256").update(await fs.readFile(message.stagedPath)).digest("hex");
+      if (digest !== message.sha256) throw new Error("Media staged hash does not match durable metadata.");
+    }
   }
+}
 
-  const candidates = Object.values(state.outbox)
-    .filter((message) => message.status === "delivered")
-    .sort(compareOutboxAge);
-  for (const message of candidates.slice(0, removalCount)) {
-    delete state.outbox[message.id];
+function mediaStagingDirectories(state: BridgeState): Set<string> {
+  const result = new Set<string>();
+  for (const item of Object.values(state.outbox)) {
+    if ((item.kind === "image" || item.kind === "file") && item.stagedPath) result.add(path.dirname(item.stagedPath));
   }
+  return result;
+}
+
+function mediaStagingDirectoriesAcrossAdapters(adapters: Record<string, BridgeState>): Set<string> {
+  const result = new Set<string>();
+  for (const state of Object.values(adapters)) {
+    for (const directory of mediaStagingDirectories(state)) result.add(directory);
+  }
+  return result;
+}
+
+async function cleanupRemovedStagingDirectories(before: Set<string>, referenced: Set<string>, chat2codexHome: string): Promise<void> {
+  const outboundRoot = path.resolve(chat2codexHome, "outbound");
+  for (const directory of before) {
+    if (referenced.has(directory) || !inside(outboundRoot, directory)) continue;
+    const info = await fs.lstat(directory).catch(missingOnly);
+    if (!info) continue;
+    if (info.isSymbolicLink()) { await fs.unlink(directory); continue; }
+    if (!info.isDirectory()) throw new Error("Outbound staging cleanup target is not a directory.");
+    const canonical = await fs.realpath(directory);
+    if (!samePath(canonical, directory) || !inside(outboundRoot, canonical)) throw new Error("Refusing to clean a staging directory outside the outbound root.");
+    await fs.rm(directory, { recursive: true, force: false });
+  }
+}
+
+function inside(root: string, candidate: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith(".." + path.sep) && relative !== ".." && !path.isAbsolute(relative));
+}
+
+function samePath(left: string, right: string): boolean {
+  return process.platform === "win32" ? left.toLocaleLowerCase() === right.toLocaleLowerCase() : left === right;
+}
+
+function safeIdentifierComponent(value: string): string {
+  if (/^[A-Za-z0-9._-]{1,128}$/u.test(value) && value !== "." && value !== "..") return value;
+  return "job-" + createHash("sha256").update(value).digest("hex").slice(0, 32);
+}
+
+function pruneDeliveredOutbox(state: BridgeState, retentionCount: number): void {
+  let outboxCount = Object.keys(state.outbox).length;
+  if (outboxCount <= retentionCount) return;
+  const groups = completeTerminalDeliveryGroups(state);
+  for (const group of groups) {
+    if (outboxCount <= retentionCount) break;
+    for (const message of group) {
+      delete state.outbox[message.id];
+      outboxCount -= 1;
+    }
+  }
+}
+
+function completeTerminalDeliveryGroups(state: BridgeState): DurableOutboxMessage[][] {
+  const byJob = new Map<string, DurableOutboxMessage[]>();
+  for (const message of Object.values(state.outbox)) {
+    const group = byJob.get(message.jobId) ?? [];
+    group.push(message); byJob.set(message.jobId, group);
+  }
+  return [...byJob.entries()]
+    .filter(([jobId, messages]) => {
+      const job = state.jobs[jobId];
+      return Boolean(job && isTerminalJob(job) && !isActiveTaskObligation(job.taskId ? state.tasks[job.taskId]?.status : undefined) && messages.length > 0 && messages.every((message) => message.status === "delivered"));
+    })
+    .map(([, messages]) => messages.sort(compareDeliverySequence))
+    .sort((left, right) => compareOutboxAge(left[0]!, right[0]!));
 }
 
 function pruneTerminalJobs(state: BridgeState, retentionCount: number): void {

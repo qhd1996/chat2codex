@@ -251,14 +251,12 @@ export interface DurableCodexJob {
 
 export type DurableOutboxStatus = "pending" | "sending" | "delivered";
 
-export interface DurableOutboxMessage {
+interface DurableOutboxBase {
   id: string;
   jobId: string;
   /** Stable owner used to prevent cross-task delivery/recovery mixups. */
   taskId?: string;
   chatId: string;
-  kind: "text" | "markdown";
-  text: string;
   sequence: number;
   status: DurableOutboxStatus;
   idempotencyKey: string;
@@ -268,6 +266,26 @@ export interface DurableOutboxMessage {
   deliveredAt?: string;
   lastError?: string;
 }
+
+export interface DurableTextOutboxMessage extends DurableOutboxBase {
+  kind: "text" | "markdown";
+  text: string;
+}
+
+export interface DurableMediaOutboxMessage extends DurableOutboxBase {
+  taskId: string;
+  kind: "image" | "file";
+  text: "";
+  stagedPath: string;
+  fileName: string;
+  mediaType: string;
+  size: number;
+  sha256: string;
+}
+
+export type DurableOutboxMessage =
+  | DurableTextOutboxMessage
+  | DurableMediaOutboxMessage;
 
 export interface StagedImage {
   sourceMessageId: string;
@@ -313,10 +331,10 @@ export interface BridgeState {
   clarifications?: Record<string, PendingClarification>;
 }
 
-export const bridgeStateSchemaVersion = 4 as const;
+export const bridgeStateSchemaVersion = 5 as const;
 
 /** On-disk envelope. Each adapter receives an isolated v0.6-compatible state partition. */
-export interface BridgeStateEnvelopeV4 {
+export interface BridgeStateEnvelopeV5 {
   schemaVersion: typeof bridgeStateSchemaVersion;
   adapters: Record<string, BridgeState>;
 }

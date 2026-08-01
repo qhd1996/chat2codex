@@ -197,7 +197,7 @@ describe("JsonStateStore", () => {
       await store.save(loaded);
 
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(4);
+      expect(persisted.schemaVersion).toBe(5);
       expect(persisted.adapters["lark:default"].processedMessageIds).toEqual(["m_legacy"]);
       expect(JSON.parse(await readFile(`${statePath}.v0.6.bak`, "utf8"))).toEqual(legacy);
       if (process.platform !== "win32") {
@@ -269,7 +269,7 @@ describe("JsonStateStore", () => {
       expect(loaded.conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
       await store.save(loaded);
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(4);
+      expect(persisted.schemaVersion).toBe(5);
       expect(JSON.parse(await readFile(`${statePath}.v3.bak`, "utf8"))).toEqual(legacy);
       expect((await store.load()).conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
     } finally { await rm(tempDir, { recursive: true, force: true }); }
@@ -278,14 +278,14 @@ describe("JsonStateStore", () => {
   test("refuses to overwrite an unknown future state schema", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-"));
     const statePath = path.join(tempDir, "state.json");
-    const futureState = `${JSON.stringify({ schemaVersion: 5, adapters: {} }, null, 2)}\n`;
+    const futureState = `${JSON.stringify({ schemaVersion: 6, adapters: {} }, null, 2)}\n`;
     try {
       await writeFile(statePath, futureState, { mode: 0o600 });
       const store = new JsonStateStore(statePath, { adapterId: "feishu:default" });
 
-      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 5");
+      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 6");
       await expect(store.save(emptyState())).rejects.toThrow(
-        "Unsupported bridge state schema version: 5",
+        "Unsupported bridge state schema version: 6",
       );
       expect(await readFile(statePath, "utf8")).toBe(futureState);
       expect(await stat(`${statePath}.v0.6.bak`).catch(() => null)).toBeNull();
@@ -316,11 +316,71 @@ describe("JsonStateStore", () => {
       };
       await store.save(state);
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(4);
+      expect(persisted.schemaVersion).toBe(5);
       expect((await store.load()).imageDrafts["chat:user"]?.images).toHaveLength(1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("schema v5 migrates v4 media state with a private v4 backup and preserves legacy text", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-v4-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const legacy = { schemaVersion: 4, adapters: { "weixin:bot": durableState(
+        [durableJob("legacy-job", "completed", timestamp(1), ["legacy-text"])],
+        [durableOutbox("legacy-text", "legacy-job", "delivered", timestamp(1))],
+      ) } };
+      await writeFile(statePath, JSON.stringify(legacy));
+      const store = new JsonStateStore(statePath, { adapterId: "weixin:bot", chat2codexHome: tempDir });
+      const state = await store.load();
+      expect(state.outbox["legacy-text"]?.text).toBe("delivery legacy-text");
+      await store.save(state);
+      expect(JSON.parse(await readFile(statePath, "utf8")).schemaVersion).toBe(5);
+      expect(JSON.parse(await readFile(statePath + ".v4.bak", "utf8"))).toEqual(legacy);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("schema v5 rejects invalid or orphaned durable media records", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-state-"));
+    try {
+      const taskId = "tsk_bbbbbbbbbbbbbbbbbbbbbbbb";
+      const jobId = "media-job";
+      const stagedDirectory = path.join(tempDir, "outbound", taskId, jobId);
+      const stagedPath = path.join(stagedDirectory, "01-image.png");
+      await mkdir(stagedDirectory, { recursive: true }); await writeFile(stagedPath, "image-bytes");
+      const hash = new Bun.CryptoHasher("sha256").update("image-bytes").digest("hex");
+      const makeState = () => {
+        const state = emptyState();
+        const task = registeredTask(taskId, "conversation", tempDir); task.status = "completed";
+        state.tasks[taskId] = task; state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+        const job = durableJob(jobId, "completed", timestamp(1), ["media-entry"]); job.chatId = "conversation"; job.taskId = taskId; state.jobs[jobId] = job;
+        state.outbox["media-entry"] = {
+          id: "media-entry", jobId, taskId, chatId: "conversation", kind: "image", text: "", sequence: 0,
+          stagedPath, fileName: "image.png", mediaType: "image/png", size: 11, sha256: hash,
+          status: "pending", idempotencyKey: "media-entry", attempts: 0, createdAt: timestamp(1), updatedAt: timestamp(1),
+        };
+        return state;
+      };
+      const expectRejected = async (label: string, mutate: (state: BridgeState) => void, pattern: RegExp) => {
+        const state = makeState(); mutate(state);
+        await expect(new JsonStateStore(path.join(tempDir, label + ".json"), { chat2codexHome: tempDir }).save(state)).rejects.toThrow(pattern);
+      };
+      await expect(new JsonStateStore(path.join(tempDir, "valid.json"), { chat2codexHome: tempDir }).save(makeState())).resolves.toBeUndefined();
+      await expectRejected("missing-job", (state) => { delete state.jobs[jobId]; }, /orphan.*job/i);
+      await expectRejected("missing-task", (state) => { delete state.tasks[taskId]; }, /orphan.*task/i);
+      await expectRejected("wrong-task", (state) => { state.tasks["tsk_cccccccccccccccccccccccc"] = registeredTask("tsk_cccccccccccccccccccccccc", "conversation", tempDir); state.outbox["media-entry"]!.taskId = "tsk_cccccccccccccccccccccccc"; }, /task.*owner/i);
+      await expectRejected("duplicate-sequence", (state) => { state.outbox.copy = { ...state.outbox["media-entry"]!, id: "copy", idempotencyKey: "copy" }; state.jobs[jobId]!.deliveryIds.push("copy"); }, /duplicate.*sequence/i);
+      await expectRejected("relative-path", (state) => { state.outbox["media-entry"]!.stagedPath = "relative.png"; }, /canonical|absolute/i);
+      await expectRejected("outside-root", (state) => { state.outbox["media-entry"]!.stagedPath = path.join(tempDir, "outside.png"); }, /outbound root/i);
+      const wrongJobDirectory = path.join(tempDir, "outbound", taskId, "other-job"); await mkdir(wrongJobDirectory, { recursive: true }); await writeFile(path.join(wrongJobDirectory, "01-image.png"), "image-bytes");
+      await expectRejected("wrong-job-directory", (state) => { state.outbox["media-entry"]!.stagedPath = path.join(wrongJobDirectory, "01-image.png"); }, /job.*staging|staging.*job/i);
+      await expectRejected("bad-hash", (state) => { state.outbox["media-entry"]!.sha256 = "bad"; }, /sha-?256|hash/i);
+      await expectRejected("bad-size", (state) => { state.outbox["media-entry"]!.size = 10; }, /size/i);
+      await expectRejected("bad-attempts", (state) => { state.outbox["media-entry"]!.attempts = -1; }, /attempt/i);
+      await expectRejected("bad-idempotency", (state) => { state.outbox["media-entry"]!.idempotencyKey = ""; }, /idempotency/i);
+      await expectRejected("unknown-kind", (state) => { (state.outbox["media-entry"] as { kind: string }).kind = "video"; }, /kind/i);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 
   test("loads only bounded image clarification references and drops descriptor-like fields", async () => {
@@ -444,8 +504,8 @@ describe("JsonStateStore", () => {
       await store.save(state);
 
       expect(Object.keys(state.jobs)).toEqual(["job_queued", "job_running", "job_blocked"]);
-      expect(Object.keys(state.outbox)).toEqual(["outbox_sending", "outbox_pending"]);
-      expect(state.jobs.job_queued?.deliveryIds).toEqual([]);
+      expect(Object.keys(state.outbox)).toEqual(["outbox_delivered", "outbox_sending", "outbox_pending"]);
+      expect(state.jobs.job_queued?.deliveryIds).toEqual(["outbox_delivered"]);
       expect(state.jobs.job_running?.deliveryIds).toEqual(["outbox_sending"]);
       expect(state.jobs.job_blocked?.deliveryIds).toEqual(["outbox_pending"]);
     } finally {
@@ -581,6 +641,58 @@ describe("JsonStateStore", () => {
       const job = durableJob("job_waiting", "completed", timestamp(1), []); job.chatId = "conversation"; job.taskId = task.taskId; state.jobs[job.id] = job;
       const store = new JsonStateStore(statePath, { jobRetentionCount: 0, outboxRetentionCount: 0 }); await store.save(state);
       expect((await store.load()).jobs.job_waiting?.taskId).toBe(task.taskId);
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("media retention prunes only complete terminal groups and cleans unreferenced staging directories", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-retention-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const state = emptyState();
+      const taskId = "tsk_dddddddddddddddddddddddd";
+      const task = registeredTask(taskId, "conversation", tempDir); task.status = "completed";
+      state.tasks[taskId] = task; state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+      for (const [index, jobId] of ["old-job", "new-job"].entries()) {
+        const dir = path.join(tempDir, "outbound", taskId, jobId); await mkdir(dir, { recursive: true });
+        const file = path.join(dir, "01-output.bin"); await writeFile(file, jobId);
+        const job = durableJob(jobId, "completed", timestamp(index + 1), [jobId + "-text", jobId + "-file"]); job.chatId = "conversation"; job.taskId = taskId; state.jobs[jobId] = job;
+        const text = durableOutbox(jobId + "-text", jobId, "delivered", timestamp(index + 1)); text.chatId = "conversation"; text.taskId = taskId; text.sequence = 0; state.outbox[text.id] = text;
+        state.outbox[jobId + "-file"] = { id: jobId + "-file", jobId, taskId, chatId: "conversation", kind: "file", text: "", sequence: 1, stagedPath: file, fileName: "output.bin", mediaType: "application/octet-stream", size: jobId.length, sha256: new Bun.CryptoHasher("sha256").update(jobId).digest("hex"), status: "delivered", idempotencyKey: jobId + "-file", attempts: 1, createdAt: timestamp(index + 1), updatedAt: timestamp(index + 1), deliveredAt: timestamp(index + 1) };
+      }
+      await new JsonStateStore(statePath, { chat2codexHome: tempDir, jobRetentionCount: 1, outboxRetentionCount: 2 }).save(state);
+      expect(Object.keys(state.jobs)).toEqual(["new-job"]);
+      expect(Object.values(state.outbox).map((item) => item.jobId)).toEqual(["new-job", "new-job"]);
+      expect(await stat(path.join(tempDir, "outbound", taskId, "old-job")).catch(() => null)).toBeNull();
+      expect(await stat(path.join(tempDir, "outbound", taskId, "new-job"))).toBeTruthy();
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("media retention keeps a delivered prefix while a later sibling is pending", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-prefix-"));
+    try {
+      const state = durableState(
+        [durableJob("partial-job", "completed", timestamp(1), ["prefix", "remaining"])],
+        [durableOutbox("prefix", "partial-job", "delivered", timestamp(1)), durableOutbox("remaining", "partial-job", "pending", timestamp(1))],
+      );
+      state.outbox.prefix!.sequence = 0; state.outbox.remaining!.sequence = 1;
+      await new JsonStateStore(path.join(tempDir, "state.json"), { chat2codexHome: tempDir, jobRetentionCount: 0, outboxRetentionCount: 0 }).save(state);
+      expect(Object.keys(state.outbox)).toEqual(["prefix", "remaining"]);
+      expect(state.jobs["partial-job"]).toBeDefined();
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("media retention protects complete delivery groups backing active task obligations", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-active-task-"));
+    try {
+      const state = emptyState();
+      const taskId = "tsk_eeeeeeeeeeeeeeeeeeeeeeee";
+      const task = registeredTask(taskId, "conversation", tempDir); task.status = "waiting_approval";
+      state.tasks[taskId] = task; state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+      const job = durableJob("active-task-job", "completed", timestamp(1), ["active-task-text"]); job.taskId = taskId; job.chatId = "conversation"; state.jobs[job.id] = job;
+      const message = durableOutbox("active-task-text", job.id, "delivered", timestamp(1)); message.taskId = taskId; message.chatId = "conversation"; state.outbox[message.id] = message;
+      await new JsonStateStore(path.join(tempDir, "state.json"), { chat2codexHome: tempDir, jobRetentionCount: 0, outboxRetentionCount: 0 }).save(state);
+      expect(state.jobs[job.id]).toBeDefined();
+      expect(state.outbox[message.id]).toBeDefined();
     } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 });
