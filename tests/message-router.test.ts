@@ -7374,6 +7374,127 @@ describe("MessageRouter access control", () => {
     }
   });
 
+  test("shares global Codex capacity between legacy and orchestrated runs", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-shared-global-capacity-"));
+    const workspaceRoots = {
+      work: path.join(tempDir, "Work"),
+      travel: path.join(tempDir, "Travel"),
+      personal: path.join(tempDir, "Personal"),
+      finance: path.join(tempDir, "Finance"),
+      ai_lab: path.join(tempDir, "AI-Lab"),
+      learning: path.join(tempDir, "Learning"),
+    };
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all(Object.values(workspaceRoots).map((root) => mkdir(root)));
+      const statePath = path.join(tempDir, "state.json");
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: workspaceRoots.work,
+        CODEX_MAX_CONCURRENT_RUNS: "1",
+        CODEX_MAX_APP_SERVER_SESSIONS: "1",
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(workspaceRoots),
+        BRIDGE_STATE_PATH: statePath,
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({
+          action: {
+            kind: "create_task",
+            instruction: "受全局容量限制的旅行任务",
+            workspaceKind: "travel",
+            executionIntent: "general",
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+      ]);
+      const codex = new ControlledCodex();
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(statePath),
+        new CollectingSender(),
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces: await ExecutionWorkspaceService.create({
+            chat2codexHome: path.join(tempDir, "home"),
+            codexBin: config.codexBin,
+            sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+          }),
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 1 }),
+        },
+      );
+      await router.start();
+
+      await router.accept({
+        messageId: "legacy-capacity-holder",
+        chatId: "legacy-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text: "legacy task holds the only global permit",
+        naturalRouting: "bypass",
+      });
+      await waitFor(() => codex.runs.length === 1);
+
+      await router.accept({
+        messageId: "orchestrated-capacity-waiter",
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text: "新建旅行任务",
+      });
+      await waitFor(() => classifier.taskInputs.length === 1);
+      await waitForState(
+        new JsonStateStore(statePath),
+        (state) => Object.values(state.tasks).some(
+          (item) => item.title === "受全局容量限制的旅行任务"
+            && (item.status === "waiting_workspace" || item.status === "running"),
+        ),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const runsBeforeRelease = codex.runs.length;
+      const waitingState = await new JsonStateStore(statePath).load();
+      const task = Object.values(waitingState.tasks).find(
+        (item) => item.title === "受全局容量限制的旅行任务",
+      );
+      const statusBeforeRelease = task?.status;
+
+      codex.complete(0, "thread-legacy");
+      await waitFor(() => codex.runs.length === 2);
+      expect(codex.runs[1]?.sessionScope?.taskId).toBe(task?.taskId);
+      codex.complete(1, `thread-${task!.taskId}`);
+      await waitForState(
+        new JsonStateStore(statePath),
+        (state) => state.tasks[task!.taskId]?.status === "completed",
+      );
+      expect(runsBeforeRelease).toBe(1);
+      expect(statusBeforeRelease).toBe("waiting_workspace");
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   test("routes an output-only task into its verified isolated directory", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-output-only-"));
     const workspaceRoots = {

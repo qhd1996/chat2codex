@@ -1381,8 +1381,15 @@ export class BridgeRunner {
     const task = this.requireState().tasks[taskId];
     if (!task || queuedRun.controller.signal.aborted) return;
     try {
-      await this.mutateState((state) => { this.orchestrator!.taskRegistry.transition(state, taskId, "running"); });
-      await this.runCodexWithGlobalPermit(task.conversationId, queuedRun);
+      queuedRun.waitingFor = "global_capacity";
+      const releaseGlobalRun = await this.acquireGlobalRunPermit(queuedRun.controller.signal);
+      if (!releaseGlobalRun) return;
+      try {
+        await this.mutateState((state) => { this.orchestrator!.taskRegistry.transition(state, taskId, "running"); });
+        await this.runCodexWithGlobalPermit(task.conversationId, queuedRun);
+      } finally {
+        releaseGlobalRun();
+      }
     } finally {
       if (this.queuedRuns.get(taskId) === queuedRun) this.queuedRuns.delete(taskId);
     }
