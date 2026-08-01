@@ -1,0 +1,2 @@
+export function formatTaskLabel(task: { taskId: string; title: string }): string { const title = [...task.title.replace(/[\u0000-\u001f\u007f]/gu, " " ).replace(/\s+/gu, " " ).trim()].slice(0,20).join(""); const fallback = task.taskId.slice(0,8) || "task"; return "[" + (title || fallback) + "]"; }
+export function prefixTaskMessage(task: { taskId: string; title: string }, text: string): string { return formatTaskLabel(task) + " " + text; }
