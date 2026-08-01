@@ -9,7 +9,7 @@ import {
   probeInstalledCodexOutputOnlySandbox,
   type OutputOnlySandboxProbeResult,
 } from "../src/core/execution-workspaces.js";
-import { supportsFileSymlinks } from "./helpers/platform.js";
+import { createNodeTestExecutable, supportsFileSymlinks } from "./helpers/platform.js";
 
 const execFileAsync = promisify(execFile);
 const taskA = "tsk_aaaaaaaaaaaaaaaaaaaaaaaa";
@@ -181,3 +181,42 @@ installedCodexTest("installed Codex enforces the output-only sandbox contract", 
   expect(result).toMatchObject({ verified: true });
   expect(result.codexVersion).toBeTruthy();
 }, 120_000);
+
+test("sandbox probe preserves the configured model provider", async () => {
+  const f = await fixture();
+  try {
+    const fakeCodex = await createNodeTestExecutable(f.root, "provider-aware-codex", `
+      "use strict";
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const args = process.argv.slice(2);
+      if (args.length === 1 && args[0] === "--version") {
+        process.stdout.write("codex-test 3.0\\n");
+        process.exit(0);
+      }
+      if (args.includes("--ignore-user-config")) {
+        process.stderr.write("configured model provider was discarded");
+        process.exit(9);
+      }
+      if (args[0] !== "exec" || !args.includes("--ignore-rules")) {
+        process.stderr.write("unexpected sandbox probe arguments");
+        process.exit(10);
+      }
+      const output = args[args.indexOf("--cd") + 1];
+      if (!output) process.exit(11);
+      const script = fs.readFileSync(path.join(output, "probe.cjs"), "utf8");
+      const pathsLiteral = /^const p = (.+);$/m.exec(script)?.[1];
+      if (!pathsLiteral) process.exit(12);
+      const paths = JSON.parse(pathsLiteral);
+      fs.writeFileSync(paths.readProof, fs.readFileSync(paths.secretFile, "utf8"));
+      fs.writeFileSync(paths.writeProof, "OUTPUT_WRITE_OK");
+      fs.writeFileSync(paths.attemptProof, "DENIED:EACCES");
+    `);
+
+    const result = await probeInstalledCodexOutputOnlySandbox(fakeCodex);
+
+    expect(result).toEqual({ verified: true, codexVersion: "codex-test 3.0" });
+  } finally {
+    await cleanup(f.root);
+  }
+});

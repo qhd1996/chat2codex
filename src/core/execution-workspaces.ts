@@ -270,7 +270,7 @@ export async function probeInstalledCodexOutputOnlySandbox(codexBin: string): Pr
     ].join("\n");
     try {
       await runFile(codexBin, [
-        "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+        "exec", "--ephemeral", "--ignore-rules",
         "--skip-git-repo-check", "--sandbox", "workspace-write", "--cd", output, prompt,
       ], probeTimeoutMs);
     } catch (error) {
