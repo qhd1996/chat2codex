@@ -165,6 +165,10 @@ function createChatSender(
     async sendView(chatId, view) {
       await sendCoreView(chatId, view);
     },
+    async sendMedia(chatId, input, options) {
+      await supervisorReady;
+      await requireDelivered(await supervisor.sendMedia(target(chatId), input, options));
+    },
   };
 
   if (adapter.capabilities.messageReactions) {

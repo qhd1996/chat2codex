@@ -41,6 +41,7 @@ import type {
 import { renderFeishuInteractiveView } from "../src/adapters/feishu/adapter.js";
 import { renderLarkActionResponse } from "../src/adapters/feishu/action.js";
 import type { ActionResponse } from "../src/core/actions.js";
+import type { OutboundMediaInput } from "../src/core/actions.js";
 import type {
   MessageReaction,
   MessageReactionHandle,
@@ -514,6 +515,22 @@ class QueueIntentClassifier implements NaturalIntentClassifier {
   calls = 0;
   constructor(private readonly decisions: NaturalIntentDecision[]) {}
   async classify(): Promise<unknown> { this.calls += 1; return this.decisions.shift() ?? { intent: "ordinary", confidence: 1 }; }
+}
+
+class MediaCollectingSender extends CollectingSender {
+  readonly media: Array<{
+    chatId: string;
+    input: OutboundMediaInput;
+    idempotencyKey?: string;
+  }> = [];
+
+  async sendMedia(
+    chatId: string,
+    input: OutboundMediaInput,
+    options?: { idempotencyKey?: string },
+  ): Promise<void> {
+    this.media.push({ chatId, input, idempotencyKey: options?.idempotencyKey });
+  }
 }
 
 class PartiallyFailingImageDraftSender extends ImageDraftSender {
@@ -7341,6 +7358,91 @@ describe("MessageRouter access control", () => {
 
       expect(sender.messages.at(-1)?.text).toContain("没有收到 Codex 的 token usage 通知");
     });
+  });
+
+  test("media sender preserves task ownership, sequence, and stable idempotency without exposing bytes", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-contract-"));
+    let router: MessageRouter | undefined;
+    try {
+      const taskId = "tsk_" + "d".repeat(24);
+      const jobId = "media-contract-job";
+      const home = path.join(tempDir, "home");
+      const stagedDir = path.join(home, "outbound", taskId, jobId);
+      const stagedPath = path.join(stagedDir, "01-answer.png");
+      const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+      await mkdir(stagedDir, { recursive: true });
+      await writeFile(stagedPath, bytes);
+      const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+      const config = loadConfig({
+        FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir,
+        CHAT2CODEX_HOME: home, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ALLOWED_USER_IDS: "ou_user",
+      });
+      const store = new JsonStateStore(config.bridgeStatePath, { chat2codexHome: home });
+      const state = emptyState();
+      const at = "2026-08-02T00:00:00.000Z";
+      state.tasks[taskId] = {
+        taskId, conversationId: "owned-chat", chatType: "direct", senderKey: "sender", title: "media task", aliases: [],
+        workspaceKind: "work", workspaceRoot: tempDir, executionCwd: tempDir, isolationMode: "canonical_fifo",
+        sessionEpoch: "epoch-media", status: "completed", objectiveSummary: "", recentRequests: [], createdAt: at, updatedAt: at, lastActiveAt: at,
+      };
+      state.conversations["owned-chat"] = { taskIds: [taskId], lastTaskId: taskId };
+      state.jobs[jobId] = {
+        id: jobId, kind: "codex_run", messageId: jobId, chatId: "owned-chat", chatType: "direct", cwd: tempDir,
+        prompt: "media", status: "completed", createdAt: at, updatedAt: at, completedAt: at, deliveryIds: ["text-delivery", "media-delivery"], taskId,
+      };
+      state.outbox["text-delivery"] = { id: "text-delivery", jobId, taskId, chatId: "owned-chat", kind: "text", text: "visible first", sequence: 0, status: "pending", idempotencyKey: "stable-text", attempts: 0, createdAt: at, updatedAt: at };
+      state.outbox["media-delivery"] = { id: "media-delivery", jobId, taskId, chatId: "owned-chat", kind: "image", text: "", sequence: 1, stagedPath, fileName: "answer.png", mediaType: "image/png", size: bytes.length, sha256: hash, status: "pending", idempotencyKey: "stable-media", attempts: 0, createdAt: at, updatedAt: at };
+      await store.save(state);
+      const sender = new MediaCollectingSender();
+      router = new MessageRouter(config, store, sender, silentLogger, new FakeCodex(), {});
+      await router.start();
+      await waitForState(store, (loaded) => loaded.outbox["media-delivery"]?.status === "delivered");
+
+      expect(sender.messages.map(({ chatId, text }) => ({ chatId, text }))).toEqual([{ chatId: "owned-chat", text: "visible first" }]);
+      expect(sender.media).toEqual([{ chatId: "owned-chat", input: { kind: "image", stagedPath, fileName: "answer.png", mediaType: "image/png", size: bytes.length, sha256: hash }, idempotencyKey: "stable-media" }]);
+      expect(Object.isFrozen(sender.media[0]!.input)).toBe(true);
+      expect(JSON.stringify(sender.media)).not.toContain(bytes.toString("base64"));
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("unsupported media sender fails closed and redacts file metadata from status", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-unsupported-"));
+    let router: MessageRouter | undefined;
+    try {
+      const taskId = "tsk_" + "e".repeat(24);
+      const jobId = "unsupported-media-job";
+      const home = path.join(tempDir, "home");
+      const stagedDir = path.join(home, "outbound", taskId, jobId);
+      const stagedPath = path.join(stagedDir, "01-secret.pdf");
+      const bytes = Buffer.from("private-file-bytes");
+      await mkdir(stagedDir, { recursive: true }); await writeFile(stagedPath, bytes);
+      const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+      const config = loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir, CHAT2CODEX_HOME: home, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ALLOWED_USER_IDS: "ou_user" });
+      const store = new JsonStateStore(config.bridgeStatePath, { chat2codexHome: home });
+      const state = emptyState(); const at = "2026-08-02T00:00:00.000Z";
+      state.tasks[taskId] = { taskId, conversationId: "owned-chat", chatType: "direct", senderKey: "sender", title: "media task", aliases: [], workspaceKind: "work", workspaceRoot: tempDir, executionCwd: tempDir, isolationMode: "canonical_fifo", sessionEpoch: "epoch-media", status: "completed", objectiveSummary: "", recentRequests: [], createdAt: at, updatedAt: at, lastActiveAt: at };
+      state.conversations["owned-chat"] = { taskIds: [taskId], lastTaskId: taskId };
+      state.jobs[jobId] = { id: jobId, kind: "codex_run", messageId: jobId, chatId: "owned-chat", chatType: "direct", cwd: tempDir, prompt: "media", status: "completed", createdAt: at, updatedAt: at, completedAt: at, deliveryIds: ["media-delivery"], taskId };
+      state.outbox["media-delivery"] = { id: "media-delivery", jobId, taskId, chatId: "owned-chat", kind: "file", text: "", sequence: 0, stagedPath, fileName: "secret.pdf", mediaType: "application/pdf", size: bytes.length, sha256: hash, status: "pending", idempotencyKey: "stable-media", attempts: 0, createdAt: at, updatedAt: at };
+      await store.save(state);
+      const loggerMessages: string[] = [];
+      const logger: Logger = { debug() {}, info() {}, warn(message, metadata) { loggerMessages.push(message + JSON.stringify(metadata)); }, error() {} };
+      const sender = new CollectingSender();
+      router = new MessageRouter(config, store, sender, logger, new FakeCodex(), {}); await router.start();
+      await waitForState(store, (loaded) =>
+        loaded.outbox["media-delivery"]?.status === "pending"
+        && loaded.outbox["media-delivery"]?.lastError === "Outbound media delivery failed.",
+      );
+      const loaded = await store.load();
+      expect(loaded.outbox["media-delivery"]?.status).toBe("pending");
+      expect(loaded.outbox["media-delivery"]?.lastError).toBe("Outbound media delivery failed.");
+      expect(sender.messages).toHaveLength(0);
+      expect(loggerMessages.join("\n")).not.toContain(stagedPath);
+      expect(loggerMessages.join("\n")).not.toContain("secret.pdf");
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
 
   test("Phase 1 image draft attaches to a resolved task and durable job atomically", async () => {

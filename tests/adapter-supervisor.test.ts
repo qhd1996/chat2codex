@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import type { ActionResponse } from "../src/core/actions.js";
+import type { ActionResponse, OutboundMediaInput } from "../src/core/actions.js";
 import type {
   AdapterEventHandler,
   AttachmentRef,
@@ -106,6 +106,23 @@ class ContractAdapter implements ChatAdapter {
   }
 }
 
+class MediaContractAdapter extends ContractAdapter {
+  mediaDeliveries: Array<{
+    target: ViewTarget;
+    input: OutboundMediaInput;
+    options?: DeliveryOptions;
+  }> = [];
+
+  async sendMedia(
+    target: ViewTarget,
+    input: OutboundMediaInput,
+    options?: DeliveryOptions,
+  ): Promise<DeliveryResult> {
+    this.mediaDeliveries.push({ target, input, options });
+    return { status: "delivered" };
+  }
+}
+
 describe("AdapterSupervisor", () => {
   test("rejects duplicate adapter ids before any platform starts", () => {
     expect(() => new AdapterSupervisor([
@@ -205,6 +222,63 @@ describe("AdapterSupervisor", () => {
       textLength: 0,
       botIdentityResolved: true,
     })).rejects.toThrow("emitted an event scoped to");
+    await supervisor.stop();
+  });
+
+  test("media sender preserves adapter isolation and an immutable idempotent contract", async () => {
+    const feishu = new MediaContractAdapter("feishu:default");
+    const weixin = new MediaContractAdapter("weixin:clawbot");
+    const supervisor = new AdapterSupervisor([feishu, weixin]);
+    await supervisor.start(async () => undefined);
+    const input: OutboundMediaInput = {
+      kind: "image",
+      stagedPath: "C:\\private\\outbound\\task\\job\\01-answer.png",
+      fileName: "answer.png",
+      mediaType: "image/png",
+      size: 123,
+      sha256: "a".repeat(64),
+    };
+
+    const result = await supervisor.sendMedia(
+      { adapterId: "weixin:clawbot", conversationId: "same-chat" },
+      input,
+      { idempotencyKey: "job-7:1" },
+    );
+
+    expect(result).toEqual({ status: "delivered" });
+    expect(feishu.mediaDeliveries).toHaveLength(0);
+    expect(weixin.mediaDeliveries).toEqual([{
+      target: { adapterId: "weixin:clawbot", conversationId: "same-chat" },
+      input,
+      options: { idempotencyKey: "job-7:1" },
+    }]);
+    expect(Object.isFrozen(weixin.mediaDeliveries[0]!.input)).toBe(true);
+    await supervisor.stop();
+  });
+
+  test("media sender fails closed when the owning adapter has no media transport", async () => {
+    const unsupported = new ContractAdapter("feishu:default");
+    const supervisor = new AdapterSupervisor([unsupported]);
+    await supervisor.start(async () => undefined);
+
+    const result = await supervisor.sendMedia(
+      { adapterId: "feishu:default", conversationId: "chat" },
+      {
+        kind: "file",
+        stagedPath: "C:\\private\\outbound\\task\\job\\01-report.pdf",
+        fileName: "report.pdf",
+        mediaType: "application/pdf",
+        size: 456,
+        sha256: "b".repeat(64),
+      },
+      { idempotencyKey: "job-8:0" },
+    );
+
+    expect(result).toEqual({
+      status: "unsupported",
+      reason: "Adapter feishu:default does not support outbound media.",
+    });
+    expect(unsupported.deliveries).toHaveLength(0);
     await supervisor.stop();
   });
 });

@@ -1,4 +1,4 @@
-import type { IncomingAction, ActionResponse } from "./actions.js";
+import type { IncomingAction, ActionResponse, OutboundMediaInput } from "./actions.js";
 import type { SenderIdentity } from "./identity.js";
 import type { ChatView } from "./view-models.js";
 
@@ -123,6 +123,11 @@ export interface ChatAdapter {
   start(handler: AdapterEventHandler): Promise<void>;
   stop(): Promise<void>;
   sendView(target: ViewTarget, view: ChatView, options?: DeliveryOptions): Promise<DeliveryResult>;
+  sendMedia?(
+    target: ViewTarget,
+    input: OutboundMediaInput,
+    options?: DeliveryOptions,
+  ): Promise<DeliveryResult>;
   updateView(handle: ViewHandle, view: ChatView): Promise<DeliveryResult>;
   addReaction(ref: MessageRef, reaction: MessageReaction): Promise<MessageReactionResult>;
   removeReaction(handle: MessageReactionHandle): Promise<MessageReactionRemovalResult>;

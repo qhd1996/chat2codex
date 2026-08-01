@@ -36,6 +36,16 @@ export type PermissionApprovalDecision = "deny" | "grantTurn" | "grantSession";
 export type McpElicitationDecision = "accept" | "decline" | "cancel" | "skip";
 export type InteractiveDecision = PermissionApprovalDecision | McpElicitationDecision;
 
+/** Immutable metadata for one privately staged outbound deliverable. */
+export interface OutboundMediaInput {
+  readonly kind: "image" | "file";
+  readonly stagedPath: string;
+  readonly fileName: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly sha256: string;
+}
+
 export interface IncomingAction {
   adapterId?: string;
   action: ChatActionKind;

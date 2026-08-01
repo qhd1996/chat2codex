@@ -56,6 +56,7 @@ import {
   stopRunCardAction,
   type CardActionResponse,
   type IncomingCardAction,
+  type OutboundMediaInput,
   type RunDetailKind,
 } from "./actions.js";
 import type { ChatView } from "./view-models.js";
@@ -177,6 +178,11 @@ export interface IncomingEventDiagnostic {
 export interface ChatSender {
   sendText(chatId: string, text: string, options?: ChatDeliveryOptions): Promise<void>;
   sendMarkdown?(chatId: string, markdown: string, options?: ChatDeliveryOptions): Promise<void>;
+  sendMedia?(
+    chatId: string,
+    input: OutboundMediaInput,
+    options?: ChatDeliveryOptions,
+  ): Promise<void>;
   sendView?(chatId: string, view: ChatView): Promise<void>;
   addReaction?(
     chatId: string,
@@ -2878,7 +2884,19 @@ export class BridgeRunner {
 
     try {
       const options = { idempotencyKey: delivery.idempotencyKey };
-      if (delivery.kind === "markdown" && this.sender.sendMarkdown) {
+      if (delivery.kind === "image" || delivery.kind === "file") {
+        if (!this.sender.sendMedia) {
+          throw new Error("The owning chat adapter does not support outbound media.");
+        }
+        await this.sender.sendMedia(delivery.chatId, Object.freeze({
+          kind: delivery.kind,
+          stagedPath: delivery.stagedPath,
+          fileName: delivery.fileName,
+          mediaType: delivery.mediaType,
+          size: delivery.size,
+          sha256: delivery.sha256,
+        }), options);
+      } else if (delivery.kind === "markdown" && this.sender.sendMarkdown) {
         await this.sender.sendMarkdown(delivery.chatId, delivery.text, options);
       } else {
         await this.sender.sendText(delivery.chatId, delivery.text, options);
@@ -2903,12 +2921,16 @@ export class BridgeRunner {
         }
         current.status = "pending";
         current.updatedAt = new Date().toISOString();
-        current.lastError = truncateInline(formatError(error), 240);
+        current.lastError = delivery.kind === "image" || delivery.kind === "file"
+          ? "Outbound media delivery failed."
+          : truncateInline(formatError(error), 240);
       });
       this.logger.warn("Durable outbox delivery failed; leaving it pending", {
         deliveryId,
         jobId: delivery.jobId,
-        error: formatError(error),
+        error: delivery.kind === "image" || delivery.kind === "file"
+          ? "Outbound media delivery failed."
+          : formatError(error),
       });
       this.scheduleOutboxRetry(delivery.jobId, delivery.attempts);
       return false;

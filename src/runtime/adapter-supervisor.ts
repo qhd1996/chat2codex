@@ -1,4 +1,4 @@
-import type { ActionResponse } from "../core/actions.js";
+import type { ActionResponse, OutboundMediaInput } from "../core/actions.js";
 import type {
   AdapterEventHandler,
   AdapterId,
@@ -136,6 +136,21 @@ export class AdapterSupervisor {
     options?: DeliveryOptions,
   ): Promise<DeliveryResult> {
     return this.requireReadyAdapter(target.adapterId).sendView(target, view, options);
+  }
+
+  sendMedia(
+    target: ViewTarget,
+    input: OutboundMediaInput,
+    options?: DeliveryOptions,
+  ): Promise<DeliveryResult> {
+    const adapter = this.requireReadyAdapter(target.adapterId);
+    if (!adapter.sendMedia) {
+      return Promise.resolve({
+        status: "unsupported",
+        reason: `Adapter ${target.adapterId} does not support outbound media.`,
+      });
+    }
+    return adapter.sendMedia(target, Object.freeze({ ...input }), options);
   }
 
   updateView(handle: ViewHandle, view: ChatView): Promise<DeliveryResult> {
