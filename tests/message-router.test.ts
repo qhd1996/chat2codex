@@ -692,6 +692,36 @@ class ConcurrentTaskUserInputCodex implements CodexClient {
   }
 }
 
+class ConcurrentTaskPermissionApprovalCodex implements CodexClient {
+  readonly runs: CodexRunInput[] = [];
+  readonly decisions = new Map<string, CodexPermissionApprovalDecision | undefined>();
+
+  constructor(private readonly requestId: string) {}
+
+  async run(input: CodexRunInput): Promise<CodexRunResult> {
+    const taskId = input.sessionScope?.taskId;
+    if (!taskId) throw new Error("Task-scoped permission run omitted sessionScope.taskId.");
+    this.runs.push(input);
+    const threadId = `thread-${taskId}`;
+    const turnId = `turn-${taskId}`;
+    await input.onThreadBound?.(threadId);
+    input.onRunControl?.({ threadId, turnId });
+    const decision = await input.onPermissionApprovalRequest?.({
+      id: this.requestId,
+      cwd: input.cwd,
+      itemId: `item-${taskId}`,
+      permissions: { network: { enabled: true } },
+      startedAtMs: 1_750_000_000_000,
+      threadId,
+      turnId,
+      environmentId: null,
+      reason: `Release artifact for ${taskId}.`,
+    }, { signal: input.signal ?? new AbortController().signal });
+    this.decisions.set(taskId, decision);
+    return { threadId, finalText: "permission received", stderr: "", exitCode: 0 };
+  }
+}
+
 class SessionAwareCodex extends FakeCodex {
   readonly invalidations: Array<{ chatId: string; reason?: string }> = [];
   disposeCount = 0;
@@ -7674,6 +7704,129 @@ describe("MessageRouter access control", () => {
       expect(codex.responses.get(report.taskId)).toEqual({
         answers: { detail: { answers: [] } },
       });
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("same conversation pending permission approvals stay keyed to their task interaction", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-permission-"));
+    const workspaceRoots = {
+      work: path.join(tempDir, "Work"),
+      travel: path.join(tempDir, "Travel"),
+      personal: path.join(tempDir, "Personal"),
+      finance: path.join(tempDir, "Finance"),
+      ai_lab: path.join(tempDir, "AI-Lab"),
+      learning: path.join(tempDir, "Learning"),
+    };
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all(Object.values(workspaceRoots).map((root) => mkdir(root)));
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: workspaceRoots.work,
+        CODEX_MAX_CONCURRENT_RUNS: "2",
+        CODEX_MAX_APP_SERVER_SESSIONS: "2",
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(workspaceRoots),
+        BRIDGE_STATE_PATH: path.join(tempDir, "state.json"),
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "财报分析", workspaceKind: "finance" }, imageDisposition: "none", confidence: 1 }),
+      ]);
+      const sender = new CardCollectingSender();
+      const codex = new ConcurrentTaskPermissionApprovalCodex("shared-permission");
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(config.bridgeStatePath),
+        sender,
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces: await ExecutionWorkspaceService.create({
+            chat2codexHome: path.join(tempDir, "home"),
+            codexBin: config.codexBin,
+            sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+          }),
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+        },
+      );
+      await router.start();
+      const message = (messageId: string, text: string): IncomingTextMessage => ({
+        messageId, chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" }, text,
+      });
+
+      await router.accept(message("task-hotel-permission", "新建日本酒店任务"));
+      await router.accept(message("task-finance-permission", "新建财报分析任务"));
+      await waitFor(() => sender.permissionApprovalCards.length === 2);
+
+      const state = await new JsonStateStore(config.bridgeStatePath).load();
+      const hotel = Object.values(state.tasks).find((task) => task.title === "日本酒店")!;
+      const report = Object.values(state.tasks).find((task) => task.title === "财报分析")!;
+      const hotelCard = sender.permissionApprovalCards.find((card) =>
+        card.input.request.reason?.includes(hotel.taskId),
+      )!;
+      const reportCard = sender.permissionApprovalCards.find((card) =>
+        card.input.request.reason?.includes(report.taskId),
+      )!;
+
+      const missingTaskIdentity = await router.handleCardAction({
+        action: "resolve_permission_approval", chatId: "weixin-chat",
+        messageId: hotelCard.handle.messageId, requestId: "shared-permission", decision: "grantTurn",
+        sender: { openId: "ou_user" },
+      });
+      expect(missingTaskIdentity).toMatchObject({ kind: "toast", level: "warning" });
+      expect(codex.decisions.has(hotel.taskId)).toBe(false);
+
+      const wrongTaskIdentity = await router.handleCardAction({
+        action: "resolve_permission_approval", chatId: "weixin-chat",
+        messageId: hotelCard.handle.messageId, requestId: "shared-permission", decision: "grantTurn",
+        taskId: report.taskId, threadId: `thread-${report.taskId}`, turnId: `turn-${report.taskId}`,
+        sender: { openId: "ou_user" },
+      });
+      expect(wrongTaskIdentity).toMatchObject({ kind: "toast", level: "warning" });
+      expect(codex.decisions.has(hotel.taskId)).toBe(false);
+      expect(codex.decisions.has(report.taskId)).toBe(false);
+
+      const hotelResolved = await router.handleCardAction({
+        action: "resolve_permission_approval", chatId: "weixin-chat",
+        messageId: hotelCard.handle.messageId, requestId: "shared-permission", decision: "grantTurn",
+        taskId: hotel.taskId, threadId: `thread-${hotel.taskId}`, turnId: `turn-${hotel.taskId}`,
+        sender: { openId: "ou_user" },
+      });
+      expectReplacementView(hotelResolved, "permission_approval");
+      await waitFor(() => codex.decisions.get(hotel.taskId) === "grantTurn");
+      expect(codex.decisions.has(report.taskId)).toBe(false);
+
+      const reportResolved = await router.handleCardAction({
+        action: "resolve_permission_approval", chatId: "weixin-chat",
+        messageId: reportCard.handle.messageId, requestId: "shared-permission", decision: "deny",
+        taskId: report.taskId, threadId: `thread-${report.taskId}`, turnId: `turn-${report.taskId}`,
+        sender: { openId: "ou_user" },
+      });
+      expectReplacementView(reportResolved, "permission_approval");
+      await waitFor(() => codex.decisions.get(report.taskId) === "deny");
     } finally {
       await router?.dispose();
       await rm(tempDir, { recursive: true, force: true });

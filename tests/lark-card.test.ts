@@ -707,10 +707,13 @@ describe("Lark run status cards", () => {
   test("shows the complete normalized permission profile with three bounded decisions", () => {
     const card = buildPermissionApprovalCard({
       status: "pending",
+      taskId: "task_permission_1",
       updatedAt: "2026-07-20T13:00:00.000Z",
       request: {
         id: "permission_local_1",
         cwd: "/workspace/chat2codex",
+        threadId: "thread_permission_1",
+        turnId: "turn_permission_1",
         reason: "The tool needs an isolated package cache.",
         permissions: {
           network: { enabled: true },
@@ -752,18 +755,27 @@ describe("Lark run status cards", () => {
         app: runCardActionApp,
         action: resolvePermissionApprovalCardAction,
         requestId: "permission_local_1",
+        taskId: "task_permission_1",
+        threadId: "thread_permission_1",
+        turnId: "turn_permission_1",
         decision: "deny",
       },
       {
         app: runCardActionApp,
         action: resolvePermissionApprovalCardAction,
         requestId: "permission_local_1",
+        taskId: "task_permission_1",
+        threadId: "thread_permission_1",
+        turnId: "turn_permission_1",
         decision: "grantTurn",
       },
       {
         app: runCardActionApp,
         action: resolvePermissionApprovalCardAction,
         requestId: "permission_local_1",
+        taskId: "task_permission_1",
+        threadId: "thread_permission_1",
+        turnId: "turn_permission_1",
         decision: "grantSession",
       },
     ]);

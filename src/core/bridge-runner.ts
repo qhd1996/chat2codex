@@ -348,6 +348,8 @@ interface PendingUserInput {
 interface PendingPermissionApproval {
   key: string;
   chatId: string;
+  taskId?: string;
+  taskTitle?: string;
   originSender: SenderIdentity;
   request: CodexPermissionApprovalRequest;
   replyCode: string;
@@ -2028,6 +2030,7 @@ export class BridgeRunner {
             queuedRun.originSender,
             request,
             context.signal,
+            task,
           ),
         onRunControl: (control) => {
           runState.threadId = control.threadId ?? runState.threadId;
@@ -2357,7 +2360,7 @@ export class BridgeRunner {
       }
       await this.cancelApprovalsForChat(chatId);
       await this.cancelUserInputsForChat(chatId, task?.taskId);
-      await this.cancelPermissionApprovalsForChat(chatId);
+      await this.cancelPermissionApprovalsForChat(chatId, task?.taskId);
       await this.cancelMcpElicitationsForChat(chatId);
       if (this.activeRuns.get(runKey) === runState) {
         if (!this.disposed) {
@@ -4841,10 +4844,13 @@ export class BridgeRunner {
     if (!action.requestId || !isPermissionApprovalDecision(action.decision)) {
       return cardActionToast("warning", "无法处理权限请求：缺少请求上下文。");
     }
-    const pending = this.activePermissionApprovals.get(
-      interactiveRequestKey(action.chatId, action.requestId),
-    );
-    if (!pending) {
+    const taskKey = action.taskId && action.threadId && action.turnId
+      ? taskInteractionKey(action.taskId, action.threadId, action.turnId, action.requestId)
+      : null;
+    const pending = taskKey
+      ? this.activePermissionApprovals.get(taskKey)
+      : this.activePermissionApprovals.get(interactiveRequestKey(action.chatId, action.requestId));
+    if (!pending || pending.chatId !== action.chatId) {
       return cardActionToast("warning", "无法处理权限请求：请求已结束或已失效。");
     }
     if (!sameStableSenderIdentity(pending.originSender, action.sender)) {
@@ -4923,6 +4929,7 @@ export class BridgeRunner {
     originSender: SenderIdentity | undefined,
     request: CodexPermissionApprovalRequest,
     signal: AbortSignal,
+    task?: RegisteredTask,
   ): Promise<CodexPermissionApprovalDecision> {
     if (signal.aborted) {
       return "deny";
@@ -4934,7 +4941,9 @@ export class BridgeRunner {
       );
       return "deny";
     }
-    const key = interactiveRequestKey(chatId, request.id);
+    const key = task
+      ? taskInteractionKey(task.taskId, request.threadId, request.turnId, request.id)
+      : interactiveRequestKey(chatId, request.id);
     if (this.activePermissionApprovals.has(key)) {
       await this.sendUserInputTextSafely(
         chatId,
@@ -4959,6 +4968,8 @@ export class BridgeRunner {
       pending = {
         key,
         chatId,
+        taskId: task?.taskId,
+        taskTitle: task?.title,
         originSender: { ...originSender },
         request,
         replyCode: this.createInteractionReplyCode(),
@@ -5000,6 +5011,7 @@ export class BridgeRunner {
     pending.signal.removeEventListener("abort", pending.abortListener);
     const input: PermissionApprovalCardInput = {
       status,
+      ...(pending.taskId ? { taskId: pending.taskId } : {}),
       request: pending.request,
       ...(status === "resolved" || status === "declined" ? { decision } : {}),
       updatedAt: new Date().toISOString(),
@@ -5023,6 +5035,7 @@ export class BridgeRunner {
     try {
       const handle = await this.sender.createPermissionApprovalCard(pending.chatId, {
         status: "pending",
+        ...(pending.taskId ? { taskId: pending.taskId } : {}),
         request: pending.request,
         updatedAt: new Date().toISOString(),
       });
@@ -5063,9 +5076,13 @@ export class BridgeRunner {
     }
   }
 
-  private async cancelPermissionApprovalsForChat(chatId: string): Promise<void> {
+  private async cancelPermissionApprovalsForChat(chatId: string, taskId?: string): Promise<void> {
     for (const pending of [...this.activePermissionApprovals.values()]) {
-      if (pending.chatId !== chatId || this.activePermissionApprovals.get(pending.key) !== pending) {
+      if (
+        pending.chatId !== chatId
+        || (taskId && pending.taskId !== taskId)
+        || this.activePermissionApprovals.get(pending.key) !== pending
+      ) {
         continue;
       }
       const input = this.finishPendingPermissionApproval(pending, "cancelled", "deny");
@@ -8236,7 +8253,7 @@ function formatApprovalTextPrompt(pending: PendingApproval): string {
 function formatPermissionApprovalTextPrompt(
   pending: PendingPermissionApproval,
 ): string {
-  return [
+  const text = [
     "Codex 额外权限请求",
     [
       "【请求】",
@@ -8252,6 +8269,9 @@ function formatPermissionApprovalTextPrompt(
     ].join("\n"),
     "只有发起当前 Codex 任务的用户可以处理；请求结束后回复码立即失效。",
   ].filter((section): section is string => Boolean(section)).join("\n\n");
+  return pending.taskId
+    ? prefixTaskMessage({ taskId: pending.taskId, title: pending.taskTitle ?? pending.taskId }, text)
+    : text;
 }
 
 function approvalTextDecisionLabel(decision: CodexApprovalDecision): string {

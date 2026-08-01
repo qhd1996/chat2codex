@@ -538,7 +538,7 @@ export function buildPermissionApprovalCard(
   ];
 
   if (input.status === "pending" && hasBoundedLocalRequestId(input.request.id)) {
-    elements.push(permissionApprovalActions(input.request.id, Boolean(disclosureIssue)));
+    elements.push(permissionApprovalActions(input, Boolean(disclosureIssue)));
   }
   elements.push({
     tag: "note",
@@ -1133,7 +1133,7 @@ function validateFileSystemPermissionPath(value: unknown): boolean {
 }
 
 function permissionApprovalActions(
-  requestId: string,
+  input: PermissionApprovalCardInput,
   grantActionsDisabled: boolean,
 ): Record<string, unknown> {
   const decisions: PermissionApprovalCardDecision[] = grantActionsDisabled
@@ -1148,7 +1148,10 @@ function permissionApprovalActions(
       value: {
         app: runCardActionApp,
         action: resolvePermissionApprovalCardAction,
-        requestId,
+        requestId: input.request.id,
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.request.threadId ? { threadId: input.request.threadId } : {}),
+        ...(input.request.turnId ? { turnId: input.request.turnId } : {}),
         decision,
       },
       confirm: {

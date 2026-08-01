@@ -75,6 +75,7 @@ export type PermissionApprovalViewRequest = Pick<
 
 export interface PermissionApprovalViewInput {
   status: PermissionApprovalViewStatus;
+  taskId?: string;
   request: PermissionApprovalViewRequest;
   decision?: CodexPermissionApprovalDecision;
   updatedAt: string;
