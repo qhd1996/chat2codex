@@ -1244,7 +1244,7 @@ function buildMcpUrlElements(
     });
   }
   if (input.status === "pending" && hasBoundedLocalRequestId(input.request.id)) {
-    elements.push(mcpUrlActions(input.request.id, safeUrl));
+    elements.push(mcpUrlActions(input, safeUrl));
   }
   elements.push(mcpElicitationNote(input.status, disclosureIssue));
 }
@@ -1310,7 +1310,7 @@ function buildMcpFormElements(
       form.fields
         .filter((fieldView) => fieldView.required)
         .every((fieldView) => answered.has(fieldView.id));
-    elements.push(mcpResolveActions(input.request.id, canAccept));
+    elements.push(mcpResolveActions(input, canAccept));
   }
   elements.push(mcpElicitationNote(input.status, disclosureIssue));
 }
@@ -1367,7 +1367,7 @@ function mcpUrlDisclosureIssue(value: unknown): string | null {
   }
 }
 
-function mcpUrlActions(requestId: string, url: string | null): Record<string, unknown> {
+function mcpUrlActions(input: McpElicitationCardInput, url: string | null): Record<string, unknown> {
   const actions: Array<Record<string, unknown>> = [];
   if (url) {
     actions.push({
@@ -1376,26 +1376,26 @@ function mcpUrlActions(requestId: string, url: string | null): Record<string, un
       type: "default",
       url,
     });
-    actions.push(mcpResolveButton(requestId, "accept", "Accept", "primary"));
+    actions.push(mcpResolveButton(input, "accept", "Accept", "primary"));
   }
-  actions.push(mcpResolveButton(requestId, "decline", "Decline", "danger"));
-  actions.push(mcpResolveButton(requestId, "cancel", "Cancel", "default"));
+  actions.push(mcpResolveButton(input, "decline", "Decline", "danger"));
+  actions.push(mcpResolveButton(input, "cancel", "Cancel", "default"));
   return { tag: "action", actions };
 }
 
-function mcpResolveActions(requestId: string, canAccept: boolean): Record<string, unknown> {
+function mcpResolveActions(input: McpElicitationCardInput, canAccept: boolean): Record<string, unknown> {
   return {
     tag: "action",
     actions: [
-      ...(canAccept ? [mcpResolveButton(requestId, "accept", "Submit", "primary")] : []),
-      mcpResolveButton(requestId, "decline", "Decline", "danger"),
-      mcpResolveButton(requestId, "cancel", "Cancel", "default"),
+      ...(canAccept ? [mcpResolveButton(input, "accept", "Submit", "primary")] : []),
+      mcpResolveButton(input, "decline", "Decline", "danger"),
+      mcpResolveButton(input, "cancel", "Cancel", "default"),
     ],
   };
 }
 
 function mcpResolveButton(
-  requestId: string,
+  input: McpElicitationCardInput,
   decision: Exclude<McpElicitationCardDecision, "skip">,
   label: string,
   type: string,
@@ -1407,7 +1407,7 @@ function mcpResolveButton(
     value: {
       app: runCardActionApp,
       action: resolveMcpElicitationCardAction,
-      requestId,
+      ...mcpActionIdentity(input),
       decision,
     },
   };
@@ -1443,7 +1443,7 @@ function mcpFieldInputActions(
         value: {
           app: runCardActionApp,
           action: answerMcpElicitationCardAction,
-          requestId: input.request.id,
+          ...mcpActionIdentity(input),
           fieldId: fieldView.id,
           optionIndex,
         },
@@ -1457,13 +1457,26 @@ function mcpFieldInputActions(
       value: {
         app: runCardActionApp,
         action: answerMcpElicitationCardAction,
-        requestId: input.request.id,
+        ...mcpActionIdentity(input),
         fieldId: fieldView.id,
         decision: "skip",
       },
     });
   }
   return actions.length ? { tag: "action", actions } : null;
+}
+
+function mcpActionIdentity(input: McpElicitationCardInput): Record<string, string> {
+  return {
+    requestId: input.request.id,
+    ...(input.taskId
+      ? {
+          taskId: input.taskId,
+          threadId: input.request.threadId,
+          turnId: input.request.turnId ?? "unbound-turn",
+        }
+      : {}),
+  };
 }
 
 function mcpFieldReplyGuidance(

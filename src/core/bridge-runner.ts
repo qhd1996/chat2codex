@@ -364,6 +364,8 @@ interface PendingPermissionApproval {
 interface PendingMcpElicitation {
   key: string;
   chatId: string;
+  taskId?: string;
+  taskTitle?: string;
   originSender: SenderIdentity;
   request: CodexMcpElicitationRequest;
   replyCode: string;
@@ -2023,6 +2025,7 @@ export class BridgeRunner {
             queuedRun.originSender,
             request,
             context.signal,
+            task,
           ),
         onPermissionApprovalRequest: (request, context) =>
           this.requestPermissionApproval(
@@ -2361,7 +2364,7 @@ export class BridgeRunner {
       await this.cancelApprovalsForChat(chatId);
       await this.cancelUserInputsForChat(chatId, task?.taskId);
       await this.cancelPermissionApprovalsForChat(chatId, task?.taskId);
-      await this.cancelMcpElicitationsForChat(chatId);
+      await this.cancelMcpElicitationsForChat(chatId, task?.taskId);
       if (this.activeRuns.get(runKey) === runState) {
         if (!this.disposed) {
           await this.reportUnsentPendingSteers(chatId, runState);
@@ -5096,10 +5099,13 @@ export class BridgeRunner {
     if (!action.requestId) {
       return cardActionToast("warning", "无法处理 MCP 请求：缺少请求上下文。");
     }
-    const pending = this.activeMcpElicitations.get(
-      interactiveRequestKey(action.chatId, action.requestId),
-    );
-    if (!pending) {
+    const taskKey = action.taskId && action.threadId && action.turnId
+      ? taskInteractionKey(action.taskId, action.threadId, action.turnId, action.requestId)
+      : null;
+    const pending = taskKey
+      ? this.activeMcpElicitations.get(taskKey)
+      : this.activeMcpElicitations.get(interactiveRequestKey(action.chatId, action.requestId));
+    if (!pending || pending.chatId !== action.chatId) {
       return cardActionToast("warning", "无法处理 MCP 请求：请求已结束或已失效。");
     }
     if (!sameStableSenderIdentity(pending.originSender, action.sender)) {
@@ -5172,6 +5178,7 @@ export class BridgeRunner {
     originSender: SenderIdentity | undefined,
     request: CodexMcpElicitationRequest,
     signal: AbortSignal,
+    task?: RegisteredTask,
   ): Promise<CodexMcpElicitationResponse> {
     if (signal.aborted) {
       return { action: "cancel" };
@@ -5193,7 +5200,9 @@ export class BridgeRunner {
       );
       return { action: "cancel" };
     }
-    const key = interactiveRequestKey(chatId, request.id);
+    const key = task
+      ? taskInteractionKey(task.taskId, request.threadId, request.turnId ?? "unbound-turn", request.id)
+      : interactiveRequestKey(chatId, request.id);
     if (this.activeMcpElicitations.has(key)) {
       await this.sendUserInputTextSafely(
         chatId,
@@ -5222,6 +5231,8 @@ export class BridgeRunner {
       pending = {
         key,
         chatId,
+        taskId: task?.taskId,
+        taskTitle: task?.title,
         originSender: { ...originSender },
         request,
         replyCode: this.createInteractionReplyCode(),
@@ -5394,6 +5405,7 @@ export class BridgeRunner {
   ): McpElicitationCardInput {
     return {
       status,
+      ...(pending.taskId ? { taskId: pending.taskId } : {}),
       request: pending.request,
       updatedAt: new Date().toISOString(),
       ...(pending.request.mode === "form" ? { replyCode: pending.replyCode } : {}),
@@ -5474,9 +5486,13 @@ export class BridgeRunner {
     }
   }
 
-  private async cancelMcpElicitationsForChat(chatId: string): Promise<void> {
+  private async cancelMcpElicitationsForChat(chatId: string, taskId?: string): Promise<void> {
     for (const pending of [...this.activeMcpElicitations.values()]) {
-      if (pending.chatId !== chatId || this.activeMcpElicitations.get(pending.key) !== pending) {
+      if (
+        pending.chatId !== chatId
+        || (taskId && pending.taskId !== taskId)
+        || this.activeMcpElicitations.get(pending.key) !== pending
+      ) {
         continue;
       }
       const input = this.finishPendingMcpElicitation(
@@ -8153,7 +8169,7 @@ function formatMcpTextPrompt(pending: PendingMcpElicitation): string {
       : !sensitive && field.type === "boolean"
         ? ["• true", "• false"]
         : [];
-  return [
+  const text = [
     "Codex 结构化输入",
     [
       "【问题】",
@@ -8178,13 +8194,16 @@ function formatMcpTextPrompt(pending: PendingMcpElicitation): string {
       : null,
     "回答内容不会在聊天中回显，也不会写入 Chat2Codex 持久化状态。",
   ].filter((section): section is string => Boolean(section)).join("\n\n");
+  return pending.taskId
+    ? prefixTaskMessage({ taskId: pending.taskId, title: pending.taskTitle ?? pending.taskId }, text)
+    : text;
 }
 
 function formatMcpUrlTextPrompt(pending: PendingMcpElicitation): string {
   if (pending.request.mode !== "url") {
     return formatMcpTextPrompt(pending);
   }
-  return [
+  const text = [
     "Codex MCP 请求",
     [
       "【请求】",
@@ -8200,6 +8219,9 @@ function formatMcpUrlTextPrompt(pending: PendingMcpElicitation): string {
     ].join("\n"),
     "只有发起当前 Codex 任务的用户可以处理，回复码在请求结束后立即失效。",
   ].join("\n\n");
+  return pending.taskId
+    ? prefixTaskMessage({ taskId: pending.taskId, title: pending.taskTitle ?? pending.taskId }, text)
+    : text;
 }
 
 function formatApprovalTextPrompt(pending: PendingApproval): string {

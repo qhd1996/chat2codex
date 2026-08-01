@@ -1011,6 +1011,54 @@ describe("Lark run status cards", () => {
     ).toBe("production");
   });
 
+  test("binds MCP card actions to the task interaction identity", () => {
+    const card = buildMcpElicitationCard({
+      status: "pending",
+      taskId: "task-release",
+      updatedAt: "2026-07-20T13:05:00.000Z",
+      request: {
+        id: "shared-mcp",
+        serverName: "oauth-server",
+        threadId: "thread-release",
+        turnId: "turn-release",
+        message: "Authorize release access.",
+        mode: "url",
+        elicitationId: "elicitation-release",
+        url: "https://example.com/authorize",
+      },
+    });
+
+    expect(cardActionValues(card).filter((value) => value.action === resolveMcpElicitationCardAction)).toEqual([
+      {
+        app: runCardActionApp,
+        action: resolveMcpElicitationCardAction,
+        requestId: "shared-mcp",
+        taskId: "task-release",
+        threadId: "thread-release",
+        turnId: "turn-release",
+        decision: "accept",
+      },
+      {
+        app: runCardActionApp,
+        action: resolveMcpElicitationCardAction,
+        requestId: "shared-mcp",
+        taskId: "task-release",
+        threadId: "thread-release",
+        turnId: "turn-release",
+        decision: "decline",
+      },
+      {
+        app: runCardActionApp,
+        action: resolveMcpElicitationCardAction,
+        requestId: "shared-mcp",
+        taskId: "task-release",
+        threadId: "thread-release",
+        turnId: "turn-release",
+        decision: "cancel",
+      },
+    ]);
+  });
+
   test("offers typed MCP guidance and submit only after required fields are answered", () => {
     const request = {
       id: "mcp_local_2",

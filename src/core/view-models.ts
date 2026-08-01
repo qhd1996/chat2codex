@@ -85,6 +85,7 @@ export type McpElicitationViewRequest = CodexMcpElicitationRequest;
 
 export interface McpElicitationViewInput {
   status: McpElicitationViewStatus;
+  taskId?: string;
   request: McpElicitationViewRequest;
   updatedAt: string;
   replyCode?: string;

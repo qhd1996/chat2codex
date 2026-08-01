@@ -284,6 +284,9 @@ describe("Lark card action adaptation", () => {
           app: "chat2codex",
           action: answerMcpElicitationCardAction,
           requestId: "mcp_local_1",
+          taskId: "task_mcp_1",
+          threadId: "thread_mcp_1",
+          turnId: "turn_mcp_1",
           fieldId: "environment",
           optionIndex: 1,
           answer: "production",
@@ -298,6 +301,9 @@ describe("Lark card action adaptation", () => {
           app: "chat2codex",
           action: resolveMcpElicitationCardAction,
           requestId: "mcp_local_1",
+          taskId: "task_mcp_1",
+          threadId: "thread_mcp_1",
+          turnId: "turn_mcp_1",
           decision: "decline",
           url: "https://must-not-be-forwarded.example",
         },
@@ -307,6 +313,9 @@ describe("Lark card action adaptation", () => {
     expect(option).toMatchObject({
       action: answerMcpElicitationCardAction,
       requestId: "mcp_local_1",
+      taskId: "task_mcp_1",
+      threadId: "thread_mcp_1",
+      turnId: "turn_mcp_1",
       fieldId: "environment",
       optionIndex: 1,
     });
@@ -314,6 +323,9 @@ describe("Lark card action adaptation", () => {
     expect(resolution).toMatchObject({
       action: resolveMcpElicitationCardAction,
       requestId: "mcp_local_1",
+      taskId: "task_mcp_1",
+      threadId: "thread_mcp_1",
+      turnId: "turn_mcp_1",
       decision: "decline",
     });
     expect(resolution).not.toHaveProperty("url");
