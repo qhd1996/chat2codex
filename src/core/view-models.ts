@@ -55,6 +55,7 @@ export interface ApprovalViewInput {
 
 export interface UserInputViewInput {
   status: UserInputViewStatus;
+  taskId?: string;
   request: CodexUserInputRequest;
   replyCode: string;
   answers?: CodexUserInputResponse["answers"];

@@ -54,6 +54,9 @@ export interface IncomingCardAction {
   approvalId?: string;
   decisionIndex?: number;
   userInputId?: string;
+  taskId?: string;
+  threadId?: string;
+  turnId?: string;
   questionId?: string;
   optionIndex?: number;
   requestId?: string;
@@ -141,6 +144,9 @@ export function adaptLarkCardActionEvent(event: unknown): IncomingCardAction | n
     approvalId: getString(value, "approvalId"),
     decisionIndex: getNumber(value, "decisionIndex"),
     userInputId: getString(value, "userInputId"),
+    taskId: getBoundedString(value, "taskId", 128),
+    threadId: getBoundedString(value, "threadId", 128),
+    turnId: getBoundedString(value, "turnId", 128),
     questionId: getString(value, "questionId"),
     optionIndex: getBoundedIndex(value, "optionIndex", 9),
     requestId: getBoundedString(value, "requestId", 128),

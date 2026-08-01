@@ -452,7 +452,7 @@ export function buildUserInputCard(input: UserInputCardInput): LarkInteractiveCa
       });
     }
     if (buttonOptions.length > 0) {
-      elements.push(userInputOptionActions(input.request.id, question.id, buttonOptions));
+      elements.push(userInputOptionActions(input, question.id, buttonOptions));
     }
 
     if (
@@ -474,7 +474,7 @@ export function buildUserInputCard(input: UserInputCardInput): LarkInteractiveCa
       });
     }
 
-    elements.push(userInputControlActions(input.request.id, question.id));
+    elements.push(userInputControlActions(input, question.id));
   }
 
   elements.push({
@@ -880,7 +880,7 @@ function approvalActionElement(
 }
 
 function userInputOptionActions(
-  userInputId: string,
+  input: UserInputCardInput,
   questionId: string,
   options: Array<{ label: string }>,
 ): Record<string, unknown> {
@@ -893,7 +893,7 @@ function userInputOptionActions(
       value: {
         app: runCardActionApp,
         action: answerUserInputCardAction,
-        userInputId,
+        ...userInputActionIdentity(input),
         questionId,
         optionIndex,
       },
@@ -901,7 +901,7 @@ function userInputOptionActions(
   };
 }
 
-function userInputControlActions(userInputId: string, questionId: string): Record<string, unknown> {
+function userInputControlActions(input: UserInputCardInput, questionId: string): Record<string, unknown> {
   return {
     tag: "action",
     actions: [
@@ -912,7 +912,7 @@ function userInputControlActions(userInputId: string, questionId: string): Recor
         value: {
           app: runCardActionApp,
           action: answerUserInputCardAction,
-          userInputId,
+          ...userInputActionIdentity(input),
           questionId,
         },
       },
@@ -923,10 +923,19 @@ function userInputControlActions(userInputId: string, questionId: string): Recor
         value: {
           app: runCardActionApp,
           action: cancelUserInputCardAction,
-          userInputId,
+          ...userInputActionIdentity(input),
         },
       },
     ],
+  };
+}
+
+function userInputActionIdentity(input: UserInputCardInput): Record<string, string> {
+  return {
+    userInputId: input.request.id,
+    ...(input.taskId ? { taskId: input.taskId } : {}),
+    threadId: input.request.threadId,
+    turnId: input.request.turnId,
   };
 }
 

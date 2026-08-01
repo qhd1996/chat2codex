@@ -45,6 +45,9 @@ export interface IncomingAction {
   approvalId?: string;
   decisionIndex?: number;
   userInputId?: string;
+  taskId?: string;
+  threadId?: string;
+  turnId?: string;
   questionId?: string;
   optionIndex?: number;
   requestId?: string;

@@ -331,6 +331,8 @@ interface GlobalRunWaiter {
 interface PendingUserInput {
   key: string;
   chatId: string;
+  taskId?: string;
+  taskTitle?: string;
   chatType: ChatType;
   originSender: SenderIdentity;
   request: CodexUserInputRequest;
@@ -2011,6 +2013,7 @@ export class BridgeRunner {
             queuedRun.originSender,
             request,
             context.signal,
+            task,
           ),
         onMcpElicitationRequest: (request, context) =>
           this.requestMcpElicitation(
@@ -2353,7 +2356,7 @@ export class BridgeRunner {
         clearTimeout(runState.timeoutTimer);
       }
       await this.cancelApprovalsForChat(chatId);
-      await this.cancelUserInputsForChat(chatId);
+      await this.cancelUserInputsForChat(chatId, task?.taskId);
       await this.cancelPermissionApprovalsForChat(chatId);
       await this.cancelMcpElicitationsForChat(chatId);
       if (this.activeRuns.get(runKey) === runState) {
@@ -4492,21 +4495,21 @@ export class BridgeRunner {
     if (!action.userInputId) {
       return cardActionToast("warning", "无法处理输入请求：缺少请求上下文。");
     }
-    const pending = this.activeUserInputs.get(userInputKey(action.chatId, action.userInputId));
-    if (!pending) {
+    const taskKey = action.taskId && action.threadId && action.turnId
+      ? taskInteractionKey(action.taskId, action.threadId, action.turnId, action.userInputId)
+      : null;
+    const pending = taskKey
+      ? this.activeUserInputs.get(taskKey)
+      : this.activeUserInputs.get(userInputKey(action.chatId, action.userInputId));
+    if (!pending || pending.chatId !== action.chatId) {
       return cardActionToast("warning", "无法处理输入请求：请求已结束或已失效。");
+    }
+    if (!pending.handle || !action.messageId || pending.handle.messageId !== action.messageId) {
+      return cardActionToast("warning", "无法处理输入请求：卡片上下文不匹配。");
     }
     if (!sameStableSenderIdentity(pending.originSender, action.sender)) {
       return cardActionToast("error", "只有发起当前 Codex 任务的用户可以回答这条输入请求。");
     }
-    if (
-      !pending.handle ||
-      !action.messageId ||
-      action.messageId !== pending.handle.messageId
-    ) {
-      return cardActionToast("warning", "无法处理输入请求：卡片上下文不匹配。");
-    }
-
     if (action.action === cancelUserInputCardAction) {
       const input = this.finishPendingUserInput(pending, "cancelled", { answers: {} });
       await this.updateUserInputCard(pending.handle, input);
@@ -4544,6 +4547,7 @@ export class BridgeRunner {
     originSender: SenderIdentity | undefined,
     request: CodexUserInputRequest,
     signal: AbortSignal,
+    task?: RegisteredTask,
   ): Promise<CodexUserInputResponse> {
     if (signal.aborted || request.questions.length === 0) {
       return { answers: {} };
@@ -4563,7 +4567,9 @@ export class BridgeRunner {
       return { answers: {} };
     }
 
-    const key = userInputKey(chatId, request.id);
+    const key = task
+      ? taskInteractionKey(task.taskId, request.threadId, request.turnId, request.id)
+      : userInputKey(chatId, request.id);
     if (this.activeUserInputs.has(key)) {
       await this.sendUserInputTextSafely(
         chatId,
@@ -4588,6 +4594,8 @@ export class BridgeRunner {
       pending = {
         key,
         chatId,
+        taskId: task?.taskId,
+        taskTitle: task?.title,
         chatType,
         originSender: { ...originSender },
         request,
@@ -4713,6 +4721,7 @@ export class BridgeRunner {
   ): UserInputCardInput {
     return {
       status,
+      ...(pending.taskId ? { taskId: pending.taskId } : {}),
       request: pending.request,
       replyCode: pending.replyCode,
       ...(status === "pending" || status === "resolved"
@@ -4796,9 +4805,11 @@ export class BridgeRunner {
     }
   }
 
-  private async cancelUserInputsForChat(chatId: string): Promise<void> {
+  private async cancelUserInputsForChat(chatId: string, taskId?: string): Promise<void> {
     const pending = [...this.activeUserInputs.values()].filter(
-      (request) => request.chatId === chatId,
+      (request) =>
+        request.chatId === chatId
+        && (!taskId || request.taskId === taskId),
     );
     for (const request of pending) {
       if (this.activeUserInputs.get(request.key) !== request) {
@@ -8364,7 +8375,7 @@ function formatUserInputTextPrompt(pending: PendingUserInput): string {
     return "这条 Codex 用户输入请求已经结束。";
   }
   const options = (question.options ?? []).slice(0, 10);
-  return [
+  const text = [
     "Codex 补充输入",
     [
       "【问题】",
@@ -8383,6 +8394,9 @@ function formatUserInputTextPrompt(pending: PendingUserInput): string {
       : null,
     "回答内容不会在聊天中回显，也不会写入 Chat2Codex 持久化状态。",
   ].filter((section): section is string => Boolean(section)).join("\n\n");
+  return pending.taskId
+    ? prefixTaskMessage({ taskId: pending.taskId, title: pending.taskTitle ?? pending.taskId }, text)
+    : text;
 }
 
 function detailCommandKind(message: IncomingTextMessage): RunDetailKind | null {

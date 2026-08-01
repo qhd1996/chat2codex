@@ -472,6 +472,7 @@ describe("Lark run status cards", () => {
   test("builds requestUserInput option buttons for the first unanswered question", () => {
     const card = buildUserInputCard({
       status: "pending",
+      taskId: "task_1",
       replyCode: "R7K2M9",
       updatedAt: "2026-07-20T12:00:00.000Z",
       answers: {
@@ -520,6 +521,9 @@ describe("Lark run status cards", () => {
       app: runCardActionApp,
       action: answerUserInputCardAction,
       userInputId: "user_input_1",
+      taskId: "task_1",
+      threadId: "thread_1",
+      turnId: "turn_1",
       questionId: "mode",
       optionIndex: 0,
     });
@@ -527,6 +531,9 @@ describe("Lark run status cards", () => {
       app: runCardActionApp,
       action: answerUserInputCardAction,
       userInputId: "user_input_1",
+      taskId: "task_1",
+      threadId: "thread_1",
+      turnId: "turn_1",
       questionId: "mode",
       optionIndex: 1,
     });
@@ -534,12 +541,18 @@ describe("Lark run status cards", () => {
       app: runCardActionApp,
       action: answerUserInputCardAction,
       userInputId: "user_input_1",
+      taskId: "task_1",
+      threadId: "thread_1",
+      turnId: "turn_1",
       questionId: "mode",
     });
     expect(actions).toContainEqual({
       app: runCardActionApp,
       action: cancelUserInputCardAction,
       userInputId: "user_input_1",
+      taskId: "task_1",
+      threadId: "thread_1",
+      turnId: "turn_1",
     });
     expect(actions.every((value) => !("label" in value) && !("answer" in value))).toBe(true);
   });
@@ -582,6 +595,8 @@ describe("Lark run status cards", () => {
         app: runCardActionApp,
         action: answerUserInputCardAction,
         userInputId: `user_input_${question.id}`,
+        threadId: "thread_1",
+        turnId: "turn_1",
         questionId: question.id,
       });
     }
