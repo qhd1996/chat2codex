@@ -204,6 +204,7 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
   );
   const workspaceRoutes = parseWorkspaceRoutes(parsed.CHAT2CODEX_WORKSPACE_ROUTES, codexWorkdir);
   return {
+    chat2codexHome: home,
     chatAdapter: parsed.CHAT2CODEX_ADAPTER,
     feishuAppId: parsed.FEISHU_APP_ID?.trim() ?? "",
     feishuAppSecret: parsed.FEISHU_APP_SECRET?.trim() ?? "",

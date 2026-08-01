@@ -17,6 +17,7 @@ describe("loadConfig", () => {
     });
 
     expect(config.chatAdapter).toBe("weixin");
+    expect(config.chat2codexHome).toBe(path.resolve("/tmp/chat2codex-weixin-home"));
     expect(config.feishuAppId).toBe("");
     expect(config.feishuAppSecret).toBe("");
     expect(config.weixinCredentialsPath).toBe(
@@ -188,6 +189,7 @@ describe("loadConfig", () => {
       allowedChatIds: [],
       allowedUserIds: [],
     });
+    expect(config.chat2codexHome).toBe(path.resolve("/tmp/chat2codex-home"));
     expect(config.attachmentDownloadDir).toBe(path.resolve("/tmp/chat2codex-home/attachments"));
     expect(config.bridgeStatePath).toBe(path.resolve("/tmp/chat2codex-home/state.json"));
     expect(config.codexApprovalPolicy).toBe("never");
