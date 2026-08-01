@@ -12,4 +12,34 @@ describe("natural task routing", () => {
     await resolveNaturalTaskDecision({ ...input, text: "x".repeat(10000), candidates: Array.from({ length: 20 }, (_, index) => ({ ...input.candidates[0]!, taskId: "tsk_" + index, title: "t".repeat(500), aliases: ["a".repeat(500)], objectiveSummary: "o".repeat(2000), recentRequests: ["r".repeat(1000)] })) }, capture, 0.78);
     expect(received).toBeDefined(); expect(JSON.stringify(received).length).toBeLessThanOrEqual(16 * 1024); expect(received!.candidates.length).toBeLessThanOrEqual(12);
   });
+  test("preserves valid execution intent on task creation", async () => {
+    for (const executionIntent of ["general", "output_only"] as const) {
+      const decision = await resolveNaturalTaskDecision(
+        input,
+        classifier({
+          action: {
+            kind: "create_task",
+            instruction: "生成一份新报告",
+            workspaceKind: "work",
+            executionIntent,
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+        0.78,
+      );
+
+      expect(decision.action).toMatchObject({ kind: "create_task", executionIntent });
+    }
+  });
+  test("fails closed for invalid or misplaced execution intent", async () => {
+    const decisions = [
+      { action: { kind: "create_task", instruction: "生成报告", executionIntent: "read_only" }, imageDisposition: "none", confidence: 1 },
+      { action: { kind: "continue_task", taskId: "tsk_hotel", instruction: "继续", executionIntent: "output_only" }, imageDisposition: "none", confidence: 1 },
+    ];
+
+    for (const decision of decisions) {
+      expect((await resolveNaturalTaskDecision(input, classifier(decision), 0.78)).action.kind).toBe("clarify");
+    }
+  });
 });

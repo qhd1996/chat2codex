@@ -46,4 +46,41 @@ describe("OpenAiIntentClassifier", () => {
     expect(f.received()).toContain("tsk_1");
     expect(f.received()).not.toMatch(/authorization|token|secret|replyCode/i);
   });
+
+  test("preserves execution intent and constrains output-only classification", async () => {
+    const f = await fixture(() => ({
+      body: JSON.stringify({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              action: {
+                kind: "create_task",
+                instruction: "生成一份新报告",
+                workspaceKind: "work",
+                executionIntent: "output_only",
+              },
+              imageDisposition: "none",
+              confidence: 0.98,
+            }),
+          },
+        }],
+      }),
+    }));
+    const client = new OpenAiIntentClassifier({ baseUrl: f.baseUrl, model: "intent", timeoutMs: 1000 });
+
+    expect(await client.classifyTask({
+      text: "只生成一份新的报告，不修改工作区已有文件",
+      conversationId: "wx",
+      candidates: [],
+      workspaces: [{ kind: "work", root: "C:\\Work", aliases: ["工作"] }],
+      pendingImageCount: 0,
+      pendingInteractions: [],
+    })).toMatchObject({ action: { kind: "create_task", executionIntent: "output_only" } });
+
+    const request = JSON.parse(f.received()) as { messages: Array<{ role: string; content: string }> };
+    const systemPrompt = request.messages.find((message) => message.role === "system")?.content;
+    expect(systemPrompt).toContain("executionIntent=output_only");
+    expect(systemPrompt).toContain("explicitly requests creating new deliverables without modifying existing workspace files");
+    expect(systemPrompt).toContain("otherwise use general");
+  });
 });

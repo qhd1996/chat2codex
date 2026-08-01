@@ -1,7 +1,7 @@
 import type { WorkspaceKind } from "../state/types.js";
 
 export type CommandAction =
-  | { kind: "create_task"; instruction: string; workspaceKind?: WorkspaceKind; explicitPath?: string; collaborationMode?: "default" | "plan" }
+  | { kind: "create_task"; instruction: string; workspaceKind?: WorkspaceKind; explicitPath?: string; collaborationMode?: "default" | "plan"; executionIntent?: "general" | "output_only" }
   | { kind: "continue_task" | "steer_task"; taskId?: string; instruction: string }
   | { kind: "stop_task" | "inspect_task" | "retry_task" | "archive_task" | "compact_task" | "reset_task"; taskId?: string }
   | { kind: "resume_task" | "fork_task"; taskId?: string; selector?: string; threadId?: string; turnId?: string }

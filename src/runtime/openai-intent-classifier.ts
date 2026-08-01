@@ -58,6 +58,7 @@ const taskClassifierPrompt = [
   "Classify one Chinese mobile message for a multi-task coding-agent bridge.",
   "Return strict JSON only: {action,imageDisposition,confidence}.",
   "Choose only supplied task and pending-interaction ids. Never invent approval, permission, path, or output data.",
+  "For create_task set executionIntent=output_only only when the user explicitly requests creating new deliverables without modifying existing workspace files; otherwise use general.",
   "When the target or image ownership is ambiguous, return action.kind clarify with one short Chinese question.",
 ].join(" " );
 

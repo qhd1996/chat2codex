@@ -18,7 +18,7 @@ const actionKeys: Record<string, ReadonlySet<string>> = Object.fromEntries([
   ...["resume_task","fork_task"].map((kind) => [kind, new Set(["kind","taskId","selector","threadId","turnId"])]),
   ...["approve","deny","grant_turn","grant_session"].map((kind) => [kind, new Set(["kind","taskId","requestId","replyCode","option"])]),
   ...["answer_user_input","answer_mcp_field","decide_mcp_url"].map((kind) => [kind, new Set(["kind","taskId","requestId","replyCode","value"])]),
-  ["create_task", new Set(["kind","instruction","workspaceKind","explicitPath","collaborationMode"])], ["discard_images", new Set(["kind","conversationId","senderKey"])], ["submit_images", new Set(["kind","taskId","instruction"])], ["show_history", new Set(["kind","selector"])], ["select_project", new Set(["kind","selector"])], ["search_threads", new Set(["kind","query"])], ["unarchive_thread", new Set(["kind","selector"])], ["clarify", new Set(["kind","question","candidateTaskIds"])],
+  ["create_task", new Set(["kind","instruction","workspaceKind","explicitPath","collaborationMode","executionIntent"])], ["discard_images", new Set(["kind","conversationId","senderKey"])], ["submit_images", new Set(["kind","taskId","instruction"])], ["show_history", new Set(["kind","selector"])], ["select_project", new Set(["kind","selector"])], ["search_threads", new Set(["kind","query"])], ["unarchive_thread", new Set(["kind","selector"])], ["clarify", new Set(["kind","question","candidateTaskIds"])],
 ]);
 
 export async function resolveNaturalTaskDecision(input: NaturalTaskRoutingInput, classifier: NaturalTaskClassifier, minimumConfidence: number, signal?: AbortSignal): Promise<NaturalTaskDecision> {
@@ -36,6 +36,7 @@ function validateAction(value: Record<string, unknown>, input: NaturalTaskRoutin
   if (typeof value.kind !== "string") return null; const kind = value.kind; const allowed = actionKeys[kind]; if (!allowed || Object.keys(value).some((key) => !allowed.has(key))) return null; const taskId = typeof value.taskId === "string" ? value.taskId : undefined; const requestId = typeof value.requestId === "string" ? value.requestId : undefined;
   for (const key of ["taskId","requestId","instruction","selector","query","replyCode","option","value","conversationId","senderKey","explicitPath","threadId","turnId","question"]) if (value[key] !== undefined && typeof value[key] !== "string") return null;
   if (value.workspaceKind !== undefined && typeof value.workspaceKind !== "string") return null; if (value.collaborationMode !== undefined && value.collaborationMode !== "default" && value.collaborationMode !== "plan") return null;
+  if (value.executionIntent !== undefined && value.executionIntent !== "general" && value.executionIntent !== "output_only") return null;
   if (taskId && !input.candidates.some((item) => item.taskId === taskId)) return null;
   if (highRisk.has(kind) && !taskId) return null;
   if (["approve","deny","grant_turn","grant_session","answer_user_input","answer_mcp_field","decide_mcp_url"].includes(kind)) { const pending = input.pendingInteractions.find((item) => item.taskId === taskId && (!requestId || item.requestId === requestId)); if (!pending) return null; if (kind === "grant_session" && !pending.decisions?.includes("grantSession")) return null; }
