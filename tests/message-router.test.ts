@@ -630,6 +630,34 @@ class ConcurrentTaskCodex implements CodexClient {
   }
 }
 
+class ConcurrentTaskApprovalCodex implements CodexClient {
+  readonly runs: CodexRunInput[] = [];
+  readonly decisions = new Map<string, CodexApprovalDecision | undefined>();
+
+  constructor(private readonly requestId: string) {}
+
+  async run(input: CodexRunInput): Promise<CodexRunResult> {
+    const taskId = input.sessionScope?.taskId;
+    if (!taskId) throw new Error("Task-scoped approval run omitted sessionScope.taskId.");
+    this.runs.push(input);
+    const threadId = `thread-${taskId}`;
+    const turnId = `turn-${taskId}`;
+    await input.onThreadBound?.(threadId);
+    input.onRunControl?.({ threadId, turnId });
+    const decision = await input.onApprovalRequest?.({
+      id: this.requestId,
+      kind: "command",
+      threadId,
+      turnId,
+      command: `run-${taskId}`,
+      cwd: input.cwd,
+      decisions: ["accept", "decline", "cancel"],
+    });
+    this.decisions.set(taskId, decision);
+    return { threadId, finalText: `decision=${String(decision)}`, stderr: "", exitCode: 0 };
+  }
+}
+
 class SessionAwareCodex extends FakeCodex {
   readonly invalidations: Array<{ chatId: string; reason?: string }> = [];
   disposeCount = 0;
@@ -7368,6 +7396,130 @@ describe("MessageRouter access control", () => {
       await router.accept(message("task-status", "查看任务状态"));
       await waitFor(() => sender.messages.some((item) => item.text.includes("任务状态")));
       expect(sender.messages.at(-1)?.text).toContain("[日本酒店]");
+    } finally {
+      await router?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("same conversation pending interactions stay bound to the named task", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-approval-"));
+    const workspaceRoots = {
+      work: path.join(tempDir, "Work"),
+      travel: path.join(tempDir, "Travel"),
+      personal: path.join(tempDir, "Personal"),
+      finance: path.join(tempDir, "Finance"),
+      ai_lab: path.join(tempDir, "AI-Lab"),
+      learning: path.join(tempDir, "Learning"),
+    };
+    let router: MessageRouter | undefined;
+    try {
+      await Promise.all(Object.values(workspaceRoots).map((root) => mkdir(root)));
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin",
+        WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: workspaceRoots.work,
+        CODEX_MAX_CONCURRENT_RUNS: "2",
+        CODEX_MAX_APP_SERVER_SESSIONS: "2",
+        CHAT2CODEX_HOME: path.join(tempDir, "home"),
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(workspaceRoots),
+        BRIDGE_STATE_PATH: path.join(tempDir, "state.json"),
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+        ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({ action: { kind: "create_task", instruction: "日本酒店", workspaceKind: "travel" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "财报分析", workspaceKind: "finance" }, imageDisposition: "none", confidence: 1 }),
+        (input) => ({
+          action: { kind: "clarify", question: "请说明要批准哪个任务。", candidateTaskIds: input.candidates.map((item) => item.taskId) },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+        (input) => ({
+          action: {
+            kind: "approve",
+            taskId: input.candidates.find((item) => item.title === "日本酒店")?.taskId,
+            requestId: "shared-approval",
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+        (input) => ({
+          action: {
+            kind: "deny",
+            taskId: input.candidates.find((item) => item.title === "财报分析")?.taskId,
+            requestId: "shared-approval",
+          },
+          imageDisposition: "none",
+          confidence: 1,
+        }),
+      ]);
+      const sender = new CollectingSender();
+      const codex = new ConcurrentTaskApprovalCodex("shared-approval");
+      const workspaceRouter = await WorkspaceRouter.create(
+        config.workspaceRoutes,
+        config.codexGroupAllowedRoots,
+      );
+      router = new MessageRouter(
+        config,
+        new JsonStateStore(config.bridgeStatePath),
+        sender,
+        silentLogger,
+        codex,
+        {},
+        {
+          classifier,
+          imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir,
+            ttlMs: config.weixinImageDraftTtlMs,
+            maxCount: config.weixinImageDraftMaxCount,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes,
+            maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(),
+          taskTargetResolver: new TaskTargetResolver(),
+          workspaceRouter,
+          executionWorkspaces: await ExecutionWorkspaceService.create({
+            chat2codexHome: path.join(tempDir, "home"),
+            codexBin: config.codexBin,
+            sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+          }),
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+        },
+      );
+      await router.start();
+      const message = (messageId: string, text: string): IncomingTextMessage => ({
+        messageId,
+        chatId: "weixin-chat",
+        chatType: "direct",
+        sender: { openId: "ou_user" },
+        text,
+      });
+
+      await router.accept(message("task-hotel-approval", "新建日本酒店任务"));
+      await router.accept(message("task-finance-approval", "新建财报分析任务"));
+      await waitFor(() => sender.messages.filter((item) => item.text.includes("/approve")).length === 2);
+
+      const state = await new JsonStateStore(config.bridgeStatePath).load();
+      const hotel = Object.values(state.tasks).find((task) => task.title === "日本酒店");
+      const report = Object.values(state.tasks).find((task) => task.title === "财报分析");
+      expect(hotel).toBeDefined();
+      expect(report).toBeDefined();
+      const prompts = sender.messages.filter((item) => item.text.includes("/approve"));
+      expect(prompts.some((item) => item.text.startsWith("[日本酒店]"))).toBe(true);
+      expect(prompts.some((item) => item.text.startsWith("[财报分析]"))).toBe(true);
+
+      await router.accept(message("ambiguous-approval", "同意"));
+      expect(sender.messages.at(-1)?.text).toContain("请说明要批准哪个任务");
+      expect(codex.decisions.get(hotel!.taskId)).toBeUndefined();
+      expect(codex.decisions.get(report!.taskId)).toBeUndefined();
+
+      await router.accept(message("approve-hotel", "同意日本酒店任务这一次执行"));
+      await waitFor(() => codex.decisions.get(hotel!.taskId) === "accept");
+      expect(codex.decisions.get(report!.taskId)).toBeUndefined();
+
+      await router.accept(message("deny-report", "拒绝财报分析任务这一次执行"));
+      await waitFor(() => codex.decisions.get(report!.taskId) === "decline");
     } finally {
       await router?.dispose();
       await rm(tempDir, { recursive: true, force: true });

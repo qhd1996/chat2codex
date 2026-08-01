@@ -262,6 +262,8 @@ interface OrchestratorDependencies extends NaturalConversationDependencies {
 interface PendingApproval {
   key: string;
   chatId: string;
+  taskId?: string;
+  taskTitle?: string;
   originSender: SenderIdentity;
   request: CodexApprovalRequest;
   replyCode: string;
@@ -1436,6 +1438,44 @@ export class BridgeRunner {
 
   private async answerNaturalApproval(message: IncomingTextMessage): Promise<void> {
     const candidates = [...this.activeApprovals.values()].filter((pending) => pending.chatId === message.chatId && sameStableSenderIdentity(pending.originSender, message.sender));
+    if (this.orchestrator && candidates.every((pending) => pending.taskId)) {
+      const senderKey = stableSenderKey(message.sender);
+      const tasks = this.orchestrator.taskRegistry.listConversation(this.requireState(), message.chatId, senderKey);
+      const decision = await resolveNaturalTaskDecision({
+        text: naturalControlText(routedText(message)) || routedText(message),
+        conversationId: message.chatId,
+        candidates: tasks.map((task) => ({
+          taskId: task.taskId, title: task.title, aliases: task.aliases, workspaceKind: task.workspaceKind,
+          status: task.status, objectiveSummary: task.objectiveSummary, recentRequests: task.recentRequests,
+        })),
+        workspaces: this.orchestrator.workspaceRouter.candidatesForClassifier(),
+        pendingImageCount: 0,
+        pendingInteractions: candidates.map((pending) => ({
+          taskId: pending.taskId!, requestId: pending.request.id, kind: "approval" as const,
+          decisions: pending.request.decisions.map((item) => typeof item === "string" ? item : JSON.stringify(item)),
+        })),
+      }, this.orchestrator.classifier, this.config.weixinIntentMinConfidence);
+      if (decision.action.kind === "clarify") {
+        await this.sender.sendText(message.chatId, decision.action.question);
+        return;
+      }
+      if (decision.action.kind !== "approve" && decision.action.kind !== "deny") {
+        await this.sender.sendText(message.chatId, "请明确说明要批准或拒绝哪个任务。");
+        return;
+      }
+      const action = decision.action;
+      const intent: "approve" | "deny" = action.kind === "approve" ? "approve" : "deny";
+      const matched = candidates.filter((pending) =>
+        pending.taskId === action.taskId
+        && (!action.requestId || pending.request.id === action.requestId),
+      );
+      if (matched.length !== 1) {
+        await this.sender.sendText(message.chatId, "待审批请求已变化，请重新说明要处理哪个任务。");
+        return;
+      }
+      await this.resolveNaturalApproval(message.chatId, matched[0]!, intent);
+      return;
+    }
     if (candidates.length !== 1 || !this.naturalConversation) {
       await this.sender.sendText(message.chatId, candidates.length > 1
         ? ["有多条待审批请求，不能猜测要处理哪一条：", ...candidates.map((pending, index) => `${index + 1}. ${approvalRequestNaturalSummary(pending.request)}（回复码 ${pending.replyCode}）`), "请使用对应审批消息中的 /approve 命令。"].join("\n")
@@ -1450,9 +1490,13 @@ export class BridgeRunner {
       await this.sender.sendText(message.chatId, "这是同意执行还是拒绝这条命令？");
       return;
     }
-    const choice = chooseNaturalApprovalDecision(decision.intent, pending.request.decisions);
+    await this.resolveNaturalApproval(message.chatId, pending, decision.intent);
+  }
+
+  private async resolveNaturalApproval(chatId: string, pending: PendingApproval, intent: "approve" | "deny"): Promise<void> {
+    const choice = chooseNaturalApprovalDecision(intent, pending.request.decisions);
     if (choice.kind === "clarify" || !this.interactionPolicy.isApprovalDecisionAllowed(pending.request, choice.decisionIndex)) {
-      await this.sender.sendText(message.chatId, "这条审批没有安全匹配的单次选项，请使用审批消息中的明确选项。");
+      await this.sender.sendText(chatId, "这条审批没有安全匹配的单次选项，请使用审批消息中的明确选项。");
       return;
     }
     const selected = pending.request.decisions[choice.decisionIndex];
@@ -1461,7 +1505,9 @@ export class BridgeRunner {
     if (pending.timeoutTimer) clearTimeout(pending.timeoutTimer);
     pending.decision = selected; pending.resolvedAt = new Date().toISOString(); pending.resolve(selected);
     await this.updateApprovalCard(pending.handle, { status: "resolved", request: pending.request, decision: selected, updatedAt: pending.resolvedAt });
-    await this.sender.sendText(message.chatId, decision.intent === "approve" ? "已同意本次执行。" : "已拒绝本次执行。");
+    const task = pending.taskId ? this.requireState().tasks[pending.taskId] : undefined;
+    const text = intent === "approve" ? "已同意本次执行。" : "已拒绝本次执行。";
+    await this.sender.sendText(chatId, task ? prefixTaskMessage(task, text) : text);
   }
 
   private async answerNaturalUserInput(message: IncomingTextMessage): Promise<void> {
@@ -1956,6 +2002,7 @@ export class BridgeRunner {
             session.cwd,
             prompt,
             startedAt,
+            task,
           ),
         onUserInputRequest: (request, context) =>
           this.requestUserInput(
@@ -5742,6 +5789,7 @@ export class BridgeRunner {
     cwd: string,
     prompt: string,
     startedAt: string,
+    task?: RegisteredTask,
   ): Promise<CodexApprovalDecision> {
     if (signal.aborted) {
       return "cancel";
@@ -5753,7 +5801,9 @@ export class BridgeRunner {
       );
       return "cancel";
     }
-    const key = interactiveRequestKey(chatId, request.id);
+    const key = task
+      ? taskInteractionKey(task.taskId, request.threadId ?? "unbound-thread", request.turnId ?? "unbound-turn", request.id)
+      : interactiveRequestKey(chatId, request.id);
     if (this.activeApprovals.has(key)) {
       await this.sendUserInputTextSafely(
         chatId,
@@ -5780,6 +5830,8 @@ export class BridgeRunner {
       const pending: PendingApproval = {
         key,
         chatId,
+        taskId: task?.taskId,
+        taskTitle: task?.title,
         originSender: { ...originSender },
         request,
         replyCode: this.createInteractionReplyCode(),
@@ -7885,6 +7937,10 @@ function interactiveRequestKey(chatId: string, requestId: string): string {
   return `${chatId}\u0000${requestId}`;
 }
 
+function taskInteractionKey(taskId: string, threadId: string, turnId: string, requestId: string): string {
+  return `${taskId}\u0000${threadId}\u0000${turnId}\u0000${requestId}`;
+}
+
 function isPermissionApprovalDecision(
   value: unknown,
 ): value is CodexPermissionApprovalDecision {
@@ -8139,7 +8195,7 @@ function formatApprovalTextPrompt(pending: PendingApproval): string {
   );
   const lacksStandaloneDecline =
     !request.decisions.includes("decline") && request.decisions.includes("cancel");
-  return [
+  const text = [
     request.kind === "command" ? "Codex 命令审批" : "Codex 文件变更审批",
     requestSection.filter((line): line is string => Boolean(line)).join("\n"),
     request.additionalPermissions
@@ -8161,6 +8217,9 @@ function formatApprovalTextPrompt(pending: PendingApproval): string {
       "/permit 仅用于 Codex 单独发出的网络或文件系统权限请求。",
     ].join("\n"),
   ].filter((section): section is string => Boolean(section)).join("\n\n");
+  return pending.taskId
+    ? prefixTaskMessage({ taskId: pending.taskId, title: pending.taskTitle ?? pending.taskId }, text)
+    : text;
 }
 
 function formatPermissionApprovalTextPrompt(
