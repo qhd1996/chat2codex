@@ -1987,7 +1987,7 @@ export class BridgeRunner {
     const task = queuedRun.taskId ? state.tasks[queuedRun.taskId] : undefined;
     const runKey = task?.taskId ?? chatId;
     const runCwd = task?.executionCwd ?? session.cwd;
-    const runThreadId = task?.threadId ?? session.threadId;
+    const runThreadId = task ? task.threadId : session.threadId;
     const prompt = queuedRun.prompt;
     queuedRun.waitingFor = "workspace";
 

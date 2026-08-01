@@ -7504,6 +7504,7 @@ describe("MessageRouter access control", () => {
     const aiLab = path.join(tempDir, "AI-Lab");
     const learning = path.join(tempDir, "Learning");
     let router: MessageRouter | undefined;
+    let cleanupCodex: ConcurrentTaskCodex | undefined;
     try {
       await Promise.all([
         mkdir(work),
@@ -7542,6 +7543,7 @@ describe("MessageRouter access control", () => {
       ]);
       const sender = new CollectingSender();
       const codex = new ConcurrentTaskCodex(true);
+      cleanupCodex = codex;
       const workspaceRouter = await WorkspaceRouter.create(
         config.workspaceRoutes,
         config.codexGroupAllowedRoots,
@@ -7551,9 +7553,19 @@ describe("MessageRouter access control", () => {
         codexBin: config.codexBin,
         sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
       });
+      const store = new JsonStateStore(config.bridgeStatePath);
+      const stateWithLegacyThread = await store.load();
+      stateWithLegacyThread.chats["weixin-chat"] = {
+        cwd: work,
+        threadId: "thread-legacy-chat",
+        sessionEpoch: "legacy-chat-epoch",
+        chatType: "direct",
+        updatedAt: new Date().toISOString(),
+      };
+      await store.save(stateWithLegacyThread);
       router = new MessageRouter(
         config,
-        new JsonStateStore(config.bridgeStatePath),
+        store,
         sender,
         silentLogger,
         codex,
@@ -7650,6 +7662,10 @@ describe("MessageRouter access control", () => {
       await waitFor(() => sender.messages.some((item) => item.text.includes("任务状态")));
       expect(sender.messages.at(-1)?.text).toContain("[日本酒店]");
     } finally {
+      for (const taskId of cleanupCodex?.runs.map((run) => run.sessionScope?.taskId).filter((taskId): taskId is string => Boolean(taskId)) ?? []) {
+        cleanupCodex?.releaseRunControl(taskId);
+        cleanupCodex?.finish(taskId);
+      }
       await router?.dispose();
       await rm(tempDir, { recursive: true, force: true });
     }
