@@ -1,0 +1,12 @@
+{
+  "installation_status": "INERT_EXAMPLE_ONLY",
+  "approval_required_before_copying_into_codex_home": true,
+  "approval_required_before_key_creation": true,
+  "approval_required_before_hook_trust": true,
+  "approval_required_before_desktop_restart": true,
+  "hooks": {
+    "UserPromptSubmit": [{ "command": ["node", "<ABSOLUTE_REPOSITORY_PATH>/scripts/codex-hooks/user-prompt-submit.mjs"], "timeout_seconds": 3 }],
+    "Stop": [{ "command": ["node", "<ABSOLUTE_REPOSITORY_PATH>/scripts/codex-hooks/stop-wake.mjs"], "timeout_seconds": 3 }]
+  },
+  "prohibitions": ["Do not register SubagentStop.", "Do not place token values in this file, argv, or URLs.", "Do not install or trust this example without separate approval."]
+}

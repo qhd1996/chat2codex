@@ -1,0 +1,17 @@
+# INERT EXAMPLE ONLY. This repository file does not configure Codex Desktop.
+# Separate approval is required before copying into the Codex home, creating keys,
+# trusting Hook hashes, or restarting Desktop. Never place token values in TOML,
+# argv, URLs, or source control; use an absolute owner-only token file path.
+
+[mcp_servers.chat2codex_desktop_gateway]
+command = "node"
+args = ["<ABSOLUTE_REPOSITORY_PATH>/dist/desktop-gateway/mcp.js"]
+enabled = false
+
+[mcp_servers.chat2codex_desktop_gateway.env]
+CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE = "<ABSOLUTE_OWNER_ONLY_TOKEN_FILE>"
+CHAT2CODEX_DESKTOP_MCP_KEY_ID = "<NON_SECRET_KEY_ID>"
+CHAT2CODEX_DESKTOP_GATEWAY_PORT = "<LOOPBACK_PORT>"
+CHAT2CODEX_DESKTOP_ROOT_THREAD_ID = "<EXPLICIT_CONCRETE_ROOT_THREAD_ID>"
+CHAT2CODEX_DESKTOP_BINDING_ID = "<OPAQUE_BINDING_ID>"
+CHAT2CODEX_DESKTOP_OWNER_INSTANCE_ID = "<OPAQUE_DESKTOP_INSTANCE_ID>"
