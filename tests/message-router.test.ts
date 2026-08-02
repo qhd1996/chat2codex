@@ -682,9 +682,7 @@ class ConcurrentTaskCodex implements CodexClient {
       this.runControlWaits.push(taskId);
       await Promise.race([
         releaseRunControl.promise,
-        new Promise<void>((resolve) =>
-          input.signal?.addEventListener("abort", () => resolve(), { once: true }),
-        ),
+        resolveOnAbort(input.signal),
       ]);
       if (input.signal?.aborted) {
         return {
@@ -704,9 +702,7 @@ class ConcurrentTaskCodex implements CodexClient {
     await input.onProgress?.({ kind: "running", text: `progress-${taskId}` });
     await Promise.race([
       release.promise,
-      new Promise<void>((resolve) =>
-        input.signal?.addEventListener("abort", () => resolve(), { once: true }),
-      ),
+      resolveOnAbort(input.signal),
     ]);
     return {
       threadId,
@@ -7983,6 +7979,12 @@ describe("MessageRouter access control", () => {
       await waitFor(() => codex.runs.length === 1);
       await router.accept(message("task-finance", "再新建一个财报分析任务，放到金融工作区"));
       await waitFor(() => codex.runs.length === 2);
+      await waitForState(
+        new JsonStateStore(config.bridgeStatePath),
+        (current) => ["日本酒店", "财报分析"].every((title) =>
+          Object.values(current.tasks).some((task) => task.title === title && Boolean(task.threadId)),
+        ),
+      );
 
       const state = await new JsonStateStore(config.bridgeStatePath).load();
       const tasks = Object.values(state.tasks);
@@ -9029,7 +9031,12 @@ describe("MessageRouter access control", () => {
           && state.processedMessageIds.includes("same-root-second"),
       );
       expect(codex.runs).toHaveLength(1);
-      expect(sender.messages.at(-1)?.text).toContain("[同根任务乙] 已取消排队中的 Codex 任务");
+      await waitFor(() => sender.messages.some((item) =>
+        item.text.includes("[同根任务乙] 已取消排队中的 Codex 任务"),
+      ));
+      expect(sender.messages.some((item) =>
+        item.text.includes("[同根任务乙] 已取消排队中的 Codex 任务"),
+      )).toBe(true);
 
       codex.finish(firstTask!.taskId);
       await waitForState(
@@ -9415,4 +9422,9 @@ function deferred<T>(): {
     reject = promiseReject;
   });
   return { promise, resolve, reject };
+}
+
+function resolveOnAbort(signal: AbortSignal | undefined): Promise<void> {
+  if (!signal || signal.aborted) return Promise.resolve();
+  return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 }
