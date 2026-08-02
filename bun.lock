@@ -4,6 +4,7 @@
   "workspaces": {
     "": {
       "name": "chat2codex",
+      "version": "0.8.0-media.1",
       "dependencies": {
         "@larksuiteoapi/node-sdk": "^1.68.0",
         "dotenv": "^17.4.2",

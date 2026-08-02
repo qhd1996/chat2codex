@@ -4,7 +4,7 @@
 
 从飞书/Lark 或个人微信里运行你本机的 Codex。
 
-Chat2Codex 会把聊天机器人变成本机 Codex CLI 的消息平台。你可以发送需求、文件和图片，接收执行进度和最终回复，审批 Codex 动作，也可以继续本机已有的 Codex 会话，而不需要暴露公网 webhook 服务。微信私聊 Phase 1 还允许在一个会话中维护多个命名任务，并用自然语言把操作路由到正确任务和工作区。
+Chat2Codex 会把聊天机器人变成本机 Codex CLI 的消息平台。你可以发送需求、文件和图片，接收执行进度和最终回复，审批 Codex 动作，也可以继续本机已有的 Codex 会话，而不需要暴露公网 webhook 服务。微信私聊可以在一个会话中维护多个命名任务，用自然语言路由到正确任务和工作区，并返回显式声明的文字、图片和文件结果。
 
 ## 当前状态
 
@@ -99,7 +99,7 @@ Summarize this repository.
 - 支持标准 MCP form 和 URL elicitation，并渲染为绑定原发送者的卡片。类型化表单字段也可以使用 `/mcp-answer <回复码> <JSON 引号包裹的字段 ID> <内容>`；字段值会按原始 schema 校验，敏感字段则安全拒绝。
 - 支持 `item/permissions/requestApproval` 额外权限请求，并用卡片完整展示权限 profile。Chat2Codex 只提供拒绝、当前 turn 授权和当前 session 授权；任何授权都会返回 Codex 原始请求的 profile。
 - 在不支持卡片的平台，每个待处理请求会生成绑定同一会话和原发送者、结束即失效的 8 位回复码。`/approve <code> <编号>` 只能映射到原始 Codex decision 数组，`/permit <code> <deny|turn|session>` 只能映射到三种权限决定，`/mcp-decide <code> <accept|decline|cancel>` 用于 MCP URL 请求。
-- 微信首版只处理个人私聊，支持文本、引用、入站图片和文件；官方 CDN 附件会执行 AES-128-ECB 解密，“处理中”映射为正在输入。普通群聊、语音/视频、出站媒体和消息原地更新暂不支持，并会记录 dropped diagnostic。
+- 微信只处理个人私聊，支持文本、引用、入站图片和文件；官方 CDN 附件会执行 AES-128-ECB 解密，显式声明的输出图片/文件会使用新的 AES-128-ECB key 加密上传，“处理中”映射为正在输入。普通群聊、语音/视频和消息原地更新暂不支持，并会记录 dropped diagnostic。
 - 微信私聊可以使用受约束的语义分类判断新建、继续、补充、停止与普通审批回复；低置信度、模型失败或上下文冲突时只询问，不会猜测执行。分类请求不持久化对话，也不携带微信凭据。
 - 微信 Phase 1 会为任务命名，在六类工作区中路由新任务，并给任务相关的进度、澄清、审批和最终回复加上类似 `[日本酒店]` 的短标签；同一会话中的任务状态与恢复互不混淆。
 - 安全并发使用持久化的任务 Git worktree、经过验证的非 Git output-only 私有目录，或 canonical workspace FIFO 回退。不同工作区可在全局并发上限内重叠执行。
@@ -146,7 +146,19 @@ CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/w
 
 状态会从 schema v3 确定性迁移到 task-aware schema v4。首次保存迁移结果前，原文件保留为 `<BRIDGE_STATE_PATH>.v3.bak`，原 chat/thread 被导入为一个任务。排队任务保留执行元数据；已经运行的任务会标记为 interrupted，绝不自动重放；未知的未来 schema 会安全拒绝。
 
-Phase 1 包含微信入站图片和纯文本出站回复，不包含微信出站图片/文件、Codex 桌面版实时状态与同 thread 接管、受控微信群，或 UsageAdvisor/自我改进。这些分别属于 Phase 2、Phase 3 和 Phase 4。
+Phase 1 包含微信入站图片和自然语言多任务控制；Phase 2 增加下述显式出站图片/文件流水线。Codex 桌面版实时状态与同 thread 接管、受控微信群和 UsageAdvisor/自我改进仍属于后续阶段。
+
+## 微信 Phase 2 出站结果
+
+只有当 Codex 未截断的最终回答以一行精确控制语句结尾时，任务产出才会发送；该行不会显示给用户：
+
+```text
+CHAT2CODEX_OUTPUT_FILES: ["C:\\absolute\\report.png","C:\\absolute\\notes.pdf"]
+```
+
+值必须是最多 16 个非空绝对路径组成的 JSON 数组。格式错误、重复、非末行或不安全的声明只会产生一条带任务标签的纠正消息，零文件发送。普通路径提及、输入附件、改动文件、diff、命令输出和日志都不会被推断为发送授权。
+
+声明对象必须是任务工作区、该任务精确 Git worktree 或经过验证的私有 output-only 目录内的规范普通文件，不能是 symlink，并受单文件/单轮配额限制。Chat2Codex 会先把字节复制到私有不可变 staging，再原子提交终态。可见文字分片先发送，随后按声明顺序以独立微信原生消息发送图片/文件。某次上传失败时，该项与后续项保留 pending；进程内重试或重启从第一个未确认项继续，使用稳定 delivery identity，不重跑 Codex，也不重复已确认前缀。`/status` 只显示有界的类型、文件名和剩余数量。只有整组终态且超过 `OUTBOUND_MEDIA_RETENTION_HOURS` 后才清理 staging 字节。
 
 ## Codex App-Server 防护检查
 
@@ -229,7 +241,9 @@ ALLOWED_CHAT_IDS=oc_xxx
 
    后台服务建议把 `CODEX_BIN` 配成绝对路径，因为 launchd 和 systemd 不会加载你的交互式 shell 启动文件。
    如果机器人需要无人值守运行，不希望等待飞书/Lark 审批点击，可以使用 `CODEX_APPROVAL_POLICY=never`。
-   `CODEX_RUN_TIMEOUT_MS=0` 和 `CODEX_APPROVAL_TIMEOUT_MS=0` 表示关闭自动超时；团队机器人建议设置为正整数毫秒值，避免任务或审批无限等待。
+`CODEX_RUN_TIMEOUT_MS=0` 和 `CODEX_APPROVAL_TIMEOUT_MS=0` 表示关闭自动超时；团队机器人建议设置为正整数毫秒值，避免任务或审批无限等待。
+
+`CODEX_APPROVALS_REVIEWER=auto_review` 会把审批请求交给 Codex 自动风险审查；设为 `user` 可回退到直接用户审查。它与 `CODEX_APPROVAL_POLICY`、`CODEX_SANDBOX` 独立，不会扩大任一权限。
 
 3. 预览服务文件：
 
@@ -359,7 +373,7 @@ bun run check
 
 ## 后续功能
 
-1. 交付并验收安全、有序的微信出站文字/图片/文件。
+1. 完成安全、有序微信出站文字/图片/文件的生产部署和真人客户端验收。
 2. 增加 Codex 桌面版实时状态和单写者同 thread 接管。
 3. 增加必须经用户审查的 UsageAdvisor 建议，不允许自主修改。
 4. 对进程级凭据与 SDK 隔离有要求时，可选把 adapter 移到外部 gateway 后面。

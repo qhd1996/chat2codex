@@ -7,8 +7,8 @@ Run Codex on your own machine from Feishu/Lark or Weixin chat.
 Chat2Codex turns a chat bot into a message platform for the local Codex CLI.
 Send prompts, files, and images; receive progress and final answers; approve
 Codex actions; and resume local Codex threads without a public webhook server.
-For Weixin direct messages, Phase 1 also keeps multiple named tasks in one
-conversation and routes ordinary language to the intended task and workspace.
+For Weixin direct messages, named tasks route ordinary language to the intended
+workspace and can return explicitly declared text, image, and file results.
 
 ## Current Status
 
@@ -171,11 +171,12 @@ when you need a separate bot instance.
   `/permit <code> <deny|turn|session>` maps only to the three permission
   decisions, and `/mcp-decide <code> <accept|decline|cancel>` handles MCP URL
   decisions.
-- Weixin v1 is deliberately direct-message only. It accepts text, quoted text,
+- Weixin is deliberately direct-message only. It accepts text, quoted text,
   inbound images, and inbound files; decrypts official CDN media with
-  AES-128-ECB; maps processing reactions to typing; and drops groups,
-  voice/video, and unsupported media with diagnostics. Outbound media and
-  in-place message updates are not supported.
+  AES-128-ECB; uploads explicitly declared output images/files with fresh
+  AES-128-ECB keys; maps processing reactions to typing; and drops groups,
+  voice/video, and unsupported media with diagnostics. In-place message updates
+  are not supported.
 - Weixin Phase 1 natural orchestration creates and selects named tasks, routes
   new tasks across six configured workspace kinds, prefixes task-specific
   progress, questions, approvals, and terminal replies with a compact label such
@@ -252,10 +253,36 @@ Queued task jobs retain their execution metadata, while work that was already
 running is marked interrupted and is never replayed automatically. Future,
 unknown schema versions fail closed.
 
-Phase 1 includes inbound images and text-only Weixin replies. It does **not**
-include outbound Weixin images/files, Codex desktop live status or same-thread
-handoff, controlled Weixin groups, or UsageAdvisor/self-improvement. Those remain
-Phase 2, Phase 3, and Phase 4 work respectively.
+Phase 1 includes inbound images and natural multi-task control. Phase 2 adds the
+explicit outbound image/file pipeline below. Codex desktop live status and
+same-thread handoff, controlled Weixin groups, and UsageAdvisor/self-improvement
+remain later work.
+
+## Weixin Phase 2 Outbound Results
+
+Codex may send task deliverables only by ending its untruncated final answer with
+one exact control line. The line is removed from the visible answer:
+
+```text
+CHAT2CODEX_OUTPUT_FILES: ["C:\\absolute\\report.png","C:\\absolute\\notes.pdf"]
+```
+
+The value must be a JSON array of at most 16 non-empty absolute paths. A malformed,
+duplicate, non-final, or unsafe declaration sends one task-labelled correction
+and no files. Ordinary path mentions, input attachments, changed files, diffs,
+command output, and logs never imply consent to send a file.
+
+Declared files must be regular, canonical, non-symlink files inside the task
+workspace, its exact task Git worktree, or its verified private output-only
+directory. Configured per-file and per-turn quotas apply. Chat2Codex snapshots
+the bytes into private immutable staging before committing the terminal result.
+The visible text chunks are delivered first, followed by images/files in declared
+order as separate native Weixin messages. A failed upload leaves that entry and
+later entries pending; retry or restart resumes the first undelivered entry with
+the same delivery identity and never reruns Codex or resends a confirmed prefix.
+`/status` shows only bounded kind, filename, and remaining count. Staged bytes are
+cleaned only after the entire delivery group is terminal and older than
+`OUTBOUND_MEDIA_RETENTION_HOURS`.
 
 ## Codex App-Server Guardrails
 
@@ -492,6 +519,10 @@ It defaults to `CODEX_APPROVAL_POLICY=never` for unattended operation. Set
 requests to appear as Feishu/Lark cards. In group chats, approval buttons can
 only be handled by users listed in `ALLOWED_USER_IDS`.
 
+`CODEX_APPROVALS_REVIEWER=auto_review` routes approval requests through Codex's
+automated risk reviewer; set it to `user` for direct review. It is independent
+of `CODEX_APPROVAL_POLICY` and `CODEX_SANDBOX` and never widens either.
+
 `CODEX_RUN_TIMEOUT_MS=0` and `CODEX_APPROVAL_TIMEOUT_MS=0` disable automatic
 timeouts. For long-running background bots, set positive millisecond values so a
 stuck Codex turn or unattended approval request is cancelled and recorded in
@@ -599,7 +630,7 @@ chat or reporting a security issue.
 
 ## Next Features To Add
 
-1. Deliver and validate safe ordered Weixin outbound text/image/file media.
+1. Complete production and real-client acceptance for ordered Weixin outbound media.
 2. Add Codex desktop live status and one-writer same-thread handoff.
 3. Add review-gated UsageAdvisor proposals without autonomous self-modification.
 4. Optionally move adapters behind an external gateway when deployments need

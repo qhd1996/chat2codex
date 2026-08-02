@@ -55,11 +55,12 @@ state. Interactive-capable adapters use views; text-only adapters use
 sender-bound reply codes for approval and structured decisions. The adapter
 alone maps neutral operations to platform calls.
 
-| Capability | Feishu/Lark | Weixin Phase 1 |
+| Capability | Feishu/Lark | Weixin |
 | --- | --- | --- |
 | Markdown / rich post | yes | no, rendered as text |
 | Interactive/updateable views | yes | no |
 | Inbound attachments | image, file | file, plus durable one-to-four-image-before-text drafts via encrypted CDN |
+| Outbound results | rich text | ordered text, explicitly declared image/file messages via encrypted CDN |
 | Processing signal | message reaction | typing indicator |
 | Conversation scope | direct and allowlisted groups | direct only |
 
@@ -68,8 +69,7 @@ commits `getupdates` cursors only after the complete batch reaches the core, so
 a failed batch replays through the core message-id deduplicator. Its private
 runtime file retains the cursor, latest per-user `context_token`, typing ticket,
 and short-lived attachment descriptors. Outbox idempotency keys become iLink
-`client_id` values. Groups, voice/video, outbound media, and in-place updates
-are intentionally outside the Phase 1 boundary.
+`client_id` values. Groups, voice/video, and in-place updates remain unsupported.
 
 ## Phase 1 task and concurrency model
 
@@ -96,15 +96,26 @@ discards them, clarification resolves, or TTL cleanup deletes them. A fifth imag
 does not consume the earlier four. Durable clarification stores only bounded task
 IDs and the draft key, never image bytes or descriptors.
 
-Schema v4 adds task and conversation registries and task-qualified execution and
-interaction references. A v3 envelope is backed up as `<state>.v3.bak` before
+Schema v5 adds task-qualified ordered text/image/file deliveries, immutable
+staging metadata, and stable delivery identities. The earlier task registry and
+interaction references remain intact. A v3/v4 envelope is backed up before
 migration; one previous chat/thread becomes one imported compatibility task.
 Queued jobs recover against their exact task, running jobs become interrupted,
 and orphan or future-schema references fail closed.
 
-This diagram and model describe Phase 1 only. The current durable outbox remains
-text/Markdown. Ordered outbound Weixin media is Phase 2; Codex desktop visibility
-and same-thread handoff are Phase 3; UsageAdvisor is Phase 4.
+The output parser accepts one exact final `CHAT2CODEX_OUTPUT_FILES` line from
+the untruncated Codex result. No diff, path mention, input file, log, or changed
+file can enter the outbound pipeline implicitly. `DeliverableStager` validates
+the exact task roots and copies immutable snapshots under
+`<CHAT2CODEX_HOME>/outbound/<taskId>/<jobId>`. In one state mutation,
+`MediaOutbox` records visible text chunks first and declared images/files next.
+The adapter acknowledges each entry separately; a failure stops the group, and
+recovery resumes the lowest undelivered sequence without rerunning Codex. Recent
+complete media groups retain their backing job and staging directory for the
+configured time window before count-based pruning may delete the whole group.
+
+Codex desktop visibility and same-thread handoff remain Phase 3; UsageAdvisor
+remains Phase 4.
 
 Run `bun run typecheck:contracts` to compile the reference adapter and
 `bun test tests/architecture-boundaries.test.ts` to verify the isolation rule.
