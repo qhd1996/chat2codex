@@ -13,6 +13,8 @@ import {
   type NaturalConversationDependencies,
 } from "./bridge-runner.js";
 import type { InteractionPolicy } from "./interaction-policy.js";
+import type { DesktopGatewayController } from "../desktop-gateway/contracts.js";
+import type { DurableMutationReplay } from "../desktop-gateway/server.js";
 
 export * from "./bridge-runner.js";
 
@@ -47,6 +49,10 @@ export class MessageRouter {
 
   start(): Promise<void> {
     return this.runner.start();
+  }
+
+  getDesktopGatewaySurface(): { controller: DesktopGatewayController; replay: DurableMutationReplay } {
+    return { controller: this.runner.desktopGatewayController, replay: this.runner.desktopGatewayReplay };
   }
 
   dispose(): Promise<void> {

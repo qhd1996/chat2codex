@@ -155,7 +155,11 @@ function requireOwnerOnlyAcl(report: WindowsTokenAclReport): void {
 }
 
 export interface DurableMutationReplay {
-  checkAndRecord(requestId: string, bodySha256: string): Promise<"new" | "idempotent" | "conflict">;
+  checkAndRecord(
+    requestId: string,
+    bodySha256: string,
+    request: ReturnType<typeof parseGatewayRequest>,
+  ): Promise<"new" | "idempotent" | "conflict">;
 }
 export interface GatewayDecisionLog {
   requestId: string; role: GatewayRole | "unknown"; endpoint: GatewayEndpointKind | "unknown";
@@ -170,6 +174,7 @@ export interface DesktopGatewayServerOptions {
 
 export class DesktopGatewayServer {
   private server: http.Server | undefined;
+  private accepting = true;
   private active = 0;
   private readonly nonceCache: NonceReplayCache;
   private readonly maxBodyBytes: number;
@@ -184,7 +189,11 @@ export class DesktopGatewayServer {
 
   async start(): Promise<{ host: "127.0.0.1"; port: number }> {
     if (this.server) throw new Error("Desktop Gateway server is already started");
-    const server = http.createServer((request, response) => void this.handle(request, response));
+    this.accepting = true;
+    const server = http.createServer((request, response) => {
+      if (!this.accepting) { this.sendUnsigned(response, 503); return; }
+      void this.handle(request, response);
+    });
     server.requestTimeout = this.requestDeadlineMs;
     server.headersTimeout = this.requestDeadlineMs;
     server.keepAliveTimeout = 1_000;
@@ -204,13 +213,15 @@ export class DesktopGatewayServer {
   }
 
   async stop(): Promise<void> {
-    const server = this.server; this.server = undefined;
+    const server = this.server;
     if (!server) return;
-    server.closeAllConnections();
+    this.accepting = false;
+    server.closeIdleConnections();
     await new Promise<void>((resolve, reject) => server.close((error) => {
       if (!error || (error as NodeJS.ErrnoException).code === "ERR_SERVER_NOT_RUNNING") resolve();
       else reject(error);
     }));
+    this.server = undefined;
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -252,7 +263,7 @@ export class DesktopGatewayServer {
           throw new GatewayAuthenticationError("invalid_signature");
       }
       if (endpoint !== "status") {
-        const replay = await this.options.mutationReplay.checkAndRecord(requestId, authenticated.bodySha256);
+        const replay = await this.options.mutationReplay.checkAndRecord(requestId, authenticated.bodySha256, parsed);
         if (replay === "conflict") throw new HttpFailure(409, "integrity_conflict");
       }
       const reply = await deadline(

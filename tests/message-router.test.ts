@@ -67,6 +67,7 @@ import { TaskRegistry } from "../src/core/task-registry.js";
 import { TaskScheduler } from "../src/core/task-scheduler.js";
 import { TaskTargetResolver } from "../src/core/task-target-resolver.js";
 import { WorkspaceRouter } from "../src/core/workspace-router.js";
+import { DesktopOwnershipCoordinator } from "../src/core/desktop-ownership.js";
 import type { NaturalIntentClassifier, NaturalIntentDecision } from "../src/core/natural-intent.js";
 import type { NaturalTaskClassifier, NaturalTaskRoutingInput } from "../src/core/natural-task-router.js";
 import type { NaturalConversationDependencies } from "../src/core/bridge-runner.js";
@@ -90,6 +91,22 @@ class ToggleFailingStateStore extends JsonStateStore {
   override async save(state: Parameters<JsonStateStore["save"]>[0]): Promise<void> {
     if (this.failSaves) {
       throw new Error("simulated state save failure");
+    }
+    await super.save(state);
+  }
+}
+
+class DesktopFenceStateStore extends JsonStateStore {
+  readonly fenceSaveAttempt = deferred<void>();
+  fenceSaveAttempts = 0;
+
+  constructor(filePath: string, private readonly failFenceSave: boolean) { super(filePath); }
+
+  override async save(state: Parameters<JsonStateStore["save"]>[0]): Promise<void> {
+    if (Object.values(state.jobs).some((job) => job.status === "running" && job.desktopBindingId)) {
+      this.fenceSaveAttempts += 1;
+      this.fenceSaveAttempt.resolve();
+      if (this.failFenceSave) throw new Error("simulated Desktop Gateway fence save failure");
     }
     await super.save(state);
   }
@@ -8255,6 +8272,81 @@ describe("MessageRouter access control", () => {
       for (const item of definitions) codex.finish(item.taskId);
     } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
+
+  test.each([false, true])(
+    "Desktop Gateway generation owner fences recovered bound runs before Codex (save failure=%s)",
+    async (failFenceSave) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-desktop-fence-"));
+      let router: MessageRouter | undefined;
+      try {
+        const roots = Object.fromEntries(await Promise.all(
+          ["work", "travel", "personal", "finance", "ai_lab", "learning"].map(async (kind) => {
+            const root = path.join(tempDir, kind); await mkdir(root); return [kind, root] as const;
+          }),
+        ));
+        const config = loadConfig({
+          CHAT2CODEX_ADAPTER: "weixin", WEIXIN_NATURAL_ROUTING: "true", CODEX_WORKDIR: roots.work,
+          CHAT2CODEX_HOME: path.join(tempDir, "home"), CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(roots),
+          BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+          ALLOWED_USER_IDS: "ou_user",
+        });
+        const store = new DesktopFenceStateStore(config.bridgeStatePath, failFenceSave);
+        const state = emptyState(); const now = "2026-08-02T00:00:00.000Z";
+        const taskId = "tsk_desktopfence00000000000"; const threadId = "root-thread-desktop-fence";
+        state.tasks[taskId] = {
+          taskId, conversationId: "weixin-chat", chatType: "direct", senderKey: "open_id:ou_user",
+          title: "Desktop fence task", aliases: [], workspaceKind: "work", workspaceRoot: roots.work,
+          executionCwd: roots.work, isolationMode: "canonical_fifo", sessionEpoch: "epoch-desktop-fence",
+          threadId, status: "waiting_workspace", objectiveSummary: "bound recovery", recentRequests: [],
+          createdAt: now, updatedAt: now, lastActiveAt: now,
+        };
+        state.conversations["weixin-chat"] = { taskIds: [taskId], lastTaskId: taskId };
+        state.jobs.bound = {
+          id: "bound", kind: "codex_run", messageId: "bound", chatId: "weixin-chat", chatType: "direct",
+          cwd: roots.work, prompt: "bound prompt", taskId, workspaceRoot: roots.work, executionCwd: roots.work,
+          isolationMode: "canonical_fifo", threadId, status: "queued", createdAt: now, updatedAt: now, deliveryIds: [],
+        };
+        state.pendingMessages.bound = {
+          messageId: "bound", chatId: "weixin-chat", chatType: "direct", sender: { openId: "ou_user" },
+          text: "bound prompt", acceptedAt: now, attempts: 0, route: "codex",
+        };
+        new DesktopOwnershipCoordinator().bind(state, {
+          mutationId: "bind", bindingId: "binding-1", rootThreadId: threadId, taskId, conversationId: "weixin-chat",
+          adapterId: store.adapterId, bindingAnchorTurnId: "anchor", bindingAnchorTurnIndex: 0,
+          bindingAnchorDigest: "a".repeat(64), observedAt: now,
+        });
+        await store.save(state);
+        const codex = new FakeCodex(); const classifier = new QueueTaskClassifier([]);
+        const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+        const executionWorkspaces = await ExecutionWorkspaceService.create({
+          chat2codexHome: config.chat2codexHome, codexBin: config.codexBin,
+          sandboxProbe: async () => ({ verified: false, reason: "not needed" }),
+        });
+        router = new MessageRouter(config, store, new CollectingSender(), silentLogger, codex, {}, {
+          classifier, imageDrafts: new ImageDraftService({
+            root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4,
+            maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+          }),
+          taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces,
+          taskScheduler: new TaskScheduler({ maxConcurrentRuns: 1 }),
+        });
+        await router.start();
+        await store.fenceSaveAttempt.promise;
+        if (failFenceSave) {
+          await new Promise((resolve) => setTimeout(resolve, 25));
+          expect(codex.runs).toHaveLength(0);
+          expect((await store.load()).jobs.bound).toMatchObject({ status: "queued" });
+        } else {
+          await waitFor(() => codex.runs.length === 1);
+          expect(store.fenceSaveAttempts).toBeGreaterThanOrEqual(1);
+          expect(codex.runs[0]?.threadId).toBe(threadId);
+        }
+      } finally {
+        await router?.dispose().catch(() => undefined);
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("task recovery does not downgrade unverified output-only isolation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-output-recovery-"));

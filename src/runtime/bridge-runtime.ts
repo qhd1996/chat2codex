@@ -28,6 +28,7 @@ import { TaskRegistry } from "../core/task-registry.js";
 import { TaskScheduler } from "../core/task-scheduler.js";
 import { TaskTargetResolver } from "../core/task-target-resolver.js";
 import { WorkspaceRouter } from "../core/workspace-router.js";
+import { DesktopGatewayServer, loadGatewayCapabilities } from "../desktop-gateway/server.js";
 
 export interface PlatformAdapterBundle {
   adapter: ChatAdapter;
@@ -71,15 +72,16 @@ export async function runBridgeRuntime(
       taskScheduler: new TaskScheduler({ maxConcurrentRuns: config.codexMaxConcurrentRuns }),
     };
   }
+  const store = new JsonStateStore(config.bridgeStatePath, {
+    adapterId,
+    jobRetentionCount: config.jobRetentionCount,
+    outboxRetentionCount: config.outboxRetentionCount,
+    outboundMediaRetentionHours: config.outboundMediaRetentionHours,
+    chat2codexHome: config.chat2codexHome,
+  });
   const router = new MessageRouter(
     config,
-    new JsonStateStore(config.bridgeStatePath, {
-      adapterId,
-      jobRetentionCount: config.jobRetentionCount,
-      outboxRetentionCount: config.outboxRetentionCount,
-      outboundMediaRetentionHours: config.outboundMediaRetentionHours,
-      chat2codexHome: config.chat2codexHome,
-    }),
+    store,
     sender,
     logger,
     new CodexRunner(config, logger),
@@ -87,16 +89,32 @@ export async function runBridgeRuntime(
     { requestRestart },
     naturalConversation,
   );
+  let gateway: DesktopGatewayServer | undefined;
 
   try {
-    await router.start();
+    gateway = await startRouterThenOptionalGateway(router, config.desktopGateway.enabled, async () => {
+      const capabilities = await loadGatewayCapabilities([
+        { keyId: "prompt-hook-v1", role: "prompt_hook", filePath: config.desktopGateway.tokenFiles.promptHook },
+        { keyId: "stop-hook-v1", role: "stop_hook", filePath: config.desktopGateway.tokenFiles.stopHook },
+        { keyId: "desktop-mcp-v1", role: "desktop_mcp", filePath: config.desktopGateway.tokenFiles.desktopMcp },
+      ]);
+      const surface = router.getDesktopGatewaySurface();
+      return new DesktopGatewayServer({
+        port: config.desktopGateway.port, expectedHost: config.desktopGateway.expectedHost,
+        capabilities, controller: surface.controller, mutationReplay: surface.replay,
+        maxBodyBytes: config.desktopGateway.maxBodyBytes,
+        maxConcurrentRequests: config.desktopGateway.maxConcurrency,
+        requestDeadlineMs: config.desktopGateway.deadlineMs,
+        onDecision: (entry) => logger.info("Desktop Gateway decision", entry),
+      });
+    });
     await supervisor.start((event) => routeInboundEvent(router, event));
     markSupervisorReady();
-    return createSupervisorBridgeRuntime(supervisor, router);
+    return createSupervisorBridgeRuntime(supervisor, router, gateway);
   } catch (error) {
     markSupervisorReady();
     try {
-      await createSupervisorBridgeRuntime(supervisor, router).dispose();
+      await createSupervisorBridgeRuntime(supervisor, router, gateway).dispose();
     } catch (disposeError) {
       logger.error("Failed to clean up the bridge after startup failed", disposeError);
     }
@@ -316,24 +334,44 @@ async function routeInboundEvent(
   });
 }
 
+export async function startRouterThenOptionalGateway<TGateway extends { start(): Promise<unknown>; stop(): Promise<void> }>(
+  router: Pick<MessageRouter, "start">,
+  enabled: boolean,
+  createGateway: () => Promise<TGateway>,
+): Promise<TGateway | undefined> {
+  await router.start();
+  if (!enabled) return undefined;
+  const gateway = await createGateway();
+  try {
+    await gateway.start();
+    return gateway;
+  } catch (error) {
+    await gateway.stop().catch(() => undefined);
+    throw error;
+  }
+}
+
 function createSupervisorBridgeRuntime(
   supervisor: AdapterSupervisor,
   router: Pick<MessageRouter, "dispose">,
+  gateway?: Pick<DesktopGatewayServer, "stop">,
 ): BridgeRuntime {
   let disposePromise: Promise<void> | undefined;
   return {
     dispose() {
-      disposePromise ??= disposeSupervisorBridgeRuntime(supervisor, router);
+      disposePromise ??= disposeSupervisorBridgeRuntime(supervisor, router, gateway);
       return disposePromise;
     },
   };
 }
 
-async function disposeSupervisorBridgeRuntime(
+export async function disposeSupervisorBridgeRuntime(
   supervisor: AdapterSupervisor,
   router: Pick<MessageRouter, "dispose">,
+  gateway?: Pick<DesktopGatewayServer, "stop">,
 ): Promise<void> {
-  const results = await Promise.allSettled([supervisor.stop(), router.dispose()]);
+  const gatewayResult = await Promise.allSettled([gateway?.stop() ?? Promise.resolve()]);
+  const results = [...gatewayResult, ...await Promise.allSettled([supervisor.stop(), router.dispose()])];
   const errors = results.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [],
   );

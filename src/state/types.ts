@@ -242,6 +242,8 @@ export interface DurableCodexJob {
   result?: LastRunSummary;
   deliveryIds: string[];
   taskId?: string; workspaceRoot?: string; executionCwd?: string; isolationMode?: IsolationMode;
+  /** Durable single-writer evidence captured by the bridge pre-turn fence. */
+  desktopBindingId?: string; desktopGeneration?: number;
   interruptionReason?: string;
   /** A durable singleton used to suppress repeated queue-full replies. */
   capacityNoticeScope?: "global" | "chat";

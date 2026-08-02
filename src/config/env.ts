@@ -137,8 +137,28 @@ const configSchema = z.object({
   BRIDGE_STATE_PATH: z.string().min(1).default(".data/state.json"),
   CHAT2CODEX_LOG_FILE: z.string().optional(),
   CHAT2CODEX_SERVICE_RESTART_ENABLED: booleanEnv(false),
+  CHAT2CODEX_DESKTOP_GATEWAY_ENABLED: booleanEnv(false),
+  CHAT2CODEX_DESKTOP_GATEWAY_PORT: positiveIntegerEnv(43_127, 65_535),
+  CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: z.string().optional(),
+  CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: z.string().optional(),
+  CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE: z.string().optional(),
+  CHAT2CODEX_DESKTOP_PROMPT_TOKEN: z.string().optional(),
+  CHAT2CODEX_DESKTOP_STOP_TOKEN: z.string().optional(),
+  CHAT2CODEX_DESKTOP_MCP_TOKEN: z.string().optional(),
+  CHAT2CODEX_DESKTOP_GATEWAY_MAX_BODY_BYTES: positiveIntegerEnv(64 * 1024, 1024 * 1024),
+  CHAT2CODEX_DESKTOP_GATEWAY_MAX_CONCURRENCY: positiveIntegerEnv(16, 256),
+  CHAT2CODEX_DESKTOP_GATEWAY_DEADLINE_MS: positiveIntegerEnv(2_000, 30_000),
+  CHAT2CODEX_DESKTOP_HEARTBEAT_MS: positiveIntegerEnv(10_000, 10 * 60_000),
+  CHAT2CODEX_DESKTOP_LEASE_MS: positiveIntegerEnv(30_000, 60 * 60_000),
+  CHAT2CODEX_DESKTOP_RECONCILE_MS: positiveIntegerEnv(15_000, 60 * 60_000),
   LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).default("info"),
 }).superRefine((config, context) => {
+  if (config.CHAT2CODEX_DESKTOP_PROMPT_TOKEN || config.CHAT2CODEX_DESKTOP_STOP_TOKEN || config.CHAT2CODEX_DESKTOP_MCP_TOKEN) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["CHAT2CODEX_DESKTOP_GATEWAY_ENABLED"], message: "raw Desktop Gateway token values are forbidden; use owner-only token files" });
+  }
+  if (config.CHAT2CODEX_DESKTOP_HEARTBEAT_MS >= config.CHAT2CODEX_DESKTOP_LEASE_MS) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["CHAT2CODEX_DESKTOP_HEARTBEAT_MS"], message: "heartbeat must be shorter than the Desktop lease" });
+  }
   if (config.CHAT2CODEX_ADAPTER === "feishu") {
     if (!config.FEISHU_APP_ID?.trim()) {
       context.addIssue({
@@ -216,6 +236,18 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
     path.resolve(entry),
   );
   const workspaceRoutes = parseWorkspaceRoutes(parsed.CHAT2CODEX_WORKSPACE_ROUTES, codexWorkdir);
+  const gatewayTokenFiles = {
+    promptHook: path.resolve(parsed.CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE?.trim() || path.join(home, "desktop-gateway", "prompt-hook.key")),
+    stopHook: path.resolve(parsed.CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE?.trim() || path.join(home, "desktop-gateway", "stop-hook.key")),
+    desktopMcp: path.resolve(parsed.CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE?.trim() || path.join(home, "desktop-gateway", "desktop-mcp.key")),
+  };
+  if (parsed.CHAT2CODEX_DESKTOP_GATEWAY_ENABLED) {
+    for (const [name, raw] of [["prompt", parsed.CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE], ["stop", parsed.CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE], ["MCP", parsed.CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE]] as const) {
+      if (raw?.trim() && !path.isAbsolute(raw.trim())) throw new Error(`Desktop Gateway ${name} token path must be absolute.`);
+    }
+    const normalized = Object.values(gatewayTokenFiles).map((value) => process.platform === "win32" ? value.toLowerCase() : value);
+    if (new Set(normalized).size !== normalized.length) throw new Error("Desktop Gateway token paths must be distinct.");
+  }
   return {
     chat2codexHome: home,
     chatAdapter: parsed.CHAT2CODEX_ADAPTER,
@@ -285,6 +317,18 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
       ? path.resolve(parsed.CHAT2CODEX_LOG_FILE)
       : undefined,
     serviceRestartEnabled: parsed.CHAT2CODEX_SERVICE_RESTART_ENABLED,
+    desktopGateway: {
+      enabled: parsed.CHAT2CODEX_DESKTOP_GATEWAY_ENABLED,
+      port: parsed.CHAT2CODEX_DESKTOP_GATEWAY_PORT,
+      expectedHost: `127.0.0.1:${parsed.CHAT2CODEX_DESKTOP_GATEWAY_PORT}`,
+      tokenFiles: gatewayTokenFiles,
+      maxBodyBytes: parsed.CHAT2CODEX_DESKTOP_GATEWAY_MAX_BODY_BYTES,
+      maxConcurrency: parsed.CHAT2CODEX_DESKTOP_GATEWAY_MAX_CONCURRENCY,
+      deadlineMs: parsed.CHAT2CODEX_DESKTOP_GATEWAY_DEADLINE_MS,
+      heartbeatMs: parsed.CHAT2CODEX_DESKTOP_HEARTBEAT_MS,
+      leaseMs: parsed.CHAT2CODEX_DESKTOP_LEASE_MS,
+      reconcileMs: parsed.CHAT2CODEX_DESKTOP_RECONCILE_MS,
+    },
     logLevel: parsed.LOG_LEVEL,
   };
 }
