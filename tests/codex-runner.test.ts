@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   buildCodexArgs,
   buildCodexTurnInput,
+  parseAuthoritativeCodexThread,
   validateLocalImages,
   validateSandboxPolicy,
   type CodexSandboxPolicy,
@@ -433,6 +434,101 @@ process.on("SIGTERM", () => process.exit(0));
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test("authoritative history uses stable thread/read with complete ordered turns", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-runner-"));
+    const { fakeCodex, receivedPath } = await createRecordingFakeCodex(
+      tempDir,
+      `
+if (message.method === "initialize") {
+  send({ id: message.id, result: { userAgent: "Codex Desktop/0.144.5 test", codexHome: "/tmp/codex", platformFamily: "unix", platformOs: "macos" } });
+  return;
+}
+if (message.method === "thread/read") {
+  send({ id: message.id, result: { thread: {
+    id: "thread_root", sessionId: "thread_root", cwd: "/repo/a", cliVersion: "0.144.5",
+    turns: [
+      { id: "turn_z", status: "completed", itemsView: "full", items: [
+        { id: "user_z", type: "userMessage", content: [{ type: "text", text: "first" }] },
+        { id: "agent_z", type: "agentMessage", text: "first result", phase: "final_answer" }
+      ] },
+      { id: "turn_a", status: "completed", itemsView: "full", items: [
+        { id: "user_a", type: "userMessage", content: [{ type: "text", text: "second" }] },
+        { id: "agent_a", type: "agentMessage", text: "second result", phase: "final_answer" }
+      ] }
+    ]
+  } } });
+  return;
+}
+`,
+    );
+
+    try {
+      const runner = new CodexRunner(
+        loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_BIN: fakeCodex, CODEX_WORKDIR: tempDir }),
+        new ConsoleLogger("error"),
+      );
+
+      const thread = await runner.readThreadWithTurns("thread_root");
+
+      expect(thread.id).toBe("thread_root");
+      expect(thread.turns.map((turn) => turn.id)).toEqual(["turn_z", "turn_a"]);
+      expect(thread.turns[1]?.items.map((item) => item.id)).toEqual(["user_a", "agent_a"]);
+      const received = await readJsonl(receivedPath) as Array<{ method?: string; params?: unknown }>;
+      expect(received.filter((message) => message.method === "thread/read")).toEqual([
+        expect.objectContaining({ params: { threadId: "thread_root", includeTurns: true } }),
+      ]);
+      expect(received.some((message) => message.method === "thread/turns/list")).toBeFalse();
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("authoritative history rejects wrong roots and incomplete or malformed snapshots", () => {
+    const valid = {
+      id: "thread_root",
+      sessionId: "thread_root",
+      cwd: "/repo/a",
+      cliVersion: "0.144.5",
+      turns: [
+        {
+          id: "turn_1",
+          status: "completed",
+          itemsView: "full",
+          items: [
+            { id: "user_1", type: "userMessage", content: [{ type: "text", text: "hello" }] },
+            { id: "agent_1", type: "agentMessage", text: "done", phase: "final_answer" },
+          ],
+        },
+      ],
+    };
+
+    expect(() => parseAuthoritativeCodexThread({ ...valid, id: "thread_other" }, "thread_root")).toThrow(/root/i);
+    expect(() => parseAuthoritativeCodexThread({ ...valid, turns: undefined }, "thread_root")).toThrow(/turns/i);
+    expect(() => parseAuthoritativeCodexThread({ ...valid, turns: [{ ...valid.turns[0], itemsView: "summary" }] }, "thread_root")).toThrow(/complete|full/i);
+    expect(parseAuthoritativeCodexThread({ ...valid, turns: [{ ...valid.turns[0], itemsView: undefined }] }, "thread_root").turns).toHaveLength(1);
+    expect(() => parseAuthoritativeCodexThread({ ...valid, turns: [{ ...valid.turns[0], status: "unknown" }] }, "thread_root")).toThrow(/status/i);
+    expect(() => parseAuthoritativeCodexThread({ ...valid, turns: [{ ...valid.turns[0], items: [{ id: "cmd", type: "commandExecution" }] }] }, "thread_root")).toThrow(/command/i);
+  });
+
+  test("authoritative history rejects duplicate identities and oversized snapshots", () => {
+    const turn = (id: string, itemId = `item_${id}`) => ({
+      id,
+      status: "completed",
+      itemsView: "full",
+      items: [{ id: itemId, type: "agentMessage", text: "done", phase: "final_answer" }],
+    });
+    const thread = (turns: unknown[]) => ({
+      id: "thread_root", sessionId: "thread_root", cwd: "/repo/a", cliVersion: "0.144.5", turns,
+    });
+
+    expect(() => parseAuthoritativeCodexThread(thread([turn("turn_1"), turn("turn_1", "other")]), "thread_root")).toThrow(/duplicate.*turn/i);
+    expect(() => parseAuthoritativeCodexThread(thread([turn("turn_1", "same"), turn("turn_2", "same")]), "thread_root")).toThrow(/duplicate.*item/i);
+    expect(() => parseAuthoritativeCodexThread(
+      thread(Array.from({ length: 10_001 }, (_, index) => turn(`turn_${index}`))),
+      "thread_root",
+    )).toThrow(/oversized|bounded/i);
   });
 
   test("sends lastTurnId only for an explicitly historical fork", async () => {
