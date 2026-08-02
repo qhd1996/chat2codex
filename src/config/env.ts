@@ -12,6 +12,7 @@ export interface AccessControlConfig {
 }
 
 const codexApprovalPolicies = ["untrusted", "on-request", "never"] as const;
+const codexApprovalsReviewers = ["auto_review", "user"] as const;
 export const configuredWorkspaceKinds = ["work", "travel", "personal", "finance", "ai_lab", "learning"] as const;
 export type ConfiguredWorkspaceKind = typeof configuredWorkspaceKinds[number];
 
@@ -97,6 +98,7 @@ const configSchema = z.object({
   CODEX_WORKDIR: z.string().min(1).default(process.cwd()),
   CODEX_SANDBOX: z.enum(["read-only", "workspace-write", "danger-full-access"]).default("workspace-write"),
   CODEX_APPROVAL_POLICY: z.enum(codexApprovalPolicies).default("never"),
+  CODEX_APPROVALS_REVIEWER: z.enum(codexApprovalsReviewers).default("auto_review"),
   CODEX_RUN_TIMEOUT_MS: timeoutEnv().default(0),
   CODEX_APPROVAL_TIMEOUT_MS: timeoutEnv().default(0),
   CODEX_MAX_CONCURRENT_RUNS: positiveIntegerEnv(2, 256),
@@ -238,6 +240,7 @@ export function loadConfig(env: NodeJS.ProcessEnv) {
     codexWorkdir,
     codexSandbox: parsed.CODEX_SANDBOX,
     codexApprovalPolicy: parsed.CODEX_APPROVAL_POLICY,
+    codexApprovalsReviewer: parsed.CODEX_APPROVALS_REVIEWER,
     codexRunTimeoutMs: parsed.CODEX_RUN_TIMEOUT_MS,
     codexApprovalTimeoutMs: parsed.CODEX_APPROVAL_TIMEOUT_MS,
     codexMaxConcurrentRuns: parsed.CODEX_MAX_CONCURRENT_RUNS,

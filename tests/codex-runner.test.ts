@@ -478,6 +478,12 @@ if (message.method === "thread/fork") {
         threadId: "thread_search",
         cwd: "/repo/a",
         lastTurnId: "turn_1",
+        approvalPolicy: "never",
+        approvalsReviewer: "auto_review",
+        sandbox: "workspace-write",
+      });
+      expect(forkRequests[1]?.params).toMatchObject({
+        approvalPolicy: "never", approvalsReviewer: "auto_review", sandbox: "workspace-write",
       });
       expect(forkRequests[1]?.params).not.toHaveProperty("lastTurnId");
     } finally {

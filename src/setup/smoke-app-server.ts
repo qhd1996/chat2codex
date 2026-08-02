@@ -10,6 +10,7 @@ import { readPackageVersion } from "../package-info.js";
 
 type SmokeMode = "handshake" | "turn" | "approval";
 type ApprovalPolicy = "untrusted" | "on-request" | "never";
+type ApprovalsReviewer = "auto_review" | "user";
 type SandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
 
@@ -25,6 +26,7 @@ interface SmokeOptions {
   model?: string;
   prompt: string;
   approvalPolicy: ApprovalPolicy;
+  approvalsReviewer: ApprovalsReviewer;
   approvalDecision: ApprovalDecision;
   sandbox: SandboxMode;
 }
@@ -108,7 +110,7 @@ export async function runAppServerSmoke(argv: string[]): Promise<void> {
     const threadResult = await session.request("thread/start", {
       cwd,
       approvalPolicy: options.approvalPolicy,
-      approvalsReviewer: "user",
+      approvalsReviewer: options.approvalsReviewer,
       sandbox: options.sandbox,
       ...(options.model ? { model: options.model } : {}),
     });
@@ -480,6 +482,7 @@ function parseArgs(argv: string[]): SmokeOptions {
     model: process.env.CODEX_MODEL || undefined,
     prompt: defaultPrompt,
     approvalPolicy: "never",
+    approvalsReviewer: parseApprovalsReviewer(process.env.CODEX_APPROVALS_REVIEWER) ?? "auto_review",
     approvalDecision: "accept",
     sandbox: "read-only",
   };
@@ -530,6 +533,14 @@ function parseArgs(argv: string[]): SmokeOptions {
       options.approvalPolicy = approvalPolicy;
       continue;
     }
+    if (arg === "--approvals-reviewer") {
+      const reviewer = parseApprovalsReviewer(requireValue(argv, ++index, arg));
+      if (!reviewer) {
+        throw new Error("--approvals-reviewer must be auto_review or user.");
+      }
+      options.approvalsReviewer = reviewer;
+      continue;
+    }
     if (arg === "--approval-decision") {
       const decision = parseApprovalDecision(requireValue(argv, ++index, arg));
       if (!decision) {
@@ -577,6 +588,7 @@ Options:
   --model <name>            optional Codex model override
   --prompt <text>           prompt for --mode turn
   --approval-policy <name>  default: never; approval mode defaults to untrusted
+  --approvals-reviewer <r>  default: CODEX_APPROVALS_REVIEWER or auto_review
   --approval-decision <d>   default: accept
   --sandbox <mode>          default: read-only; approval mode defaults to workspace-write
 `);
@@ -602,6 +614,10 @@ function parseApprovalPolicy(value: string | undefined): ApprovalPolicy | null {
     return value;
   }
   return null;
+}
+
+function parseApprovalsReviewer(value: string | undefined): ApprovalsReviewer | null {
+  return value === "auto_review" || value === "user" ? value : null;
 }
 
 function parseApprovalDecision(value: string | undefined): ApprovalDecision | null {

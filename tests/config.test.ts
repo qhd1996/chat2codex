@@ -223,6 +223,20 @@ describe("loadConfig", () => {
     expect(config.codexApprovalTimeoutMs).toBe(30_000);
   });
 
+  test("defaults approvals to auto review and accepts only the explicit user rollback", () => {
+    const defaults = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex" });
+    const rollback = loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex",
+      CODEX_APPROVALS_REVIEWER: "user",
+    });
+    expect(defaults).toMatchObject({ codexApprovalsReviewer: "auto_review", codexSandbox: "workspace-write" });
+    expect(rollback.codexApprovalsReviewer).toBe("user");
+    expect(() => loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex",
+      CODEX_APPROVALS_REVIEWER: "guardian_subagent",
+    })).toThrow();
+  });
+
   test("allows disabling idle app-server eviction with a zero TTL", () => {
     const config = loadConfig({
       FEISHU_APP_ID: "cli_test",

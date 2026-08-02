@@ -61,6 +61,12 @@ describe("app-server smoke approval validation", () => {
 
     try {
       await expect(runApprovalSmoke(fixture)).resolves.toBeUndefined();
+      const recorded = (await readFile(fixture.receivedPath, "utf8"))
+        .trim().split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(recorded.find((message) => message.method === "thread/start")?.params).toMatchObject({
+        approvalPolicy: "untrusted", approvalsReviewer: "auto_review", sandbox: "workspace-write",
+      });
       expect(await approvalResponse(fixture)).toMatchObject({
         id: "approval_1",
         result: { decision: "accept" },
@@ -68,6 +74,25 @@ describe("app-server smoke approval validation", () => {
     } finally {
       await fixture.cleanup();
     }
+  });
+
+  test("allows an explicit user reviewer rollback without changing approval sandbox", async () => {
+    const fixture = await createSmokeFixture({
+      method: "item/commandExecution/requestApproval",
+      params: validApprovalParams({ availableDecisions: null }),
+    }, true);
+    try {
+      await expect(runAppServerSmoke([
+        "--codex-bin", fixture.executable, "--cwd", fixture.cwd, "--mode", "approval",
+        "--approvals-reviewer", "user", "--approval-decision", "accept", "--timeout-ms", "2000",
+      ])).resolves.toBeUndefined();
+      const recorded = (await readFile(fixture.receivedPath, "utf8"))
+        .trim().split(/\r?\n/u)
+        .map((line) => JSON.parse(line) as Record<string, unknown>);
+      expect(recorded.find((message) => message.method === "thread/start")?.params).toMatchObject({
+        approvalPolicy: "untrusted", approvalsReviewer: "user", sandbox: "workspace-write",
+      });
+    } finally { await fixture.cleanup(); }
   });
 
   test("rejects a file approval before counting it when required params are missing", async () => {

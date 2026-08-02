@@ -685,7 +685,7 @@ export class CodexRunner {
       excludeTurns: true,
       cwd: input.cwd ?? null,
       approvalPolicy: this.config.codexApprovalPolicy,
-      approvalsReviewer: "user",
+      approvalsReviewer: this.config.codexApprovalsReviewer,
       sandbox: this.config.codexSandbox,
       ...(input.lastTurnId ? { lastTurnId: input.lastTurnId } : {}),
       ...(this.config.codexModel ? { model: this.config.codexModel } : {}),
@@ -5258,7 +5258,7 @@ function buildThreadStartParams(config: BridgeConfig, input: CodexRunInput): Rec
   return {
     cwd: input.cwd,
     approvalPolicy: config.codexApprovalPolicy,
-    approvalsReviewer: "user",
+    approvalsReviewer: config.codexApprovalsReviewer,
     sandbox: config.codexSandbox,
     ...(config.codexModel ? { model: config.codexModel } : {}),
   };
@@ -5269,7 +5269,7 @@ function buildThreadResumeParams(config: BridgeConfig, input: CodexRunInput): Re
     threadId: input.threadId,
     cwd: input.cwd,
     approvalPolicy: config.codexApprovalPolicy,
-    approvalsReviewer: "user",
+    approvalsReviewer: config.codexApprovalsReviewer,
     sandbox: config.codexSandbox,
     ...(config.codexModel ? { model: config.codexModel } : {}),
   };

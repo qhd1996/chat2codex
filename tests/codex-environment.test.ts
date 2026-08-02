@@ -20,6 +20,7 @@ describe("Codex child environment", () => {
       BRIDGE_STATE_PATH: "/tmp/state.json",
       CODEX_WORKDIR: "/tmp/workspace",
       CODEX_SANDBOX: "workspace-write",
+      CODEX_APPROVALS_REVIEWER: "auto_review",
       CODEX_MAX_CONCURRENT_RUNS: "2",
       CODEX_APP_SERVER_IDLE_TTL_MS: "900000",
       CODEX_MAX_APP_SERVER_SESSIONS: "8",
@@ -64,6 +65,7 @@ describe("Codex child environment", () => {
     expect(childEnv.BRIDGE_STATE_PATH).toBeUndefined();
     expect(childEnv.CODEX_WORKDIR).toBeUndefined();
     expect(childEnv.CODEX_SANDBOX).toBeUndefined();
+    expect(childEnv.CODEX_APPROVALS_REVIEWER).toBeUndefined();
     for (const key of [
       "CODEX_MAX_CONCURRENT_RUNS",
       "CODEX_APP_SERVER_IDLE_TTL_MS",

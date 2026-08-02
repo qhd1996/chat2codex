@@ -115,6 +115,9 @@ describe("Codex app-server session manager", () => {
       expect(received.filter(({ message }) => message.method === "thread/resume")).toHaveLength(0);
       expect(received.filter(({ message }) => message.method === "turn/start")).toHaveLength(2);
       expect(new Set(received.map((entry) => entry.pid))).toHaveLength(1);
+      expect(received.find(({ message }) => message.method === "thread/start")?.message.params).toMatchObject({
+        approvalPolicy: "on-request", approvalsReviewer: "auto_review", sandbox: "workspace-write",
+      });
     } finally {
       await runner.dispose?.();
       await rm(fixture.tempDir, { recursive: true, force: true });
@@ -775,7 +778,7 @@ describe("Codex app-server session manager", () => {
 
   test("evicts a crashed idle child and resumes the thread in a fresh process", async () => {
     const fixture = await createSessionFakeCodex();
-    const runner = createRunner(fixture.fakeCodex, fixture.tempDir);
+    const runner = createRunner(fixture.fakeCodex, fixture.tempDir, { CODEX_APPROVALS_REVIEWER: "user" });
 
     try {
       const first = await runner.run({
@@ -800,6 +803,9 @@ describe("Codex app-server session manager", () => {
       const received = await readMessages(fixture.receivedPath);
       expect(received.filter(({ message }) => message.method === "initialize")).toHaveLength(2);
       expect(received.filter(({ message }) => message.method === "thread/resume")).toHaveLength(1);
+      expect(received.find(({ message }) => message.method === "thread/resume")?.message.params).toMatchObject({
+        approvalPolicy: "on-request", approvalsReviewer: "user", sandbox: "workspace-write",
+      });
     } finally {
       await runner.dispose?.();
       await rm(fixture.tempDir, { recursive: true, force: true });
