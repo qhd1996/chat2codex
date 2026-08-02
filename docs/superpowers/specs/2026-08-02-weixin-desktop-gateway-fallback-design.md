@@ -1,0 +1,520 @@
+# Weixin Desktop Authenticated Loopback Gateway Fallback Design
+
+Status: `DRAFT FOR HAODA REVIEW`
+
+Direction approved: 2026-08-02
+
+Implementation authorization: **not granted**. This specification must be
+reviewed and approved by Haoda before an implementation plan or production code
+is written. Installation/trust, `~/.codex` changes, Desktop restart, production
+writes, Computer Use, and real Weixin sends remain separate confirmation gates.
+
+## 1. Decision and scope
+
+Phase 3 will use a Chat2Codex-owned authenticated HTTP Gateway bound only to
+`127.0.0.1`, a supported Desktop MCP surface for status and explicit ownership
+commands, and trusted `UserPromptSubmit` and `Stop` hooks. The design preserves
+the accepted `DESKTOP-001..003` outcomes: the exact root `threadId`, one durable
+generation owner, synchronous fail-closed prompt enforcement, identifier-only
+wake-up, authoritative Codex reread, exactly-once durable outbox insertion,
+high-water recovery, and exclusion of unbound or child threads.
+
+The installed AppX already runs its internal app-server. This design neither
+repairs nor reinstalls AppX and does not require an external process to launch
+the protected AppX binaries. It never uses development-only `plugin/list` and
+does not treat an MCP dashboard or takeover button as an enforcement boundary.
+
+### In scope
+
+- Authenticated, redacted loopback status for the current Desktop root thread.
+- Explicit bridge-to-Desktop and Desktop-to-bridge ownership transfer.
+- A generation-based lease plus a start fence that prevents a prompt/start race.
+- Durable binding, reconciliation cursor, idempotency, and recovery state.
+- Authoritative mirroring of Desktop text and explicitly declared files into
+  the existing ordered durable outbox.
+- Behavior verification for all seven Phase 3 primitives.
+
+### Out of scope
+
+- AppX repair/reinstall or external execution of its bundled binaries.
+- Any use of `plugin/list` as discovery, authentication, or enforcement.
+- Autonomous Desktop takeover, lease stealing, or expiry-based writer transfer.
+- Exporting arbitrary Desktop history, unbound roots, subagents, or child threads.
+- Copying/importing a bridge-only thread into Desktop and calling it the same
+  thread. A copied conversation never satisfies `DESKTOP-002`.
+- Applying configuration, installing/trusting hooks, restarting Desktop,
+  deploying to production, Computer Use, or real Weixin sends under this spec-only
+  authorization.
+
+## 2. Considered approaches
+
+### A. Repair/reinstall AppX and externally attach to its app-server
+
+Rejected. Read-only evidence shows the AppX internal app-server is alive, while
+ordinary external processes cannot launch the protected binaries and no supported
+external listener is exposed. Repair cannot supply the missing binding table,
+generation lease, or cross-process writer fence.
+
+### B. Desktop MCP dashboard with a takeover button
+
+Rejected. It can present status but ordinary composer prompts can bypass it. It
+cannot satisfy prompt-submit blocking or prove one writer.
+
+### C. Authenticated loopback Gateway plus trusted hooks and MCP
+
+Selected. MCP provides visible, explicit control; `UserPromptSubmit` provides the
+synchronous fail-closed entrypoint; the Gateway owns durable generation CAS,
+start fences, reconciliation, and outbox idempotency. This is the only current
+route that preserves all accepted outcomes without depending on unsupported AppX
+execution.
+
+## 3. Trust model and invariants
+
+The design assumes the Windows user account and Chat2Codex production directory
+are the administrative trust boundary. Loopback location alone is not
+authentication. Every request is authenticated and capability-scoped. A process
+with administrative access to the user's token files is outside this threat model,
+but token disclosure through URLs, logs, process arguments, Desktop output, or
+state files is prohibited.
+
+The following invariants are non-negotiable:
+
+1. A concrete root `threadId` has at most one current owner: `bridge`, `desktop`,
+   `uncertain`, or `disabled`.
+2. Every successful ownership transfer increments a positive, monotonic
+   `generation`. Generations are never reused or decremented.
+3. Lease expiry, heartbeat loss, Gateway restart, or incomplete reconciliation
+   yields `uncertain`; none grants ownership to another writer.
+4. A bridge turn and a Desktop prompt both validate owner plus generation before
+   starting work. A Desktop prompt additionally creates a durable start fence.
+5. A start fence or unreconciled Desktop turn prevents bridge takeover. Timeout
+   changes it to `uncertain`, never to free ownership.
+6. Hook output is never authoritative result content. `Stop` only wakes a
+   reconciler; supported Codex read APIs supply text, turn state, and declared
+   outputs.
+7. High-water state advances in the same transaction that inserts all newly
+   eligible outbox records.
+8. Only an explicitly bound concrete root `threadId` may export to its bound
+   conversation. Root `session_id` alone never authorizes child export.
+9. Authentication failure, missing binding, stale generation, state-save failure,
+   Gateway timeout, unknown owner, or read ambiguity fails closed.
+10. A binding is created only after both bridge and Desktop can read the same
+    concrete root from the same supported Codex persistence.
+
+### 3.1 Shared Codex persistence precondition
+
+Current production explicitly sets `CODEX_HOME=F:\Chat2Codex\codex-home`; the
+Desktop app normally uses the user's Codex home. Shared persistence is therefore
+a high-risk precondition, not an assumption. Before schema migration or binding,
+a disposable proof must demonstrate that a newly created bridge root appears in
+Desktop and that both sides read the same concrete `threadId` and authoritative
+turn digest through supported APIs after restart. No database file is copied,
+merged, or rewritten to manufacture this result.
+
+If the two products cannot safely use the same supported persistence root, Phase 3
+stops at design review. Existing threads under the isolated production Codex home
+remain bridge-only and unbound. Moving or changing `CODEX_HOME`, importing existing
+history, or changing the production launcher is a separate production/configuration
+action requiring explicit approval and a hash-verified migration/rollback rehearsal.
+
+## 4. Architecture
+
+```mermaid
+flowchart LR
+  Desktop["Codex Desktop root thread"] --> MCP["Supported Desktop MCP tools"]
+  Desktop --> PromptHook["Trusted UserPromptSubmit hook"]
+  Desktop --> StopHook["Trusted Stop hook"]
+  MCP --> Auth["127.0.0.1 authenticated Gateway"]
+  PromptHook --> Auth
+  StopHook --> Auth
+  Bridge["Chat2Codex BridgeRunner"] --> Owner["OwnershipCoordinator"]
+  Auth --> Owner
+  Owner <--> State["Schema v6 binding and lease state"]
+  StopHook --> Wake["Durable reconciliation wake-up"]
+  Wake --> Reconciler["Authoritative Codex reconciler"]
+  Reconciler --> Read["Supported thread/read and turn/item APIs"]
+  Read --> Reconciler
+  Reconciler --> Outbox["Existing ordered durable outbox"]
+  State <--> Reconciler
+  Outbox --> Weixin["Bound Weixin conversation"]
+```
+
+### 4.1 Loopback Gateway
+
+The HTTP server binds explicitly to IPv4 `127.0.0.1`; it does not bind `0.0.0.0`,
+LAN addresses, IPv6, or a browser-facing origin. It exposes no unauthenticated
+health, metrics, status, or CORS endpoint. Request bodies and responses are
+strictly schema-validated and bounded. Logs contain request ID, caller role,
+endpoint class, decision code, and latency only; they never contain tokens, HMACs,
+prompt text, sender identity, file paths, or result content.
+
+The Gateway is a thin authenticated transport over `OwnershipCoordinator` and
+the reconciler. It runs inside the one production Chat2Codex writer process and
+delegates every mutation through the existing serialized state transaction; an
+HTTP handler never writes a sidecar or state file directly. The bridge calls the
+same coordinator in-process so Desktop and bridge cannot acquire ownership under
+different rule sets. If that process is down, hooks block and no second Gateway
+writer starts.
+
+The minimal surface is versioned and closed: authenticated `status`,
+`takeover-desktop`, `release-bridge`, `user-prompt-submit`, and `stop-wake`. All
+parameters use bounded request bodies, not query strings. Unknown routes and
+methods fail closed. The server validates the loopback peer, expected `Host`, and
+content type; disables CORS and redirects; and applies short request deadlines and
+bounded concurrent connections.
+
+### 4.2 Supported Desktop MCP surface
+
+The MCP surface provides only:
+
+- redacted status for the current concrete root `threadId`;
+- explicit `take_over_for_desktop(expectedGeneration)`;
+- explicit `release_to_bridge(expectedGeneration)`; and
+- bounded recovery guidance when state is blocked or uncertain.
+
+Status may show a sanitized task label, shortened task/conversation identity,
+current owner, generation, lifecycle state, last reconciliation time, and whether
+an outbox obligation exists. It does not return prompts, chat/sender IDs, absolute
+paths, credentials, hook keys, raw output, or approval values. MCP discovery or
+status never grants ownership.
+
+### 4.3 Trusted hooks
+
+`UserPromptSubmit` is the enforcement point for an ordinary Desktop root prompt.
+The hook sends no raw prompt. It sends the root `session_id`, a SHA-256 prompt
+digest, hook request ID, and timestamp. The Gateway permits only a bound root whose
+concrete `threadId` is proven to equal that root `session_id`, whose owner is
+`desktop`, whose generation and lease are current, and which has neither an
+active turn nor an unresolved fence. The permit transaction creates the start
+fence before returning success.
+
+If the Gateway cannot prove every condition, the hook returns the supported block
+decision or exits with code 2 and one concise remediation message. Gateway
+unavailability is a block, not a bypass. The implementation must behavior-prove
+that the installed hook contract cannot silently continue after timeout or error.
+
+`Stop` sends only event ID, root `session_id`, concrete `threadId`, optional
+`turnId`, and observed timestamp. It may enqueue an idempotent wake-up. Any hook
+text, claimed result, or file list is ignored. Loss or duplication of `Stop` is
+safe because restart and periodic recovery reconcile from authoritative state.
+
+### 4.4 Authoritative reconciler
+
+For each bound Desktop-owned or uncertain root, the reconciler reads the thread
+through supported Codex app-server APIs compatible with the pinned protocol. It
+must validate the concrete root `threadId`, ordered turns, terminal state, item
+shape, and pagination before accepting content. Desktop UI text, hook payloads,
+SQLite scraping, log scraping, and undocumented WebSocket transport are not
+authoritative sources.
+
+The reconciler begins after the binding anchor and advances in authoritative turn
+order. It extracts final text and the existing explicit output declaration only.
+Declared files pass the Phase 2 ownership, root, quota, symlink, sniffing, staging,
+and hashing gates before insertion into the ordered outbox. A read/schema/version
+error leaves the fence and high-water mark unchanged and moves ownership to
+`uncertain`.
+
+## 5. Strong authentication protocol
+
+### 5.1 Keys and capabilities
+
+Provision independent 256-bit random keys for `prompt_hook`, `stop_hook`, and
+`desktop_mcp`. Each key has an immutable endpoint allowlist. The prompt key cannot
+take over or release; the Stop key can only enqueue a wake; the MCP key cannot
+submit hook decisions. Keys live in separate owner-only token files outside the
+durable bridge state and are never placed in command-line arguments, URLs, MCP
+tool results, logs, or source control. Windows ACL and fresh-process behavior must
+be verified before trust.
+
+Creating token files or referencing them from `~/.codex` is an installation action
+and remains separately confirmed.
+
+### 5.2 Signed request
+
+Every request carries protocol version, key ID, caller role, UUID request ID, UTC
+timestamp, 128-bit random nonce, body SHA-256, and HMAC-SHA-256 over the canonical
+method, path, metadata, and body digest. Comparison is constant-time. The secret
+itself is never transmitted.
+
+Every response is also authenticated with the caller's scoped key and binds the
+protocol version, request ID, request nonce, decision code, generation, optional
+fence ID, response body digest, and server timestamp. The hook/MCP client verifies
+that MAC, freshness, and exact request binding before honoring a permit or status.
+A process that binds the port while the real Gateway is absent cannot manufacture
+a valid allow response. An unsigned, stale, mismatched, redirected, or malformed
+response is a block.
+
+The Gateway rejects unknown key IDs/roles, wrong endpoint scope, invalid MAC, body
+digest mismatch, timestamps outside a 30-second window, reused nonce, oversized
+body, or duplicate mutation request with different bytes. A bounded in-memory
+nonce cache covers the freshness window. Durable mutation request IDs and event
+IDs make takeover, release, start-fence creation, and Stop wake-up idempotent
+across Gateway restarts. Read-only status replay has no state effect.
+
+Authentication errors return one generic denial and do not reveal whether a
+thread or task exists. Clock skew, token rotation, and protocol mismatch have
+distinct local diagnostic codes but no secret-bearing response.
+
+### 5.3 Rotation and compromise
+
+Rotation creates new scoped keys, atomically changes the accepted key IDs, and
+revokes old IDs after a bounded overlap. A suspected leak immediately blocks new
+Desktop starts, marks affected Desktop leases `uncertain`, rotates all relevant
+keys, and requires authoritative reconciliation before another owner is granted.
+
+## 6. Durable state and ownership state machine
+
+Phase 3 requires schema v6. It is an additive successor to the full current
+schema v5 and must preserve Phase 2 media/outbox and UsageAdvisor partitions and
+invariants. A separate sidecar was rejected because ownership,
+high-water advancement, and outbox insertion must be one atomic state transaction.
+Older schema-v5 binaries therefore fail closed instead of silently dropping an
+active lease.
+
+The conceptual binding record is:
+
+```json
+{
+  "bindingId": "opaque UUID",
+  "rootThreadId": "Codex UUID",
+  "taskId": "Chat2Codex task ID",
+  "conversationId": "bound conversation ID",
+  "adapterId": "weixin adapter partition",
+  "owner": "bridge | desktop | uncertain | disabled",
+  "generation": 12,
+  "ownerInstanceId": "ephemeral process identity",
+  "leaseExpiresAt": "UTC timestamp",
+  "bindingAnchorTurnId": "last turn that predates export eligibility",
+  "lastReconciledTurnId": "opaque turn ID or null",
+  "lastMirroredTurnId": "opaque turn ID or null",
+  "lastAuthoritativeDigest": "SHA-256 or null",
+  "activeStartFence": null,
+  "pendingWakeIds": [],
+  "createdAt": "UTC timestamp",
+  "updatedAt": "UTC timestamp"
+}
+```
+
+`ownerInstanceId` and expiry detect liveness but do not authorize takeover.
+Authentication keys are not part of this record. Pending wake IDs and durable
+mutation IDs are bounded. Raw prompt, result text, file path, sender, approval,
+and credential data are forbidden.
+
+### 6.1 Ownership transitions
+
+```mermaid
+stateDiagram-v2
+  [*] --> bridge: bind Weixin root
+  bridge --> desktop: explicit takeover, CAS generation + 1
+  desktop --> desktop: UserPromptSubmit creates start fence
+  desktop --> uncertain: lease/fence expiry, crash, read ambiguity
+  desktop --> bridge: reconcile complete, explicit release, CAS generation + 1
+  bridge --> uncertain: owner/process ambiguity or failed durable transition
+  uncertain --> bridge: authoritative reconcile and explicit recovery
+  uncertain --> desktop: authoritative reconcile and explicit takeover
+  bridge --> disabled: safe feature rollback
+  desktop --> disabled: reconcile, revoke Desktop, retire binding
+  uncertain --> disabled: manual evidence-backed recovery only
+```
+
+Takeover is a compare-and-swap over binding ID, expected owner, expected generation,
+no active/pending bridge turn, no start fence, and a completed reconciliation
+cursor. The successful transaction increments generation and changes owner. The
+bridge's pre-turn gate uses the same expected generation.
+
+`UserPromptSubmit` permit is also a state mutation. It stores a one-time fence
+containing generation, request ID, prompt digest, and issued time. While the fence
+exists, bridge takeover and bridge turn start fail. Hook retry with the same
+authenticated request is idempotent; a different body for the same request ID is
+rejected. If no authoritative turn can be matched to the fence, the binding becomes
+`uncertain`; elapsed time never clears it automatically.
+
+Desktop release first reconciles the fenced/completed turn, atomically inserts any
+new outbox entries and advances high water, then increments generation and returns
+owner to `bridge`. Bridge takeover cannot precede that sequence.
+
+## 7. High-water recovery and idempotent outbox
+
+At binding time, `bindingAnchorTurnId` records the last authoritative root turn.
+Nothing at or before the anchor is exportable. For each later terminal root turn,
+the reconciler derives a canonical result digest and ordered delivery parts.
+
+Each outbox identity is deterministic. `generation` is the origin generation
+recorded on the matching start fence, not whichever generation happens to be
+current during later recovery:
+
+```text
+desktop:<bindingId>:<generation>:<turnId>:<partIndex>:<sha256>
+```
+
+Reinsertion with the same identity and bytes is a no-op. The same logical position
+with different bytes is an integrity conflict: no high-water advancement, no
+delivery, and owner becomes `uncertain`. The transaction inserts every text/media
+part, records the authoritative digest, clears the matched start fence/wake, and
+advances `lastReconciledTurnId` and `lastMirroredTurnId` together. A crash commits
+all or none. Existing outbox retry and stable Weixin client ID behavior provides
+delivery idempotency without rerunning Codex.
+
+On Gateway/bridge startup, reconciliation scans every binding with owner
+`desktop` or `uncertain`, every active fence, and every pending wake. It rereads
+from the binding anchor/high water, not from the notification. A missed Stop,
+duplicate Stop, crash after Desktop completion, crash before outbox insertion,
+and crash after insertion all converge to the same durable state. An unavailable
+Codex read API retains obligations and blocks owner transfer.
+
+## 8. Root and child/subagent identity
+
+For a resumed root, official Codex source establishes `session_id == rootThreadId`.
+A child/subagent has a distinct concrete `threadId` while retaining the root
+`session_id`. Consequently:
+
+- bindings are keyed only by the concrete root `threadId`;
+- `session_id` may locate a candidate root for ordinary root prompt enforcement,
+  but never authorizes export by itself;
+- any event that exposes a concrete `threadId` must equal the bound root;
+- a child concrete `threadId`, even with the bound root `session_id`, is unbound,
+  non-exportable, and cannot acquire the root generation;
+- child output, declared files, Stop events, and wake-ups never enter the root
+  outbox; and
+- if the installed hook payload cannot distinguish the root prompt from a child
+  context as required, the prompt blocks and the primitive fails acceptance.
+
+There is no automatic child binding. A future concrete-child export feature would
+require a separate accepted change and a new explicit binding.
+
+## 9. Failure behavior
+
+| Condition | Required behavior |
+| --- | --- |
+| Gateway down, timeout, or protocol mismatch | `UserPromptSubmit` blocks; no Desktop turn is accepted for the claimed bound path |
+| Missing/disabled binding | Block with redacted recovery guidance |
+| Stale generation or wrong owner | Block; never refresh or transfer implicitly |
+| Lease or start-fence expiry | Mark `uncertain`; reconcile; do not grant a writer |
+| State save/CAS failure | Deny operation and preserve previous durable owner |
+| Duplicate signed request or Stop event | Return/replay the same idempotent outcome; no duplicate wake/outbox |
+| `thread/read` unavailable or malformed | Retain fence/high water/outbox obligations; mark `uncertain` |
+| Authoritative content differs for an existing outbox identity | Quarantine as integrity conflict; do not deliver or advance |
+| Token authentication failure | Generic denial, no existence leak, no state mutation |
+| Child or unbound thread event | Ignore for export, record bounded redacted diagnostic |
+| Gateway crash during ownership transfer | Atomic CAS yields old or new generation; restart reconciles before new work |
+
+## 10. Seven-primitive behavior acceptance matrix
+
+Static schemas, source inspection, unit tests, and a status screenshot are not
+sufficient. Every row needs installed behavior evidence on a disposable bound
+root, followed by the named real Desktop/Weixin evidence where specified.
+
+| Primitive | Behavior test | Pass condition | Required evidence |
+| --- | --- | --- | --- |
+| 1. Desktop status/MCP surface | First prove shared supported persistence for a disposable root; open the bound root, query status, restart Gateway, query again; use wrong key and unavailable Gateway | Both sides read the identical concrete root before binding; supported MCP loads without `plugin/list`; state is authenticated/redacted/current after reconnect; auth failures reveal no binding data | Shared-persistence/thread digest transcript, timestamped Desktop capture, authenticated decision logs without secrets, before/after state hash, reconnect transcript |
+| 2. `UserPromptSubmit` lease enforcement | Submit under bridge owner, current Desktop owner, stale generation, missing binding, `uncertain`, bad auth, and Gateway down | Only current Desktop owner can create one durable start fence; every negative case blocks through the installed hook | Hook exit/decision records, generation/fence snapshots, Desktop blocked-state capture, zero unexpected turn IDs |
+| 3. Same-thread takeover | Create via Weixin/bridge, transfer bridge→Desktop→bridge, run one turn under each owner | Every turn uses the exact original root `threadId`; generations increase; no cloned/copied thread; no overlapping start | Thread/read transcript, thread IDs, CAS log, process/turn timeline, state hashes |
+| 4. Stop/completion wake-up | Complete a Desktop turn with one Stop, duplicate Stop, missing Stop, and crash before wake handling; inject false hook content | Stop carries IDs only; duplicates are harmless; missing wake is recovered; injected content is ignored | Redacted hook envelopes, durable wake IDs, restart/reconcile logs, proof hook text never becomes outbox text |
+| 5. Authoritative `thread/read` | Complete bound text plus declared file, then reread using supported APIs; make read unavailable/malformed | Mirrored bytes and hashes match authoritative read/staged file; failure advances neither fence nor high water | Protocol transcript/version, content/file SHA-256, ordered outbox snapshot, negative read log |
+| 6. Single-writer competition | Race bridge start, Desktop prompt, takeover/release, stale request, expired lease, and crash at each CAS/fence boundary | Exactly one owner/generation/start wins; stale or uncertain participants fail closed; no second turn starts | Deterministic race tests, installed timing trace, generation history, zero concurrent turns for root |
+| 7. Unbound/child exclusion | Complete an ordinary unbound Desktop root and a child/subagent sharing the bound root `session_id`; restart reconciliation | Neither concrete unbound/child `threadId` creates wake/outbox/export; root binding remains unchanged | Root/child identity transcript, outbox before/after hash, zero delivery IDs, redacted exclusion diagnostic |
+
+The matrix must additionally prove no real Weixin delivery occurs before the
+separate external-send confirmation. Automated adapter fakes may verify ordering
+and idempotency before that gate.
+
+## 11. Test and evidence plan
+
+Before installation, automated verification covers:
+
+- HMAC canonicalization, scoped keys, constant-time validation, freshness, replay,
+  rotation, body bounds, and redacted logs;
+- binding/state coercion, schema-v5-to-v6 migration on copies, future-schema
+  refusal, exact v6 backup hash, and rollback transform;
+- a disposable shared-Codex-home compatibility rehearsal that proves identical
+  `threadId`/turn digests and leaves existing isolated production roots untouched;
+- every legal and illegal ownership transition, stale generation, start fence,
+  expiry-to-uncertain, and crash point;
+- hook permit/block response construction with no prompt persistence;
+- Stop idempotency, missed wake, authoritative pagination/read errors, high-water
+  invariants, outbox identity conflicts, restart convergence, and no Codex rerun;
+- root/child identity negatives and absence of raw prompt/sender/path/credential
+  data from Gateway state/logs; and
+- full typecheck, contracts, deterministic test shards, build, audit, package,
+  state-copy migration/rollback, and zero residual process identities.
+
+Installed evidence must record exact package/app/Codex versions and hashes, hook
+hash/trust state, MCP status, Gateway bind address/process identity, scoped-key
+file ACL results, protocol transcripts with secrets removed, state/outbox hashes,
+screenshots/timestamps, and the seven-row results. A killed or timed-out run is
+negative evidence and never counts as passing.
+
+Real acceptance then separately confirms the intended test direct chat, fresh
+Desktop/Weixin handles, same root thread, text then image/file ordering, retry,
+restart, deduplication, and no Codex rerun. Computer Use initialization and the
+final Weixin send each require action-time confirmation.
+
+## 12. Rollback
+
+### 12.1 Immediate safe feature rollback
+
+1. Enter maintenance mode and block new bridge/Desktop turn starts.
+2. Authoritatively reconcile every binding, fence, wake, and outbox obligation.
+3. Resolve all `uncertain` bindings manually; do not infer completion from time.
+4. CAS each safe binding to `bridge` with generation + 1 and disable Desktop
+   takeover.
+5. Rotate/revoke Desktop MCP and Stop keys. Keep the trusted prompt hook in
+   fail-closed bridge-only mode so bound roots cannot be edited concurrently.
+6. Verify one bridge writer, no Desktop fence/turn, and stable outbox/high-water
+   hashes before accepting bridge work.
+
+This removes Phase 3 functionality without downgrading state and is the preferred
+operational rollback. It still requires production-write and hook/config
+confirmations when executed.
+
+### 12.2 Full uninstall or package downgrade
+
+1. Complete immediate rollback and archive a hash-verified schema-v6 backup.
+2. Retire every formerly shared root binding from bridge execution or move the
+   task to a fresh bridge-only thread; same-thread handoff is explicitly withdrawn.
+3. Prove no active fence, Desktop turn, pending wake, unreconciled turn, or
+   non-delivered outbox obligation remains.
+4. On a copy, transform v6 to v5 by removing only fully reconciled Gateway
+   records; verify tasks, threads, outbox, and media hashes/counts. An old v5
+   binary must fail closed on untransformed v6.
+5. With separate confirmation, uninstall/disable MCP and hooks, revoke/delete
+   scoped keys, stop Gateway, restore the verified v5 copy, and start the old
+   package as one bridge writer.
+6. Run old-version load/smoke and confirm the system no longer claims
+   `DESKTOP-001..003`.
+
+If any binding cannot be reconciled, full uninstall/downgrade stops. The v6
+backup and fail-closed hook remain; data is not discarded to force rollback.
+
+## 13. Delivery estimate and change
+
+The earlier fallback estimate was 2–2.5 engineering days plus Desktop/Weixin E2E.
+The current design increases implementation and automated verification to
+**3–3.5 engineering days** because strong scoped HMAC authentication, persistent
+anti-replay/idempotency, a durable start fence, schema-v6 migration/rollback,
+crash-safe high-water reconciliation, and child-thread negative coverage are now
+explicit gates.
+
+After code passes automated gates, installed Hook/MCP/Gateway setup and the seven
+Desktop behaviors require **0.5–1 engineering day**, and separately confirmed
+real Weixin plus rollback drills require about **0.5 engineering day**. Total is
+therefore **4–5 engineering days**, excluding approval wait, unavailable Codex
+behavior, or external product defects. The obsolete 1–3 hour AppX repair path is
+removed from the critical path; no repair/reinstall time is planned.
+
+If installed `UserPromptSubmit` cannot behavior-block every required negative case
+or cannot distinguish the root context sufficiently to prevent child inheritance,
+the design is not implementable as specified. Work returns to requirements/design
+review immediately; it does not degrade to dashboard-only mirroring.
+
+## 14. Review and authorization gates
+
+This document is the only authorized deliverable in the current step. After it is
+committed, Haoda must review it. Before that review is approved:
+
+- no implementation plan may be written;
+- no Gateway, state schema, hook, MCP, or reconciler code may be implemented;
+- no `~/.codex` file, Hook trust record, Desktop process, AppX package, production
+  state, or Weixin conversation may be changed; and
+- the overall Goal remains active with all seven Phase 3 primitives behavior-
+  unverified.
