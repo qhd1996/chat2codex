@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "packageVersion": "0.8.0-desktop.1",
+  "windows": { "supported": ["win32-x64"], "unverified": ["win32-arm64"] },
+  "node": ">=20.12.0",
+  "codexCli": "0.146.0",
+  "desktop": "Task 12 installed behavior required",
+  "stateSchemas": { "read": [4, 5, 6], "write": 6 },
+  "hooks": {
+    "scripts/codex-hooks/hook-client.mjs": "97d50e2e311e352cde674f58eb62eb53e4b956a5255adc6a00c137aaf63d9f00",
+    "scripts/codex-hooks/stop-wake.mjs": "96e6d66f3a9eafca658459c124d33fd4b045de8aba2b998ad21f0930de789169",
+    "scripts/codex-hooks/user-prompt-submit.mjs": "9388ddd4d4900534729dcfc44d14928cb3f8cab306bf6a5cbdd9708ed08745e6"
+  },
+  "requiredDocs": [
+    "docs/windows/lifecycle.md",
+    "docs/windows/compatibility.md",
+    "docs/windows/troubleshooting.md",
+    "docs/quality/clean-windows-e2e-runbook.md"
+  ]
+}

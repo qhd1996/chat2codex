@@ -226,7 +226,7 @@ single-line JSON. When the value is non-empty, all six keys are required, every
 directory must already exist, and canonical paths must be distinct:
 
 ```dotenv
-CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/workspace/workbuddy/Travel","personal":"F:/workspace/workbuddy/Personal","finance":"F:/workspace/workbuddy/Finance","ai_lab":"F:/workspace/workbuddy/AI-Lab","learning":"F:/workspace/workbuddy/Learning"}
+CHAT2CODEX_WORKSPACE_ROUTES={"work":"<drive>:/Users/<you>/Chat2Codex/Work","travel":"<drive>:/Users/<you>/Chat2Codex/Travel","personal":"<drive>:/Users/<you>/Chat2Codex/Personal","finance":"<drive>:/Users/<you>/Chat2Codex/Finance","ai_lab":"<drive>:/Users/<you>/Chat2Codex/AI-Lab","learning":"<drive>:/Users/<you>/Chat2Codex/Learning"}
 ```
 
 If the map is empty, `CODEX_WORKDIR` is the only `work` route. A direct message

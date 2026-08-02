@@ -17,7 +17,7 @@ Record approver, timestamp, exact target, hashes, and scope before each row. App
 | ~/.codex changes | final config and Hook-definition paths under the current Codex Home | required |
 | Hook trust | every exact path and SHA-256 in the Hook SHA-256 manifest | required |
 | Desktop restart | current Desktop process/package identity | required |
-| production write | package, launcher, config, state, and process targets under F:/Chat2Codex | required |
+| production write | package, launcher, config, state, and process targets under the selected `<CHAT2CODEX_HOME>` | required |
 | Computer Use | exact Windows interaction sequence | required |
 | real Weixin send | fresh target conversation/handle and final payload | required immediately before sending |
 

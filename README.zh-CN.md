@@ -129,7 +129,7 @@ Summarize this repository.
 启用 `WEIXIN_NATURAL_ROUTING=true`，并用单行严格 JSON 配置工作区。只要该值非空，就必须同时提供六个 key；目录必须已经存在，且规范化后的路径不得重复：
 
 ```dotenv
-CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/workspace/workbuddy/Travel","personal":"F:/workspace/workbuddy/Personal","finance":"F:/workspace/workbuddy/Finance","ai_lab":"F:/workspace/workbuddy/AI-Lab","learning":"F:/workspace/workbuddy/Learning"}
+CHAT2CODEX_WORKSPACE_ROUTES={"work":"<drive>:/Users/<you>/Chat2Codex/Work","travel":"<drive>:/Users/<you>/Chat2Codex/Travel","personal":"<drive>:/Users/<you>/Chat2Codex/Personal","finance":"<drive>:/Users/<you>/Chat2Codex/Finance","ai_lab":"<drive>:/Users/<you>/Chat2Codex/AI-Lab","learning":"<drive>:/Users/<you>/Chat2Codex/Learning"}
 ```
 
 如果留空，只有 `CODEX_WORKDIR` 会作为 `work` 路由。私聊可以显式选择另一个已经存在的目录；群聊路径仍受 `CODEX_GROUP_ALLOWED_ROOTS` 限制。已有任务始终保留创建时记录的工作区，不会因为后续文字被重新分类。

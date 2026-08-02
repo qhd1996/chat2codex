@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const levels = ["static", "automated", "installed_behavior", "real_e2e"];
-const approvedAuthorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
+const approvedAuthorityCommit = "21a5800c4d725375af256a1e1c827bab75c3f034";
 const verdicts = ["unproven", "pass", "contradicted"];
 const outcomes = ["pass", "fail", "incomplete", "contradicted"];
 const manifestKeys = ["authorityCommit", "evidence", "generatedAt", "manifestId", "repositoryCommit", "schemaVersion", "targets"];
