@@ -88,42 +88,53 @@ const TEMPLATES: Readonly<Record<UsageAdvisorSignalCode, Readonly<SignalTemplate
 };
 
 export class UsageAdvisor {
-  constructor(public readonly state: UsageAdvisorState) {}
+  private readonly currentState: UsageAdvisorState;
+
+  constructor(state: UsageAdvisorState) {
+    this.currentState = cloneState(state);
+  }
+
+  get state(): UsageAdvisorState {
+    return cloneState(this.currentState);
+  }
 
   record(input: { code: UsageAdvisorSignalCode; at?: string }): UsageAdvisorProposal | undefined {
     validateRecordInput(input);
     const at = normalizedTimestamp(input.at);
-    const existing = this.state.aggregates[input.code];
+    const existing = this.currentState.aggregates[input.code];
     const aggregate: UsageAdvisorAggregate = existing
       ? {
           ...existing,
           count: Math.min(Number.MAX_SAFE_INTEGER, existing.count + 1),
-          lastSeenAt: at,
-          recentAt: [...existing.recentAt, at].slice(-USAGE_ADVISOR_LIMITS.recentTimestamps),
+          firstSeenAt: existing.firstSeenAt.localeCompare(at) <= 0 ? existing.firstSeenAt : at,
+          lastSeenAt: existing.lastSeenAt.localeCompare(at) >= 0 ? existing.lastSeenAt : at,
+          recentAt: [...existing.recentAt, at]
+            .sort((left, right) => left.localeCompare(right))
+            .slice(-USAGE_ADVISOR_LIMITS.recentTimestamps),
         }
       : { code: input.code, count: 1, firstSeenAt: at, lastSeenAt: at, recentAt: [at] };
 
-    this.state.aggregates[input.code] = aggregate;
+    this.currentState.aggregates[input.code] = aggregate;
     const definition = TEMPLATES[input.code];
-    if (aggregate.count !== USAGE_ADVISOR_LIMITS.proposalThreshold || this.state.proposals[definition.id]) {
+    if (aggregate.count !== USAGE_ADVISOR_LIMITS.proposalThreshold || this.currentState.proposals[definition.id]) {
       return undefined;
     }
-    if (Object.keys(this.state.proposals).length >= USAGE_ADVISOR_LIMITS.proposals) return undefined;
+    if (Object.keys(this.currentState.proposals).length >= USAGE_ADVISOR_LIMITS.proposals) return undefined;
 
     const proposal: UsageAdvisorProposal = {
       id: definition.id,
       signalCode: input.code,
       status: "pending_review",
-      createdAt: at,
+      createdAt: aggregate.lastSeenAt,
       evidence: cloneAggregate(aggregate),
       sections: cloneSections(definition),
     };
-    this.state.proposals[proposal.id] = proposal;
+    this.currentState.proposals[proposal.id] = proposal;
     return cloneProposal(proposal);
   }
 
   list(): UsageAdvisorProposal[] {
-    return Object.values(this.state.proposals)
+    return Object.values(this.currentState.proposals)
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id))
       .map(cloneProposal);
   }
@@ -132,7 +143,7 @@ export class UsageAdvisor {
     if (decision !== "approve_for_planning" && decision !== "reject") {
       throw new RangeError("UsageAdvisor review decision must be approve_for_planning or reject.");
     }
-    const proposal = this.state.proposals[id];
+    const proposal = this.currentState.proposals[id];
     if (!proposal) throw new RangeError("Unknown UsageAdvisor proposal.");
     if (proposal.status !== "pending_review") throw new Error("UsageAdvisor proposal review is terminal.");
     const reviewedAt = normalizedTimestamp(at);
@@ -190,4 +201,18 @@ function cloneSections(value: UsageAdvisorProposalSections): UsageAdvisorProposa
 
 function cloneProposal(value: UsageAdvisorProposal): UsageAdvisorProposal {
   return { ...value, evidence: cloneAggregate(value.evidence), sections: cloneSections(value.sections) };
+}
+
+function cloneState(value: UsageAdvisorState): UsageAdvisorState {
+  return {
+    aggregates: Object.fromEntries(
+      Object.entries(value.aggregates).map(([code, aggregate]) => [
+        code,
+        aggregate ? cloneAggregate(aggregate) : aggregate,
+      ]),
+    ),
+    proposals: Object.fromEntries(
+      Object.entries(value.proposals).map(([id, proposal]) => [id, cloneProposal(proposal)]),
+    ),
+  };
 }

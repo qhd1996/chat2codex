@@ -136,10 +136,42 @@ describe("UsageAdvisor bounded core contract", () => {
     expect(advisor.list()[0]?.sections.scope).not.toBe("broaden every permission");
     expect(advisor.list()[0]?.evidence.recentAt).toEqual(times);
   });
+
+  test("exposes only a defensive state snapshot", () => {
+    const advisor = proposalFixture();
+    const snapshot = advisor.state;
+    snapshot.aggregates.delivery_retry!.count = 999;
+    snapshot.proposals["usage-delivery-retry"]!.sections.scope = "apply automatically";
+
+    expect(advisor.state.aggregates.delivery_retry?.count).toBe(3);
+    expect(advisor.list()[0]?.sections.scope).not.toBe("apply automatically");
+  });
+
+  test("orders aggregate evidence deterministically when signals arrive out of time order", () => {
+    const results = permutations([...times]).map((order) => {
+      const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+      let proposal;
+      for (const at of order) proposal = advisor.record({ code: "delivery_retry", at }) ?? proposal;
+      return JSON.stringify({ createdAt: proposal?.createdAt, evidence: proposal?.evidence });
+    });
+
+    expect(new Set(results).size).toBe(1);
+    expect(JSON.parse(results[0]!)).toMatchObject({
+      createdAt: times[2],
+      evidence: { firstSeenAt: times[0], lastSeenAt: times[2], recentAt: times },
+    });
+  });
 });
 
 function proposalFixture(): UsageAdvisor {
   const advisor = new UsageAdvisor(emptyUsageAdvisorState());
   for (const at of times) advisor.record({ code: "delivery_retry", at });
   return advisor;
+}
+
+function permutations<T>(values: T[]): T[][] {
+  if (!values.length) return [[]];
+  return values.flatMap((value, index) =>
+    permutations([...values.slice(0, index), ...values.slice(index + 1)]).map((rest) => [value, ...rest]),
+  );
 }
