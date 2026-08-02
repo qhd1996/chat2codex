@@ -113,6 +113,7 @@ import {
   type RecentFailureDiagnostic,
   type ThreadSelection,
   type TurnSelection,
+  type UsageAdvisorSignalCode,
 } from "../state/types.js";
 import type { Logger } from "../util/logger.js";
 import { normalizeRoutedText, splitForChat } from "../util/text.js";
@@ -1223,6 +1224,7 @@ export class BridgeRunner {
     }
     if (action.kind === "clarify") {
       await this.sender.sendText(message.chatId, action.question);
+      void this.recordUsageAdvisorSignal(message.chatId, "task_target_clarification");
       return;
     }
     if (action.kind === "show_status" || action.kind === "list_tasks") {
@@ -1244,6 +1246,7 @@ export class BridgeRunner {
       });
       if (resolution.status !== "resolved") {
         await this.sender.sendText(message.chatId, resolution.question);
+        void this.recordUsageAdvisorSignal(message.chatId, "task_target_clarification");
         return;
       }
       const task = this.requireState().tasks[resolution.taskId]!;
@@ -3025,6 +3028,7 @@ export class BridgeRunner {
           : formatError(error),
       });
       this.scheduleOutboxRetry(delivery.jobId, delivery.attempts);
+      void this.recordUsageAdvisorSignal(delivery.chatId, "delivery_retry");
       return false;
     }
   }
@@ -3363,6 +3367,30 @@ export class BridgeRunner {
       }
       this.logger.warn("UsageAdvisor review could not be persisted", { error: detail });
       await this.sender.sendText(chatId, "UsageAdvisor 审查未能安全保存；状态未变，未应用任何变更。");
+    }
+  }
+
+  private async recordUsageAdvisorSignal(chatId: string, code: UsageAdvisorSignalCode): Promise<void> {
+    let proposalId: string | undefined;
+    try {
+      proposalId = await this.mutateState((state) => {
+        const advisor = new UsageAdvisor(state.usageAdvisor ?? emptyUsageAdvisorState());
+        const proposal = advisor.record({ code });
+        state.usageAdvisor = advisor.state;
+        return proposal?.id;
+      });
+    } catch (error) {
+      this.logger.warn("UsageAdvisor signal could not be persisted", { code, error: formatError(error) });
+      return;
+    }
+    if (!proposalId) return;
+    try {
+      await this.sender.sendText(
+        chatId,
+        `UsageAdvisor 已生成改进建议 ${proposalId}；请用 /advisor 查看。未应用任何变更。`,
+      );
+    } catch (error) {
+      this.logger.warn("UsageAdvisor proposal notification failed", { code, error: formatError(error) });
     }
   }
 

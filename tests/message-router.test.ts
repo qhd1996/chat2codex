@@ -95,6 +95,19 @@ class ToggleFailingStateStore extends JsonStateStore {
   }
 }
 
+class FailUsageAdvisorStateStore extends JsonStateStore {
+  advisorSaveAttempts = 0;
+  failAdvisorSaves = false;
+
+  override async save(state: Parameters<JsonStateStore["save"]>[0]): Promise<void> {
+    if (this.failAdvisorSaves && Object.keys(state.usageAdvisor?.aggregates ?? {}).length > 0) {
+      this.advisorSaveAttempts += 1;
+      throw new Error("simulated UsageAdvisor state save failure");
+    }
+    await super.save(state);
+  }
+}
+
 class CollectingSender implements ChatSender {
   readonly messages: Array<{ chatId: string; text: string; kind: "text" | "markdown" }> = [];
   readonly reactions: Array<{
@@ -207,6 +220,22 @@ class PersistentDurableDeliveryFailingSender extends CollectingSender {
       throw new Error("simulated persistent durable delivery failure");
     }
     await super.sendMarkdown(chatId, markdown);
+  }
+}
+
+class AdvisorNotificationFailingSender extends PersistentDurableDeliveryFailingSender {
+  advisorNotificationAttempts = 0;
+
+  override async sendText(
+    chatId: string,
+    text: string,
+    options?: { idempotencyKey?: string },
+  ): Promise<void> {
+    if (!options?.idempotencyKey && text.includes("UsageAdvisor")) {
+      this.advisorNotificationAttempts += 1;
+      throw new Error("simulated UsageAdvisor notification failure");
+    }
+    await super.sendText(chatId, text, options);
   }
 }
 
@@ -7469,6 +7498,103 @@ describe("MessageRouter access control", () => {
     });
   });
 
+  test("UsageAdvisor derives a redacted proposal from three task-target clarifications without changing task or draft state", async () => {
+    const secrets = ["sk-live-advisor-secret", "C:\\private\\advisor.txt", "private-task-name", "private-sender-name"];
+    const sensitiveText = secrets.join(" | " );
+    const classifier = new QueueTaskClassifier([
+      ...Array.from({ length: 3 }, () => () => ({
+        action: { kind: "continue_task", instruction: sensitiveText },
+        imageDisposition: "none",
+        confidence: 1,
+      })),
+    ]);
+    await withTaskImageRouter(classifier, new ImageDraftSender(), new FakeCodex(), async ({ router, sender, codex, store, config }) => {
+      await router.accept(taskImageMessage("advisor-clarify-0", `帮我处理 ${sensitiveText}`));
+      const before = await store.load();
+      for (let index = 1; index < 3; index += 1) {
+        await router.accept(taskImageMessage(`advisor-clarify-${index}`, `帮我处理 ${sensitiveText}`));
+      }
+      await waitForState(store, (state) => Boolean(state.usageAdvisor?.proposals["usage-task-target-clarification"]));
+
+      const after = await store.load();
+      const aggregate = after.usageAdvisor?.aggregates.task_target_clarification;
+      expect(codex.runs).toHaveLength(0);
+      expect(after.tasks).toEqual(before.tasks);
+      expect(after.imageDrafts).toEqual(before.imageDrafts);
+      expect(after.clarifications).toEqual(before.clarifications);
+      expect(aggregate?.count).toBe(3);
+      expect(aggregate?.recentAt).toHaveLength(3);
+      expect(Date.parse(aggregate!.firstSeenAt)).toBeLessThanOrEqual(Date.parse(aggregate!.lastSeenAt));
+      const clarificationIndexes = sender.messages.flatMap((item, index) => item.text.includes("有多个任务可能匹配") ? [index] : []);
+      expect(clarificationIndexes).toHaveLength(3);
+      expect(sender.messages.findIndex((item) => item.text.includes("UsageAdvisor"))).toBeGreaterThan(Math.max(...clarificationIndexes));
+      const advisorJson = JSON.stringify(after.usageAdvisor);
+      const persistedEnvelope = JSON.parse(await Bun.file(config.bridgeStatePath).text()) as { adapters?: Record<string, { usageAdvisor?: unknown }> };
+      const persistedAdvisorJson = JSON.stringify(persistedEnvelope.adapters?.[store.adapterId]?.usageAdvisor);
+      for (const secret of secrets) {
+        expect(advisorJson).not.toContain(secret);
+        expect(persistedAdvisorJson).not.toContain(secret);
+      }
+    }, {
+      taskRegistry: new TaskRegistry({ now: () => Date.parse("2026-08-02T01:00:00.000Z") }),
+      setupState(state, taskRegistry, roots) {
+        for (const title of ["任务甲", "任务乙"]) {
+          const task = taskRegistry.create(state, { conversationId: "weixin-chat", chatType: "direct", senderKey: "open_id:ou_user", title, aliases: [], workspaceKind: "work", workspaceRoot: roots.work, objective: title });
+          taskRegistry.transition(state, task.taskId, "queued");
+          taskRegistry.transition(state, task.taskId, "running");
+          taskRegistry.transition(state, task.taskId, "completed");
+        }
+      },
+    });
+  });
+
+  test("UsageAdvisor persistence failure does not block durable delivery retry", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-advisor-save-failure-"));
+    let router: MessageRouter | undefined;
+    try {
+      const config = loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
+      const store = new FailUsageAdvisorStateStore(config.bridgeStatePath);
+      const sender = new PersistentDurableDeliveryFailingSender();
+      const codex = new FakeCodex();
+      router = new MessageRouter(config, store, sender, silentLogger, codex);
+      await router.start();
+      store.failAdvisorSaves = true;
+      await router.accept({ messageId: "advisor-save-failure", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "finish despite advisor persistence failure" });
+      await waitForState(store, (state) => Object.values(state.outbox).some((item) => item.jobId === "advisor-save-failure" && item.status === "pending" && item.attempts >= 2));
+
+      const state = await store.load();
+      expect(store.advisorSaveAttempts).toBeGreaterThanOrEqual(1);
+      expect(state.usageAdvisor?.aggregates.delivery_retry).toBeUndefined();
+      expect(Object.values(state.outbox).find((item) => item.jobId === "advisor-save-failure")?.status).toBe("pending");
+      expect(codex.runs).toHaveLength(1);
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("UsageAdvisor notification failure does not stop the ordinary outbox retry state machine", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-advisor-notify-failure-"));
+    let router: MessageRouter | undefined;
+    try {
+      const config = loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
+      const store = new JsonStateStore(config.bridgeStatePath);
+      const state = emptyState();
+      const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+      advisor.record({ code: "delivery_retry", at: "2026-08-02T01:00:00.000Z" });
+      advisor.record({ code: "delivery_retry", at: "2026-08-02T01:01:00.000Z" });
+      state.usageAdvisor = advisor.state;
+      await store.save(state);
+      const sender = new AdvisorNotificationFailingSender();
+      const codex = new FakeCodex();
+      router = new MessageRouter(config, store, sender, silentLogger, codex);
+      await router.start();
+      await router.accept({ messageId: "advisor-notify-failure", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "finish despite advisor notification failure" });
+      await waitForState(store, (current) => Boolean(current.usageAdvisor?.proposals["usage-delivery-retry"]) && Object.values(current.outbox).some((item) => item.jobId === "advisor-notify-failure" && item.status === "pending" && item.attempts >= 2));
+
+      expect(sender.advisorNotificationAttempts).toBe(1);
+      expect(codex.runs).toHaveLength(1);
+      expect((await store.load()).usageAdvisor?.proposals["usage-delivery-retry"]?.status).toBe("pending_review");
+    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
+  });
+
   test("usage reports when the provider did not emit token usage", async () => {
     await withRouter({}, async ({ router, sender }) => {
       await router.enqueue({
@@ -9330,7 +9456,11 @@ async function withTaskImageRouter<TCodex extends CodexClient, TSender extends I
   classifier: QueueTaskClassifier,
   sender: TSender,
   codex: TCodex,
-  testBody: (context: { router: MessageRouter; sender: TSender; codex: TCodex; store: JsonStateStore }) => Promise<void>,
+  testBody: (context: { router: MessageRouter; sender: TSender; codex: TCodex; store: JsonStateStore; config: TestBridgeConfig }) => Promise<void>,
+  options: {
+    taskRegistry?: TaskRegistry;
+    setupState?: (state: ReturnType<typeof emptyState>, taskRegistry: TaskRegistry, roots: Record<string, string>) => void;
+  } = {},
 ): Promise<void> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-phase1-image-")); let router: MessageRouter | undefined;
   try {
@@ -9343,13 +9473,19 @@ async function withTaskImageRouter<TCodex extends CodexClient, TSender extends I
       BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user",
     });
     sender.setAttachmentRoot(config.attachmentDownloadDir); const store = new JsonStateStore(config.bridgeStatePath);
+    const taskRegistry = options.taskRegistry ?? new TaskRegistry();
+    if (options.setupState) {
+      const state = emptyState();
+      options.setupState(state, taskRegistry, roots);
+      await store.save(state);
+    }
     const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
     const executionWorkspaces = await ExecutionWorkspaceService.create({ chat2codexHome: path.join(tempDir, "home"), codexBin: config.codexBin, sandboxProbe: async () => ({ verified: false, reason: "not needed" }) });
     router = new MessageRouter(config, store, sender, silentLogger, codex, {}, {
       classifier, imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }),
-      taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
+      taskRegistry, taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }),
     });
-    await router.start(); await testBody({ router, sender, codex, store });
+    await router.start(); await testBody({ router, sender, codex, store, config });
   } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
 }
 
