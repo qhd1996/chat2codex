@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "environment": { "kind": "unproven", "freshProfile": false, "repositoryAbsent": false, "priorChat2CodexAbsent": false, "os": "unproven", "arch": "unproven" },
+  "archive": { "version": "0.0.0-unproven", "size": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "versions": { "node": "unproven", "npm": "unproven", "codexCli": "unproven", "codexDesktop": "unproven" },
+  "approvals": [],
+  "commands": [],
+  "stages": [
+    { "id": "qualify", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "install", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "doctor", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "service", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "weixin_login", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "codex_desktop", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "seven_primitives", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "weixin_e2e", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "upgrade", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "rollback", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] },
+    { "id": "uninstall", "verdict": "unproven", "startedAt": null, "completedAt": null, "evidence": [] }
+  ]
+}
