@@ -9,7 +9,7 @@ test("kills only after the durable boundary and recovers pending outbox without 
   const statePath = path.join(root, "state.json");
   let child: ReturnType<typeof Bun.spawn> | undefined;
   try {
-    child = Bun.spawn([process.execPath, "scripts/novice-restart-probe.mjs", "seed", statePath], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+    child = Bun.spawn(["node", "scripts/novice-restart-probe.mjs", "seed", statePath], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
     const line = await readFirstLine(child.stdout, 4_000);
     expect(line).toStartWith("DURABLE_BOUNDARY state_saved ");
     const boundary = JSON.parse(line.slice(line.indexOf("{") ));
@@ -20,7 +20,7 @@ test("kills only after the durable boundary and recovers pending outbox without 
     child.kill();
     await child.exited;
     expect(processExists(identity.pid)).toBe(false);
-    const recovered = Bun.spawnSync([process.execPath, "scripts/novice-restart-probe.mjs", "recover", statePath], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+    const recovered = Bun.spawnSync(["node", "scripts/novice-restart-probe.mjs", "recover", statePath], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
     expect(recovered.exitCode).toBe(0);
     const result = JSON.parse(recovered.stdout.toString());
     expect(result.schemaVersion).toBe(6);

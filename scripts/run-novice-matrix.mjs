@@ -57,7 +57,7 @@ try {
     };
     const stateHashes = extractHashes(String(shard.stdoutTail ?? "") + "\n" + String(shard.stderrTail ?? "") + "\n" + String(nativeShard.stdoutTail ?? ""));
     if (stateHashes.length === 0) stateHashes.push(hashText(repositoryCommit + ":" + index + ":repository-state-observation"));
-    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")] };
+    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")], processProof: null };
     records.push(record);
     if (record.verdict !== "pass") {
       failureHistory.push({ repetition: index, code: "matrix_repetition_failed", fixedByCommit: null });
@@ -68,12 +68,12 @@ try {
     }
   }
   const report = {
-    schemaVersion: 1, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
+    schemaVersion: 2, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
     generatedAt: new Date().toISOString(), evidenceLevel: "repository", verdict: repetitions === 30 ? "repository_pass" : "unproven",
     environment: { kind: "repository_worktree", os: process.platform, arch: process.arch, freshProfile: false, repositoryAbsent: false, priorPackageAbsent: false, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: packageJson.version, size: 0, sha256: "0".repeat(64) },
     versions: { windows: os.release(), node: process.versions.node, npm: npmVersion(), bun: process.versions.bun, package: packageJson.version, codexCli: codexVersion() },
-    scenarioIds, repetitions: records, failureHistory,
+    scenarioIds, repetitions: records, failureHistory, attestation: null,
   };
   if (repetitions === 30) validateNoviceEvidence(report, { scenarioIds });
   await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");

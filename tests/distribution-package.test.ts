@@ -47,8 +47,11 @@ test("packages every novice acceptance runtime asset and declares Node 20.19 min
     "quality/scenarios/novice-daily-use.json", "quality/evidence/novice-acceptance-template.json",
     "scripts/verify-novice-evidence.mjs", "scripts/run-novice-acceptance.mjs", "scripts/novice-windows-worker.mjs",
     "scripts/novice-native-lifecycle-probe.mjs", "scripts/process-identity.mjs", "scripts/verify-distribution-package.mjs",
+    "scripts/novice-restart-probe.mjs",
+    "scripts/novice-service-probe.mjs", "scripts/novice-clean-windows-attestation.mjs", "scripts/novice-another-user-acl.ps1",
     "docs/quality/novice-acceptance-runbook.md", "docs/windows/novice-troubleshooting.md",
   ]) expect(packageJson.files).toContain(asset);
+  expect(packageJson.scripts["test:novice"]).toContain("tests/novice-package-matrix.test.ts");
 });
 
 test("normalizes tracked text bytes for reproducible Windows package archives", async () => {

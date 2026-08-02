@@ -18,5 +18,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     for (const value of ["windows-latest", "actions/checkout@v7", "actions/setup-node@v7", 'node-version: "24"', "oven-sh/setup-bun@v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "bun run test:novice", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
+    const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
+    for (const value of ["needs: novice-acceptance", "actions/download-artifact@v4", "@openai/codex@0.146.0", "npm install --ignore-scripts --no-audit --no-fund --prefix $installedPrefix $archive.FullName", "node_modules/chat2codex", "novice-clean-windows-attestation.mjs", "C2C_RUNNER_ENVIRONMENT", "--attestation", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
+    expect(cleanJob).not.toContain("actions/checkout");
+    expect(cleanJob).not.toMatch(/Add-Member.*(?:environmentKind|freshProfile|repositoryAbsent|priorPackageAbsent)/iu);
   });
 });

@@ -1,10 +1,12 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 import { describe, expect, test } from "bun:test";
 
-import { planNoviceIsolation, planNpmInvocation, runNoviceArchiveAcceptance, validateNoviceWorkerEvidence } from "../scripts/run-novice-acceptance.mjs";
+import { buildQualifyingNoviceEvidence, planNoviceIsolation, planNpmInvocation, readNoviceAttestation, runNoviceArchiveAcceptance, validateNoviceWorkerEvidence } from "../scripts/run-novice-acceptance.mjs";
 
 describe("novice archive isolation", () => {
   test("plans a private profile, Codex Home, Chat2Codex Home, and npm prefix", async () => {
@@ -35,6 +37,14 @@ describe("novice archive isolation", () => {
     });
   });
 
+  test("the archive CLI main path discovers versions before a dry run", async () => {
+    await withArchive(async ({ root, archive, sha256 }) => {
+      const result = spawnSync(process.execPath, [path.resolve(import.meta.dir, "..", "scripts", "run-novice-acceptance.mjs"), "--archive", archive, "--sha256", sha256, "--owned-root", path.join(root, "owned"), "--production-root", path.join(root, "excluded-production"), "--dry-run"], { cwd: path.resolve(import.meta.dir, ".."), encoding: "utf8", windowsHide: true });
+      expect(result.status).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ qualifying: false, verdict: "package_smoke", archiveSha256: sha256 });
+    });
+  });
+
   test("ships no developer or production drive path in the archive runner", async () => {
     const source = await Bun.file(path.resolve(import.meta.dir, "..", "scripts", "run-novice-acceptance.mjs")).text();
     expect(source).not.toMatch(/[A-Za-z]:[\\/](?:Users|workspace|Chat2Codex|codex)/iu);
@@ -59,11 +69,58 @@ describe("novice archive isolation", () => {
 
   test("requires complete package-only worker evidence", () => {
     const installedRoot = path.resolve("C:/owned/npm-prefix/node_modules/chat2codex");
-    const value = { packageRoot: installedRoot, packageVersion: "0.8.0-novice.1", repositoryImported: false, cliVersion: "0.8.0-novice.1", manifestHash: "a".repeat(64), stateHash: "b".repeat(64), taskCount: 2, outboxCount: 3, networkRecovered: true, gatewayFailClosed: true, migrationBackupExact: true, nativeLifecycle: { installAttempts: 2, uninstallAttempts: 2, keyCount: 3, userDataPreserved: true, residualOwnedFiles: 0 } };
-    expect(validateNoviceWorkerEvidence(value, { installedRoot, packageVersion: "0.8.0-novice.1" })).toEqual(value);
-    for (const change of [{ repositoryImported: true }, { outboxCount: 2 }, { gatewayFailClosed: false }, { migrationBackupExact: false }, { nativeLifecycle: { ...value.nativeLifecycle, residualOwnedFiles: 1 } }]) expect(() => validateNoviceWorkerEvidence({ ...value, ...change }, { installedRoot, packageVersion: "0.8.0-novice.1" })).toThrow(/worker|package|evidence|lifecycle/i);
+    const value = { ...completeWorkerEvidence(), packageRoot: installedRoot, repetitions: completeWorkerEvidence().repetitions.slice(0, 1) };
+    const expected = { installedRoot, packageVersion: "0.8.0-novice.1", archiveSha256: "b".repeat(64), expectedRepetitions: 1, expectedScenarioIds: value.scenarioIds };
+    expect(validateNoviceWorkerEvidence(value, expected)).toEqual(value);
+    for (const change of [{ repositoryImported: true }, { archiveSha256: "f".repeat(64) }, { outboxCount: 2 }, { gatewayFailClosed: false }, { migrationBackupExact: false }, { nativeLifecycle: { ...value.nativeLifecycle, residualOwnedFiles: 1 } }]) expect(() => validateNoviceWorkerEvidence({ ...value, ...change }, expected)).toThrow(/worker|archive|package|evidence|lifecycle/i);
+  });
+
+  test("builds qualifying evidence only from thirty complete installed-package repetitions", () => {
+    const worker = completeWorkerEvidence();
+    const input = {
+      authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
+      environmentKind: "clean_windows_vm", archive: { version: "0.8.0-novice.1", size: 1234, sha256: "b".repeat(64) },
+      versions: { windows: "11.0.26100", node: "24.14.0", npm: "11.0.0", bun: "1.3.9", package: "0.8.0-novice.1", codexCli: "0.146.0" }, expectedScenarioIds: worker.scenarioIds,
+      attestation: qualifyingAttestation(),
+    };
+    const value = buildQualifyingNoviceEvidence({ ...input, worker });
+    expect(value).toMatchObject({ evidenceLevel: "isolated_package", verdict: "pass" });
+    expect(value.repetitions).toHaveLength(30);
+    for (const change of [
+      { probes: { ...worker.probes, doctor: false } },
+      { scenarioIds: worker.scenarioIds.slice(1) },
+      { repetitions: worker.repetitions.slice(1) },
+    ]) expect(() => buildQualifyingNoviceEvidence({ ...input, worker: { ...worker, ...change } })).toThrow(/probe|scenario|30|repetition/i);
+  });
+
+  test("rejects qualifying attestation package hashes that do not match the runner package", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-attestation-hash-"));
+    const file = path.join(root, "attestation.json");
+    await writeFile(file, JSON.stringify({ environmentKind: "clean_windows_vm", installedFiles: [{ path: "package/package.json", sha256: "0".repeat(64) }] }));
+    try {
+      await expect(readNoviceAttestation(file, "clean_windows_vm", path.resolve(import.meta.dir, ".."))).rejects.toThrow(/hash.*differs/i);
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 });
+
+function completeWorkerEvidence() {
+  const scenarioIds = Array.from({ length: 19 }, (_, index) => "scenario." + index);
+  return {
+    packageRoot: path.resolve("C:/owned/npm-prefix/node_modules/chat2codex"), packageVersion: "0.8.0-novice.1", archiveSha256: "b".repeat(64),
+    repositoryImported: false, cliVersion: "0.8.0-novice.1", manifestHash: "c".repeat(64), stateHash: "d".repeat(64),
+    taskCount: 2, outboxCount: 3, networkRecovered: true, gatewayFailClosed: true, migrationBackupExact: true,
+    nativeLifecycle: { installAttempts: 2, uninstallAttempts: 2, keyCount: 3, userDataPreserved: true, residualOwnedFiles: 0 },
+    probes: { setupQrMock: true, doctor: true, lifecycle: true, dailyUse: true, upgradeRollback: true, networkRecovery: true, gatewayFailClosed: true, restartRecovery: true, storagePermissionRecovery: true, purgeUnavailableWithoutConfirmation: true, configRecovery: true, gatewayOffline: true },
+    scenarioIds,
+    repetitions: Array.from({ length: 30 }, (_, offset) => ({ index: offset + 1, seed: 2026080201 + offset, startedAt: "2026-08-03T00:00:00.000Z", completedAt: "2026-08-03T00:00:01.000Z", verdict: "pass", counts: { pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 }, scenarioIds, stateHashes: ["e".repeat(64)], commands: ["<installed-package>/scripts/novice-windows-worker.mjs"], processProof: { pid: 300 + offset, createdAt: "2026-08-03T00:00:00.500Z", stopped: true, residualProcesses: 0 } })),
+  };
+}
+
+function qualifyingAttestation() {
+  const installedFiles = ["package/package.json", "package/dist/index.js", "package/scripts/novice-service-probe.mjs", "owned/.env", "owned/.service/windows/launcher.ps1", "owned/.service/windows/task.xml", "owned/.service/windows/installation.json", "owned/.data/state.json"].map((filePath, index) => ({ path: filePath, sha256: String(index + 1).repeat(64) }));
+  const value = { environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true, taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3, doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true, firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) }, secondProcess: { pid: 102, createdAt: "2026-08-03T00:01:00.000Z", commandHash: "4".repeat(64), stateSha256: "3".repeat(64) }, taskRemoved: true, newKeysAfterReinstall: true, anotherInteractiveUserDenied: true, zeroResidualProcesses: true, ownedRootRemoved: true, installedFiles, commands: Array.from({ length: 8 }, (_, index) => "command-" + index) };
+  return { ...value, attestationHash: createHash("sha256").update(JSON.stringify(value)).digest("hex") };
+}
 
 async function withArchive(run: (value: { root: string; archive: string; sha256: string }) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-isolation-"));

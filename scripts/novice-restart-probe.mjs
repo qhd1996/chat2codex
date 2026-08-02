@@ -2,12 +2,12 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 
-import { MediaOutbox } from "../src/core/media-outbox.ts";
-import { JsonStateStore } from "../src/state/store.ts";
-import { emptyState } from "../src/state/types.ts";
+import { MediaOutbox } from "../dist/core/media-outbox.js";
+import { JsonStateStore } from "../dist/state/store.js";
+import { emptyState } from "../dist/state/types.js";
 
 const [mode, stateInput] = process.argv.slice(2);
-if ((mode !== "seed" && mode !== "recover") || !stateInput) throw new Error("Usage: bun scripts/novice-restart-probe.mjs <seed|recover> <state-path>");
+if ((mode !== "seed" && mode !== "recover") || !stateInput) throw new Error("Usage: node scripts/novice-restart-probe.mjs <seed|recover> <state-path>");
 const statePath = path.resolve(stateInput);
 const root = path.dirname(statePath);
 const store = new JsonStateStore(statePath, { adapterId: "weixin:novice-restart", chat2codexHome: root });
@@ -23,7 +23,12 @@ if (mode === "seed") {
   await store.save(state);
   const hash = createHash("sha256").update(await readFile(statePath)).digest("hex");
   process.stdout.write("DURABLE_BOUNDARY state_saved " + JSON.stringify({ pid: process.pid, stateHash: hash }) + "\n");
-  await new Promise(() => undefined);
+  await new Promise((resolve) => {
+    const keepAlive = setInterval(() => undefined, 60_000);
+    const finish = () => { clearInterval(keepAlive); resolve(); };
+    process.once("SIGTERM", finish);
+    process.once("SIGINT", finish);
+  });
 } else {
   const state = await store.load();
   const recovered = new MediaOutbox().recover(state);

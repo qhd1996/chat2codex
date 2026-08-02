@@ -103,6 +103,53 @@ export async function runFreshWindowsLifecycleJourney(options: {
   });
 }
 
+export async function runNoviceStoragePermissionRecoveryJourney(rootInput: string): Promise<boolean> {
+  const root = path.resolve(rootInput);
+  for (const code of ["ENOSPC", "EACCES"] as const) {
+    const caseRoot = path.join(root, code.toLocaleLowerCase());
+    const home = path.join(caseRoot, "profile", ".chat2codex");
+    const statePath = path.join(home, ".data", "state.json");
+    const serviceRoot = path.join(home, ".service", "windows");
+    const input: WindowsServiceInstallInput = {
+      home, envFile: path.join(home, ".env"), launcherPath: path.join(serviceRoot, "launcher.ps1"),
+      taskXmlPath: path.join(serviceRoot, "task.xml"), manifestPath: path.join(serviceRoot, "installation.json"),
+      nodeBin: process.execPath, entrypoint: path.join(caseRoot, "package", "dist", "index.js"),
+      logFile: path.join(home, ".data", "logs", "service.log"), pathEnv: path.dirname(process.execPath),
+      taskName: "NoviceFault" + code, statePath,
+    };
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await mkdir(serviceRoot, { recursive: true });
+    await writeFile(statePath, "preserved state\n", { flag: "wx" });
+    await writeFile(input.envFile, "USER_SETTING=preserved\r\n", { flag: "wx" });
+    const fixture = windowsLifecycleIo(input, home);
+    fixture.io.currentUserSid = async () => "S-1-5-21-1000-1000-1000-1001";
+    fixture.io.ensureGatewayKeys = async () => ({
+      created: [], preserved: [],
+      paths: {
+        "prompt-hook": path.join(home, ".secrets", "desktop-gateway", "prompt-hook.key"),
+        "stop-hook": path.join(home, ".secrets", "desktop-gateway", "stop-hook.key"),
+        "desktop-mcp": path.join(home, ".secrets", "desktop-gateway", "desktop-mcp.key"),
+      },
+    });
+    const write = fixture.io.writeTextAtomic;
+    let injected = false;
+    fixture.io.writeTextAtomic = async (file, content) => {
+      if (!injected && file === input.launcherPath) {
+        injected = true;
+        throw Object.assign(new Error("synthetic durable write failure"), { code });
+      }
+      await write(file, content);
+    };
+    let rejected = false;
+    try { await installWindowsUserTask(input, fixture.io); } catch { rejected = true; }
+    const manifestExists = await stat(input.manifestPath).then(() => true).catch(() => false);
+    if (!rejected || !injected || manifestExists ||
+        await readFile(input.envFile, "utf8") !== "USER_SETTING=preserved\r\n" ||
+        await readFile(statePath, "utf8") !== "preserved state\n") return false;
+  }
+  return true;
+}
+
 function windowsLifecycleIo(input: WindowsServiceInstallInput, home: string) {
   const keyRoot = path.join(home, ".secrets", "desktop-gateway");
   const keyPaths = {

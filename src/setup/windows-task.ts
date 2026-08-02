@@ -62,7 +62,7 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
     "$env:NODE_ENV = 'production'",
     `$env:PATH = ${psQuote(input.pathEnv)}`,
     `Set-Location -LiteralPath ${psQuote(workingDirectory)}`,
-    `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} *>> ${psQuote(logFile)}`,
+    `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} start *>> ${psQuote(logFile)}`,
     "exit $LASTEXITCODE",
     "",
   ].join("\r\n");

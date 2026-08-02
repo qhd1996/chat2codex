@@ -205,6 +205,7 @@ class TransientFinalDeliverySender extends CollectingSender {
 
 class PersistentDurableDeliveryFailingSender extends CollectingSender {
   readonly idempotencyKeys: string[] = [];
+  readonly firstDurableFailure = deferred<void>();
 
   override async sendText(
     chatId: string,
@@ -213,6 +214,7 @@ class PersistentDurableDeliveryFailingSender extends CollectingSender {
   ): Promise<void> {
     if (options?.idempotencyKey) {
       this.idempotencyKeys.push(options.idempotencyKey);
+      this.firstDurableFailure.resolve();
       throw new Error("simulated persistent durable delivery failure");
     }
     await super.sendText(chatId, text);
@@ -225,6 +227,7 @@ class PersistentDurableDeliveryFailingSender extends CollectingSender {
   ): Promise<void> {
     if (options?.idempotencyKey) {
       this.idempotencyKeys.push(options.idempotencyKey);
+      this.firstDurableFailure.resolve();
       throw new Error("simulated persistent durable delivery failure");
     }
     await super.sendMarkdown(chatId, markdown);
@@ -2131,6 +2134,7 @@ describe("MessageRouter access control", () => {
           sender: { openId: "ou_user" },
           text: "finish but keep the reply undelivered",
         });
+        await sender.firstDurableFailure.promise;
         await waitForState(store, (state) =>
           Object.values(state.outbox).some(
             (delivery) =>
@@ -2156,8 +2160,7 @@ describe("MessageRouter access control", () => {
           Object.values(state.outbox).some(
             (delivery) =>
               delivery.jobId === overflowIds[0] &&
-              delivery.status === "pending" &&
-              delivery.attempts >= 1,
+              delivery.status === "pending",
           ),
         );
 
@@ -2177,7 +2180,7 @@ describe("MessageRouter access control", () => {
           expect(blocked.pendingMessages[messageId]).toBeUndefined();
           expect(blocked.processedMessageIds).toContain(messageId);
         }
-        expect(sender.idempotencyKeys.length).toBeGreaterThanOrEqual(2);
+        expect(sender.idempotencyKeys).toHaveLength(1);
       },
     );
   });

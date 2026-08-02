@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "authorityCommit": "01e827bbdc6584136627d9f1f137e8051f0a8c97",
   "repositoryCommit": "0000000000000000000000000000000000000000",
   "generatedAt": "2026-08-02T00:00:00.000Z",
@@ -10,5 +10,6 @@
   "versions": { "windows": "0.0.0", "node": "0.0.0", "npm": "0.0.0", "bun": "0.0.0", "package": "0.8.0-novice.1", "codexCli": "0.0.0" },
   "scenarioIds": [],
   "repetitions": [],
-  "failureHistory": []
+  "failureHistory": [],
+  "attestation": null
 }

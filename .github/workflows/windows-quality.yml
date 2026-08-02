@@ -30,6 +30,8 @@ jobs:
       - name: Run thirty repetitions
         run: bun run test:novice:30
       - name: Audit dependencies
+        env:
+          NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
         run: bun audit
       - name: Pack reviewed candidate
         run: bun pm pack --destination .tmp/package
@@ -41,3 +43,90 @@ jobs:
           node scripts/verify-distribution-package.mjs .tmp/package/package
           $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
           if (($report.repetitions | Where-Object { $_.counts.residualProcesses -ne 0 }).Count -ne 0) { throw 'residual process evidence' }
+          $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant()
+          $metadata = [ordered]@{ repositoryCommit = '${{ github.sha }}'; archiveName = $archive.Name; archiveSize = $archive.Length; sha256 = $sha256 }
+          $metadata | ConvertTo-Json | Set-Content -LiteralPath .tmp/package/candidate-metadata.json -Encoding utf8
+      - name: Upload reviewed package only
+        uses: actions/upload-artifact@v4
+        with:
+          name: novice-reviewed-package
+          path: |
+            .tmp/package/*.tgz
+            .tmp/package/candidate-metadata.json
+          if-no-files-found: error
+          retention-days: 14
+
+  clean-package-acceptance:
+    needs: novice-acceptance
+    runs-on: windows-latest
+    permissions:
+      contents: none
+    steps:
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Set up Bun for version evidence
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Download reviewed package without repository checkout
+        uses: actions/download-artifact@v4
+        with:
+          name: novice-reviewed-package
+          path: candidate
+      - name: Run package-only clean Windows novice acceptance
+        shell: pwsh
+        env:
+          C2C_RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: |
+          $metadata = Get-Content -LiteralPath candidate/candidate-metadata.json -Raw | ConvertFrom-Json
+          $archive = Get-Item -LiteralPath (Join-Path candidate $metadata.archiveName)
+          if ($archive.Length -ne $metadata.archiveSize) { throw 'archive size mismatch' }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'archive hash mismatch' }
+          New-Item -ItemType Directory -Path candidate/extracted | Out-Null
+          tar -xf $archive.FullName -C candidate/extracted
+          node candidate/extracted/package/scripts/verify-distribution-package.mjs candidate/extracted/package
+          $npmRoot = Join-Path $env:RUNNER_TEMP 'novice-codex-cli'
+          npm install --ignore-scripts --no-audit --no-fund --prefix $npmRoot '@openai/codex@0.146.0'
+          $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai/codex') -Recurse -File | Where-Object Name -Like 'codex*.exe' | Select-Object -First 1
+          if (-not $codexBin) { throw 'Codex CLI binary missing' }
+          $env:Path = $codexBin.DirectoryName + ';' + $env:Path
+          $ownedRoot = Join-Path $env:RUNNER_TEMP 'novice-owned-clean'
+          $attestationRoot = Join-Path $env:RUNNER_TEMP 'novice-attestation-owned'
+          $installedPrefix = Join-Path $env:RUNNER_TEMP 'novice-attestation-package'
+          $attestation = Join-Path $env:RUNNER_TEMP 'novice-clean-attestation.json'
+          $report = Join-Path $env:RUNNER_TEMP 'novice-clean-evidence.json'
+          $env:CHAT2CODEX_NOVICE_ISOLATION = '1'
+          $taskName = 'Chat2Codex-Novice-' + $metadata.repositoryCommit.Substring(0, 8)
+          npm install --ignore-scripts --no-audit --no-fund --prefix $installedPrefix $archive.FullName
+          $installedPackage = Join-Path $installedPrefix 'node_modules/chat2codex'
+          $attestationLine = node (Join-Path $installedPackage 'scripts/novice-clean-windows-attestation.mjs') --owned-root $attestationRoot --package-root $installedPackage --codex-bin $codexBin.FullName --task-name $taskName --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production')
+          if ($LASTEXITCODE -ne 0 -or -not $attestationLine.StartsWith('NOVICE_CLEAN_WINDOWS_ATTESTATION ')) { throw 'clean Windows attestation failed' }
+          $attestationLine.Substring('NOVICE_CLEAN_WINDOWS_ATTESTATION '.Length) | Set-Content -LiteralPath $attestation -Encoding utf8
+          node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --owned-root $ownedRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --attestation $attestation --report $report --cleanup
+          node candidate/extracted/package/scripts/verify-novice-evidence.mjs --external $report
+          $resolvedPrefix = [IO.Path]::GetFullPath($installedPrefix)
+          $resolvedTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP) + [IO.Path]::DirectorySeparatorChar
+          if (-not $resolvedPrefix.StartsWith($resolvedTemp, [StringComparison]::OrdinalIgnoreCase)) { throw 'unsafe private install cleanup target' }
+          Remove-Item -LiteralPath $resolvedPrefix -Recurse -Force
+          $needle = 'novice-owned-clean'
+          $matching = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
+          $residualUsers = @(Get-LocalUser | Where-Object Name -Like 'C2CN*')
+          $proof = [ordered]@{ OwnedRootExists = Test-Path -LiteralPath $ownedRoot; AttestationRootExists = Test-Path -LiteralPath $attestationRoot; InstalledPrefixExists = Test-Path -LiteralPath $installedPrefix; MatchingProcesses = $matching.Count; ResidualTestUsers = $residualUsers.Count; ReportSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $report).Hash.ToLowerInvariant() }
+          $proof | ConvertTo-Json | Set-Content -LiteralPath candidate/zero-residual-proof.json -Encoding utf8
+          if ($proof.OwnedRootExists -or $proof.AttestationRootExists -or $proof.InstalledPrefixExists -or $proof.MatchingProcesses -ne 0 -or $proof.ResidualTestUsers -ne 0) { throw 'clean package acceptance left owned residuals' }
+          Copy-Item -LiteralPath $report -Destination candidate/novice-clean-evidence.json
+          Copy-Item -LiteralPath $attestation -Destination candidate/novice-clean-attestation.json
+      - name: Upload redacted clean-package evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: novice-clean-package-evidence
+          path: |
+            candidate/novice-clean-evidence.json
+            candidate/novice-clean-attestation.json
+            candidate/zero-residual-proof.json
+          if-no-files-found: error
+          retention-days: 14

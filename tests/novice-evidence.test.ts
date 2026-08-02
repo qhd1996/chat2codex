@@ -1,9 +1,9 @@
-import { readFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { validateNoviceEvidence } from "../scripts/verify-novice-evidence.mjs";
+import { resolveNoviceEvidenceInput, validateNoviceEvidence } from "../scripts/verify-novice-evidence.mjs";
 
 const templatePath = path.resolve(import.meta.dir, "..", "quality", "evidence", "novice-acceptance-template.json");
 const scenarioPath = path.resolve(import.meta.dir, "..", "quality", "scenarios", "novice-daily-use.json");
@@ -19,6 +19,28 @@ describe("novice acceptance evidence", () => {
     expect(validateNoviceEvidence(validComplete(), { scenarioIds })).toEqual({ qualifying: true, repetitions: 30, scenarios: scenarioIds.length, verdict: "pass" });
   });
 
+  test("rejects a qualifying claim without independent Windows lifecycle and per-round process proof", () => {
+    const missingAttestation = validComplete();
+    missingAttestation.attestation = null;
+    expect(() => validateNoviceEvidence(missingAttestation, { scenarioIds })).toThrow(/attestation|lifecycle/i);
+    const missingProcess = validComplete();
+    missingProcess.repetitions[0].processProof = null;
+    expect(() => validateNoviceEvidence(missingProcess, { scenarioIds })).toThrow(/process.*proof|residual/i);
+    const missingHash = validComplete();
+    missingHash.attestation.installedFiles = [];
+    expect(() => validateNoviceEvidence(missingHash, { scenarioIds })).toThrow(/installed.*hash|attestation/i);
+  });
+
+  test("resolves an explicit external evidence file without treating it as repository input", async () => {
+    const root = path.resolve(import.meta.dir, "..");
+    const external = path.join(path.dirname(root), "novice-external-evidence-test.json");
+    await writeFile(external, JSON.stringify(validComplete()));
+    try {
+      await expect(resolveNoviceEvidenceInput(root, ["--external", external])).resolves.toBe(external);
+      await expect(resolveNoviceEvidenceInput(root, [external])).rejects.toThrow(/external|relative/i);
+    } finally { await rm(external, { force: true }); }
+  });
+
   test("retains a thirty-run repository pass without promoting acceptance", () => {
     const value = validComplete();
     value.evidenceLevel = "repository";
@@ -26,6 +48,8 @@ describe("novice acceptance evidence", () => {
     value.environment.kind = "repository_worktree";
     value.environment.repositoryAbsent = false;
     value.environment.priorPackageAbsent = false;
+    value.attestation = null;
+    for (const repetition of value.repetitions) repetition.processProof = null;
     expect(validateNoviceEvidence(value, { scenarioIds })).toEqual({ qualifying: false, repetitions: 30, scenarios: scenarioIds.length, verdict: "repository_pass" });
   });
 
@@ -44,7 +68,7 @@ describe("novice acceptance evidence", () => {
     ["missing state hash", (v: any) => { v.repetitions[0].stateHashes = []; }, /state.*hash/i],
     ["unclean profile", (v: any) => { v.environment.freshProfile = false; }, /fresh.*profile|environment/i],
     ["real home touched", (v: any) => { v.environment.realUserCodexHomeUntouched = false; }, /codex.*home|environment/i],
-    ["secret output", (v: any) => { v.failureHistory.push({ repetition: 1, code: "Bearer abcdefghijklmnopqrstuvwxyz", fixedByCommit: null }); }, /sensitive|redact/i],
+    ["secret output", (v: any) => { v.failureHistory.push({ repetition: 1, code: "Bearer abcdefghijklmnopqrstuvwxyz", fixedByCommit: "b".repeat(40) }); }, /sensitive|redact/i],
   ] as const) test("rejects " + name, () => { const value = validComplete(); mutate(value); expect(() => validateNoviceEvidence(value, { scenarioIds })).toThrow(pattern); });
 });
 
@@ -55,13 +79,34 @@ function validComplete() {
     counts: { pass: 78, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 },
     scenarioIds: [...scenarioIds], stateHashes: ["a".repeat(64), "b".repeat(64)],
     commands: ["chat2codex novice acceptance --archive <candidate> --profile <owned-temp>"],
+    processProof: { pid: 200 + offset, createdAt: "2026-08-03T01:00:30.000Z", stopped: true, residualProcesses: 0 },
   }));
   return {
-    schemaVersion: 1, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
+    schemaVersion: 2, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
     generatedAt: "2026-08-03T01:02:00.000Z", evidenceLevel: "isolated_package", verdict: "pass",
     environment: { kind: "clean_windows_vm", os: "win32", arch: "x64", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: "0.8.0-novice.1", size: 1234, sha256: "c".repeat(64) },
     versions: { windows: "11.0.26100", node: "24.14.0", npm: "11.0.0", bun: "1.3.14", package: "0.8.0-novice.1", codexCli: "0.146.0" },
-    scenarioIds: [...scenarioIds], repetitions, failureHistory: [],
+    scenarioIds: [...scenarioIds], repetitions, failureHistory: [{ repetition: 1, code: "historical_failure", fixedByCommit: "a".repeat(40) }],
+    attestation: validAttestation(),
   };
+}
+
+function validAttestation() {
+  const value = {
+    environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted",
+    freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true,
+    taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3,
+    doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true,
+    firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) },
+    secondProcess: { pid: 102, createdAt: "2026-08-03T00:01:00.000Z", commandHash: "4".repeat(64), stateSha256: "3".repeat(64) },
+    taskRemoved: true, newKeysAfterReinstall: true, anotherInteractiveUserDenied: true, zeroResidualProcesses: true, ownedRootRemoved: true,
+    installedFiles: installedFileFixture(),
+    commands: Array.from({ length: 8 }, (_, index) => "attestation-command-" + index),
+  };
+  return { ...value, attestationHash: new Bun.CryptoHasher("sha256").update(JSON.stringify(value)).digest("hex") };
+}
+
+function installedFileFixture() {
+  return ["package/package.json", "package/dist/index.js", "package/scripts/novice-service-probe.mjs", "owned/.env", "owned/.service/windows/launcher.ps1", "owned/.service/windows/task.xml", "owned/.service/windows/installation.json", "owned/.data/state.json"].map((path, index) => ({ path, sha256: String(index + 1).repeat(64) }));
 }
