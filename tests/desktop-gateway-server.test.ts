@@ -345,16 +345,18 @@ describe("Desktop Gateway loopback server", () => {
   test("bounds concurrency and request duration", async () => {
     let release!: () => void;
     const wait = new Promise<void>((resolve) => { release = resolve; });
+    let entered!: () => void;
+    const controllerEntered = new Promise<void>((resolve) => { entered = resolve; });
     const server = new DesktopGatewayServer({
       port: 0, capabilities: [promptCapability],
-      controller: controller({ submitPrompt: async (request) => { await wait; return { requestId: request.requestId, decision: "allow" }; } }),
+      controller: controller({ submitPrompt: async (request) => { entered(); await wait; return { requestId: request.requestId, decision: "allow" }; } }),
       mutationReplay: { checkAndRecord: async () => "new" },
       now: () => new Date(observedAt).getTime(), maxConcurrentRequests: 1, requestDeadlineMs: 100,
     });
     try {
       const { port } = await server.start();
       const first = requestServer({ port, nonce: "BAQEBAQEBAQEBAQEBAQEBA" });
-      await new Promise((resolve) => setTimeout(resolve, 20));
+      await controllerEntered;
       const second = await requestServer({ port, nonce: "BQUFBQUFBQUFBQUFBQUFBQ" });
       expect(second.status).toBe(503);
       const timedOut = await first;
