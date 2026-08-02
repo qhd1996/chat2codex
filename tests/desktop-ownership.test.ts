@@ -25,7 +25,8 @@ function stateWithBinding() {
   const binding = coordinator.bind(state, {
     mutationId: "bind-1", bindingId: "binding-1", rootThreadId: "root-thread-1",
     taskId: "task-1", conversationId: "conversation-1", adapterId: "weixin:bot",
-    bindingAnchorTurnId: "anchor-turn", observedAt: at(0),
+    bindingAnchorTurnId: "anchor-turn", bindingAnchorTurnIndex: 0,
+    bindingAnchorDigest: "e".repeat(64), observedAt: at(0),
   });
   return { state, coordinator, binding };
 }
@@ -33,7 +34,11 @@ function stateWithBinding() {
 describe("DesktopOwnershipCoordinator", () => {
   test("binds one concrete root and transfers it with monotonic generation CAS", () => {
     const { state, coordinator, binding } = stateWithBinding();
-    expect(binding).toMatchObject({ owner: "bridge", generation: 1, rootThreadId: "root-thread-1" });
+    expect(binding).toMatchObject({
+      owner: "bridge", generation: 1, rootThreadId: "root-thread-1",
+      bindingAnchorTurnIndex: 0, lastReconciledTurnIndex: 0,
+      lastAuthoritativeDigest: "e".repeat(64),
+    });
 
     const desktop = coordinator.takeover(state, {
       mutationId: "takeover-1", bindingId: binding.bindingId, expectedGeneration: 1,
@@ -149,13 +154,20 @@ describe("DesktopOwnershipCoordinator", () => {
     const { state, coordinator, binding } = stateWithBinding();
     const same = coordinator.bind(state, {
       mutationId: "bind-1", bindingId: "binding-1", rootThreadId: "root-thread-1", taskId: "task-1",
-      conversationId: "conversation-1", adapterId: "weixin:bot", bindingAnchorTurnId: "anchor-turn", observedAt: at(0),
+      conversationId: "conversation-1", adapterId: "weixin:bot", bindingAnchorTurnId: "anchor-turn",
+      bindingAnchorTurnIndex: 0, bindingAnchorDigest: "e".repeat(64), observedAt: at(0),
     });
     expect(same).toBe(binding);
     expect(() => coordinator.bind(state, {
       mutationId: "bind-1", bindingId: "binding-1", rootThreadId: "other-root", taskId: "task-1",
-      conversationId: "conversation-1", adapterId: "weixin:bot", bindingAnchorTurnId: "anchor-turn", observedAt: at(0),
+      conversationId: "conversation-1", adapterId: "weixin:bot", bindingAnchorTurnId: "anchor-turn",
+      bindingAnchorTurnIndex: 0, bindingAnchorDigest: "e".repeat(64), observedAt: at(0),
     })).toThrow(/integrity conflict/i);
+    expect(() => coordinator.bind(emptyState(), {
+      mutationId: "bind-bad-index", bindingId: "binding-bad", rootThreadId: "root-bad", taskId: "task-bad",
+      conversationId: "conversation-bad", adapterId: "weixin:bot", bindingAnchorTurnId: "anchor-turn",
+      bindingAnchorTurnIndex: -1, bindingAnchorDigest: "e".repeat(64), observedAt: at(0),
+    })).toThrow(/anchor.*index|position/i);
     expect(Object.keys(binding.processedMutationIds).length).toBeLessThanOrEqual(256);
   });
 });

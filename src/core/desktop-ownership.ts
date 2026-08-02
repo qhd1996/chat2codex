@@ -29,7 +29,8 @@ export class DesktopOwnershipCoordinator {
 
   bind(state: BridgeState, input: {
     mutationId: string; bindingId: string; rootThreadId: string; taskId: string;
-    conversationId: string; adapterId: string; bindingAnchorTurnId: string; observedAt: string;
+    conversationId: string; adapterId: string; bindingAnchorTurnId: string;
+    bindingAnchorTurnIndex: number; bindingAnchorDigest: string; observedAt: string;
   }): DesktopBinding {
     const gateway = gatewayState(state);
     const existing = gateway.bindings[input.bindingId];
@@ -38,6 +39,10 @@ export class DesktopOwnershipCoordinator {
       return this.replay(existing, input.mutationId, digest);
     }
     assertOpaqueFields(input, ["mutationId", "bindingId", "rootThreadId", "taskId", "conversationId", "adapterId", "bindingAnchorTurnId"]);
+    if (!Number.isSafeInteger(input.bindingAnchorTurnIndex) || input.bindingAnchorTurnIndex < 0) {
+      throw new Error("Desktop binding anchor turn index must be a non-negative safe integer position.");
+    }
+    assertDigest(input.bindingAnchorDigest, "bindingAnchorDigest");
     assertTimestamp(input.observedAt, "observedAt");
     const duplicateMutation = Object.values(gateway.bindings).find((item) => input.mutationId in item.processedMutationIds);
     if (duplicateMutation) return this.replay(duplicateMutation, input.mutationId, digest);
@@ -51,7 +56,9 @@ export class DesktopOwnershipCoordinator {
     const binding: DesktopBinding = {
       bindingId: input.bindingId, rootThreadId: input.rootThreadId, taskId: input.taskId,
       conversationId: input.conversationId, adapterId: input.adapterId, owner: "bridge", generation: 1,
-      bindingAnchorTurnId: input.bindingAnchorTurnId, lastReconciledTurnId: input.bindingAnchorTurnId,
+      bindingAnchorTurnId: input.bindingAnchorTurnId, bindingAnchorTurnIndex: input.bindingAnchorTurnIndex,
+      lastReconciledTurnId: input.bindingAnchorTurnId, lastReconciledTurnIndex: input.bindingAnchorTurnIndex,
+      lastAuthoritativeDigest: input.bindingAnchorDigest,
       excludedControlTurns: {}, pendingWakeIds: [], processedMutationIds: { [input.mutationId]: digest },
       createdAt: input.observedAt, updatedAt: input.observedAt,
     };

@@ -256,9 +256,9 @@ function coerceDesktopGatewayState(value: unknown): DesktopGatewayState {
 
 const desktopGatewayKeys = ["bindings", "wakes"] as const;
 const desktopBindingKeys = [
-  "activeStartFence", "adapterId", "bindingAnchorTurnId", "bindingId", "conversationId",
+  "activeStartFence", "adapterId", "bindingAnchorTurnId", "bindingAnchorTurnIndex", "bindingId", "conversationId",
   "createdAt", "excludedControlTurns", "generation", "lastAuthoritativeDigest",
-  "lastMirroredTurnId", "lastReconciledTurnId", "leaseExpiresAt", "owner",
+  "lastMirroredTurnId", "lastReconciledTurnId", "lastReconciledTurnIndex", "leaseExpiresAt", "owner",
   "ownerInstanceId", "pendingWakeIds", "processedMutationIds", "releaseRequested",
   "rootThreadId", "taskId", "updatedAt",
 ] as const;
@@ -291,6 +291,7 @@ function validateDesktopGatewayState(state: BridgeState, adapterId: string): voi
     validateOpaqueStateId(bindingId, "binding key");
     if (rawBinding.bindingId !== bindingId) throw new Error(`Desktop binding key does not match bindingId: ${bindingId}`);
     for (const [name, value] of [["rootThreadId", rawBinding.rootThreadId], ["taskId", rawBinding.taskId], ["conversationId", rawBinding.conversationId], ["adapterId", rawBinding.adapterId], ["bindingAnchorTurnId", rawBinding.bindingAnchorTurnId]] as const) validateOpaqueStateId(value, name);
+    validateTurnIndex(rawBinding.bindingAnchorTurnIndex, "Desktop binding anchor turn index");
     if (rawBinding.adapterId !== adapterId) throw new Error(`Desktop binding adapter does not match its partition: ${bindingId}`);
     if (roots.has(rawBinding.rootThreadId as string)) throw new Error(`Duplicate Desktop root binding: ${String(rawBinding.rootThreadId)}`);
     if (tasks.has(rawBinding.taskId as string)) throw new Error(`Duplicate Desktop task binding: ${String(rawBinding.taskId)}`);
@@ -318,6 +319,15 @@ function validateDesktopGatewayState(state: BridgeState, adapterId: string): voi
     if (new Set(rawBinding.pendingWakeIds).size !== rawBinding.pendingWakeIds.length) throw new Error(`Duplicate Desktop pending wake ID: ${bindingId}`);
     for (const wakeId of rawBinding.pendingWakeIds) validateOpaqueStateId(wakeId, "pending wake ID");
     for (const optionalId of [rawBinding.lastReconciledTurnId, rawBinding.lastMirroredTurnId]) if (optionalId !== undefined) validateOpaqueStateId(optionalId, "Desktop high-water turn ID");
+    if ((rawBinding.lastReconciledTurnId === undefined) !== (rawBinding.lastReconciledTurnIndex === undefined)) {
+      throw new Error(`Desktop reconciled turn ID and index must be persisted together: ${bindingId}`);
+    }
+    if (rawBinding.lastReconciledTurnIndex !== undefined) {
+      validateTurnIndex(rawBinding.lastReconciledTurnIndex, "Desktop reconciled high-water turn index");
+      if (Number(rawBinding.lastReconciledTurnIndex) < Number(rawBinding.bindingAnchorTurnIndex)) {
+        throw new Error(`Desktop reconciled high-water position precedes its binding anchor: ${bindingId}`);
+      }
+    }
     if (rawBinding.lastAuthoritativeDigest !== undefined && (typeof rawBinding.lastAuthoritativeDigest !== "string" || !/^[0-9a-f]{64}$/u.test(rawBinding.lastAuthoritativeDigest))) throw new Error(`Desktop authoritative digest is invalid: ${bindingId}`);
     if (rawBinding.owner === "bridge" && rawBinding.activeStartFence !== undefined) throw new Error(`Bridge owner cannot retain a Desktop start fence: ${bindingId}`);
     if (rawBinding.owner === "disabled" && (rawBinding.activeStartFence !== undefined || rawBinding.pendingWakeIds.length > 0 || rawBinding.releaseRequested === true)) throw new Error(`Disabled Desktop binding retains obligations: ${bindingId}`);
@@ -365,6 +375,7 @@ function validateProcessedMutations(value: unknown): void {
 }
 function validateOpaqueStateId(value: unknown, name: string): asserts value is string { if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > 160 || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error(`${name} must be a bounded opaque string.`); }
 function validateSha256StateValue(value: unknown, name: string): void { if (typeof value !== "string" || !/^[0-9a-f]{64}$/u.test(value)) throw new Error(`${name} must be a lowercase SHA-256 value.`); }
+function validateTurnIndex(value: unknown, name: string): void { if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`${name} must be a non-negative safe integer position.`); }
 function validateCanonicalStateTimestamp(value: unknown, name: string): void { if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error(`${name} must be a canonical UTC timestamp.`); }
 function assertExactObjectKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void { const unknown = Object.keys(value).filter((key) => !allowed.includes(key)); if (unknown.length) throw new Error(`Unknown ${label} field: ${unknown.join(", ")}`); }
 

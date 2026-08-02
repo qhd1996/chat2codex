@@ -544,6 +544,12 @@ describe("JsonStateStore", () => {
         state.desktopGateway!.wakes.wake = { eventId: "wake", bindingId: "first", turnId: "turn", observedAt: timestamp(2) };
       }, /wake.*pending|orphan.*wake/i);
       await expectSaveRejected("missing-wake", (state) => { state.desktopGateway!.bindings.first!.pendingWakeIds = ["missing"]; }, /wake.*missing|pending.*wake/i);
+      await expectSaveRejected("negative-anchor-index", (state) => {
+        state.desktopGateway!.bindings.first!.bindingAnchorTurnIndex = -1;
+      }, /anchor.*index|position/i);
+      await expectSaveRejected("missing-reconciled-index", (state) => {
+        delete state.desktopGateway!.bindings.first!.lastReconciledTurnIndex;
+      }, /reconciled.*index|high.water.*position/i);
       await expectSaveRejected("unknown-binding-field", (state) => {
         (state.desktopGateway!.bindings.first as unknown as Record<string, unknown>).rawPrompt = "must-not-persist";
       }, /unknown.*binding|binding.*field/i);
@@ -1069,8 +1075,9 @@ function desktopBinding(overrides: { bindingId: string; taskId: string; conversa
   return {
     bindingId: overrides.bindingId, rootThreadId: "root-thread", taskId: overrides.taskId,
     conversationId: overrides.conversationId ?? "conversation", adapterId: "weixin:bot",
-    owner: "bridge" as const, generation: 1, bindingAnchorTurnId: "anchor-turn",
-    lastReconciledTurnId: "anchor-turn", excludedControlTurns: {}, pendingWakeIds: [],
+    owner: "bridge" as const, generation: 1, bindingAnchorTurnId: "anchor-turn", bindingAnchorTurnIndex: 0,
+    lastReconciledTurnId: "anchor-turn", lastReconciledTurnIndex: 0,
+    lastAuthoritativeDigest: "b".repeat(64), excludedControlTurns: {}, pendingWakeIds: [],
     processedMutationIds: { bind: "a".repeat(64) }, createdAt: timestamp(1), updatedAt: timestamp(1),
   };
 }

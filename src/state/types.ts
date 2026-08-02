@@ -391,7 +391,9 @@ export interface DesktopBinding {
   ownerInstanceId?: string;
   leaseExpiresAt?: string;
   bindingAnchorTurnId: string;
+  bindingAnchorTurnIndex: number;
   lastReconciledTurnId?: string;
+  lastReconciledTurnIndex?: number;
   lastMirroredTurnId?: string;
   lastAuthoritativeDigest?: string;
   activeStartFence?: DesktopStartFence;
