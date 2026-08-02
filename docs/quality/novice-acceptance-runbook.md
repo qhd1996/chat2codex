@@ -22,6 +22,7 @@ host `package_smoke` never substitutes for a qualifying `clean_windows_vm` or
 - `pass`: exact archive on a qualifying clean Windows VM or equivalent isolated Windows profile with environment qualification and complete evidence.
 
 Record Windows/Node/npm/Bun/Codex/package versions, archive and installed manifest SHA-256, commands, seeds, test counts, failure/fix history, state hashes, and zero residual process proof. Never discard a failed report when producing a repaired one.
+Use `--cleanup` only after evidence capture. It deletes only the exact owned isolation root after overlap guards reject repository, production, and real-profile targets. Preserve the root on failure.
 
 ## Approval boundaries
 

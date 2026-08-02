@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { planNoviceIsolation, runNoviceArchiveAcceptance } from "../scripts/run-novice-acceptance.mjs";
+import { planNoviceIsolation, runNoviceArchiveAcceptance, validateNoviceWorkerEvidence } from "../scripts/run-novice-acceptance.mjs";
 
 describe("novice archive isolation", () => {
   test("plans a private profile, Codex Home, Chat2Codex Home, and npm prefix", async () => {
@@ -38,6 +38,13 @@ describe("novice archive isolation", () => {
   test("ships no developer or production drive path in the archive runner", async () => {
     const source = await Bun.file(path.resolve(import.meta.dir, "..", "scripts", "run-novice-acceptance.mjs")).text();
     expect(source).not.toMatch(/[A-Za-z]:[\\/](?:Users|workspace|Chat2Codex|codex)/iu);
+  });
+
+  test("requires complete package-only worker evidence", () => {
+    const installedRoot = path.resolve("C:/owned/npm-prefix/node_modules/chat2codex");
+    const value = { packageRoot: installedRoot, packageVersion: "0.8.0-novice.1", repositoryImported: false, cliVersion: "0.8.0-novice.1", manifestHash: "a".repeat(64), stateHash: "b".repeat(64), taskCount: 2, outboxCount: 3, networkRecovered: true, gatewayFailClosed: true, migrationBackupExact: true, nativeLifecycle: { installAttempts: 2, uninstallAttempts: 2, keyCount: 3, userDataPreserved: true, residualOwnedFiles: 0 } };
+    expect(validateNoviceWorkerEvidence(value, { installedRoot, packageVersion: "0.8.0-novice.1" })).toEqual(value);
+    for (const change of [{ repositoryImported: true }, { outboxCount: 2 }, { gatewayFailClosed: false }, { migrationBackupExact: false }, { nativeLifecycle: { ...value.nativeLifecycle, residualOwnedFiles: 1 } }]) expect(() => validateNoviceWorkerEvidence({ ...value, ...change }, { installedRoot, packageVersion: "0.8.0-novice.1" })).toThrow(/worker|package|evidence|lifecycle/i);
   });
 });
 

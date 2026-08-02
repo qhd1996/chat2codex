@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, realpath } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -59,8 +59,19 @@ export async function runNoviceArchiveAcceptance(input) {
   const marker = workerResult.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_PACKAGE_RESULT "));
   if (!marker) throw new Error("Installed novice worker omitted its result marker.");
   const workerEvidence = JSON.parse(marker.slice("NOVICE_PACKAGE_RESULT ".length));
-  if (!same(path.resolve(workerEvidence.packageRoot), installedRoot) || workerEvidence.repositoryImported !== false) throw new Error("Installed novice worker did not prove package-only imports.");
+  validateNoviceWorkerEvidence(workerEvidence, { installedRoot, packageVersion: JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8")).version });
   return { plan, qualifying: plan.qualifyingEnvironment, verdict: plan.qualifyingEnvironment ? "pass" : "package_smoke", install: { command: [npm, ...installArgs].map(redactPart), exitCode: install.status }, worker: workerEvidence };
+}
+
+export function validateNoviceWorkerEvidence(value, expected) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Installed novice worker evidence is invalid.");
+  if (!same(path.resolve(value.packageRoot), expected.installedRoot) || value.repositoryImported !== false) throw new Error("Installed novice worker did not prove package-only imports.");
+  if (value.packageVersion !== expected.packageVersion || value.cliVersion !== expected.packageVersion) throw new Error("Installed novice CLI version evidence is invalid.");
+  for (const field of ["manifestHash", "stateHash"]) if (typeof value[field] !== "string" || !/^[a-f0-9]{64}$/u.test(value[field])) throw new Error("Installed novice hash evidence is invalid.");
+  if (value.taskCount !== 2 || value.outboxCount !== 3 || value.networkRecovered !== true || value.gatewayFailClosed !== true || value.migrationBackupExact !== true) throw new Error("Installed novice product-boundary evidence is incomplete.");
+  const native = value.nativeLifecycle;
+  if (!native || native.installAttempts !== 2 || native.uninstallAttempts !== 2 || native.keyCount !== 3 || native.userDataPreserved !== true || native.residualOwnedFiles !== 0) throw new Error("Installed novice native lifecycle evidence is incomplete.");
+  return value;
 }
 
 function overlaps(left, right) { return inside(left, right) || inside(right, left); }
@@ -77,6 +88,18 @@ async function main() {
   const productionRoot = read("--production-root") ?? process.env.CHAT2CODEX_PRODUCTION_ROOT;
   if (!productionRoot) throw new Error("Novice acceptance requires an explicit production-root exclusion path.");
   const result = await runNoviceArchiveAcceptance({ archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot, environmentKind: read("--environment-kind") ?? "isolated_profile_projection", dryRun: args.includes("--dry-run") });
-  process.stdout.write(JSON.stringify({ qualifying: result.qualifying, verdict: result.verdict, archiveSha256: result.plan.archiveSha256 }) + "\n");
+  process.stdout.write(JSON.stringify({
+    qualifying: result.qualifying, verdict: result.verdict, archiveSha256: result.plan.archiveSha256,
+    packageVersion: result.worker?.packageVersion, cliVersion: result.worker?.cliVersion,
+    manifestHash: result.worker?.manifestHash, stateHash: result.worker?.stateHash,
+    taskCount: result.worker?.taskCount, outboxCount: result.worker?.outboxCount,
+    networkRecovered: result.worker?.networkRecovered, gatewayFailClosed: result.worker?.gatewayFailClosed,
+    migrationBackupExact: result.worker?.migrationBackupExact, nativeLifecycle: result.worker?.nativeLifecycle,
+  }) + "\n");
+  if (args.includes("--cleanup")) {
+    const resolved = path.resolve(ownedRoot);
+    if (!same(resolved, result.plan.ownedRoot) || overlaps(resolved, repositoryRoot) || overlaps(resolved, productionRoot) || overlaps(resolved, os.homedir())) throw new Error("Novice cleanup target is unsafe.");
+    await rm(resolved, { recursive: true, force: true });
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main().catch((error) => { process.stderr.write("novice-acceptance: " + (error instanceof Error ? error.message : String(error)) + "\n"); process.exitCode = 1; });
