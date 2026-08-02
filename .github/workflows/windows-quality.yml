@@ -38,7 +38,7 @@ jobs:
       - name: Verify extracted package and residual evidence
         shell: pwsh
         run: |
-          $archive = Get-ChildItem .tmp/package/*.tgz | Select-Object -Single
+          $archive = Get-ChildItem .tmp/package/*.tgz | Select-Object -First 1
           tar -xf $archive.FullName -C .tmp/package
           node scripts/verify-distribution-package.mjs .tmp/package/package
           $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
