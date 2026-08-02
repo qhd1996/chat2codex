@@ -21,6 +21,15 @@ describe("novice acceptance evidence", () => {
     expect(validateNoviceEvidence(validComplete(), validationOptions)).toEqual({ qualifying: true, repetitions: 30, scenarios: scenarioIds.length, verdict: "pass" });
   });
 
+  test("treats scenario execution object key order as non-semantic", () => {
+    const value = validComplete();
+    value.repetitions[0].scenarioExecutions = value.repetitions[0].scenarioExecutions.map((item: any) => ({
+      scenarioId: item.scenarioId, verdict: item.verdict, preconditions: item.preconditions, promptCodes: item.promptCodes,
+      invariants: item.invariants, faults: item.faults, actions: item.actions, recovery: item.recovery, probes: item.probes, productProofs: item.productProofs,
+    }));
+    expect(validateNoviceEvidence(value, validationOptions)).toMatchObject({ qualifying: true, verdict: "pass" });
+  });
+
   test("rejects hollow, duplicate, or drifted per-scenario execution evidence", () => {
     for (const mutate of [
       (v: any) => { v.repetitions[0].scenarioExecutions.pop(); },

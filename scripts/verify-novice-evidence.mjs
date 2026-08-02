@@ -93,8 +93,12 @@ function validateScenarioExecutionEvidence(raw, expected) {
   const sorted = [...raw].sort((a,b)=>String(a?.scenarioId).localeCompare(String(b?.scenarioId)));
   for (const [index, rawItem] of sorted.entries()) {
     const item = object(rawItem, "scenario execution"); exactKeys(item, scenarioExecutionKeys, "scenario execution");
-    const { productProofs, ...inventory } = item;
-    if (JSON.stringify(inventory) !== JSON.stringify(expected[index])) throw new Error("Novice scenario execution actions, prompts, invariants, faults, recovery, or probes differ from the accepted inventory.");
+    const accepted = expected[index];
+    if (item.scenarioId !== accepted.scenarioId || item.verdict !== accepted.verdict ||
+        ["preconditions", "actions", "promptCodes", "invariants", "faults", "recovery", "probes"].some((field) => JSON.stringify(item[field]) !== JSON.stringify(accepted[field]))) {
+      throw new Error("Novice scenario execution actions, prompts, invariants, faults, recovery, or probes differ from the accepted inventory.");
+    }
+    const productProofs = item.productProofs;
     const sources = expectedProofSources[item.scenarioId];
     if (!Array.isArray(productProofs) || !sources || productProofs.length !== sources.length) throw new Error("Novice scenario execution product proof is incomplete.");
     for (const [offset, rawProof] of productProofs.entries()) { const proof=object(rawProof,"product proof"); exactKeys(proof,productProofKeys,"product proof"); if(proof.source!==sources[offset]) throw new Error("Novice scenario execution product proof source is invalid."); hash(proof.sha256,"scenario product proof"); }
