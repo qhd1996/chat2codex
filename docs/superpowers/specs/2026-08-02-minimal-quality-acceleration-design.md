@@ -2,7 +2,7 @@
 
 **Date:** 2026-08-02
 
-**Status:** Proposed for written review after Haoda approved option B. No implementation is authorized by this document alone.
+**Status:** Approved by Haoda on 2026-08-02. Package A implementation is authorized; Package B remains sequenced after the reviewed Phase 3 Tasks 1–4 merge.
 
 ## 1. Objective
 
