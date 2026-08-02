@@ -1,13 +1,14 @@
 # Weixin Desktop Authenticated Loopback Gateway Fallback Design
 
-Status: `DRAFT FOR HAODA REVIEW`
+Status: `APPROVED FOR IMPLEMENTATION PLANNING`
 
 Direction approved: 2026-08-02
 
-Implementation authorization: **not granted**. This specification must be
-reviewed and approved by Haoda before an implementation plan or production code
-is written. Installation/trust, `~/.codex` changes, Desktop restart, production
-writes, Computer Use, and real Weixin sends remain separate confirmation gates.
+Haoda approved this specification on 2026-08-02 and authorized an implementation
+plan plus the separate Phase 2/UsageAdvisor integration baseline. Gateway
+implementation authorization is **not granted**. Installation/trust, `~/.codex`
+changes, Desktop restart, production writes, Computer Use, and real Weixin sends
+remain separate confirmation gates.
 
 ## 1. Decision and scope
 
@@ -157,11 +158,11 @@ different rule sets. If that process is down, hooks block and no second Gateway
 writer starts.
 
 The minimal surface is versioned and closed: authenticated `status`,
-`takeover-desktop`, `release-bridge`, `user-prompt-submit`, and `stop-wake`. All
-parameters use bounded request bodies, not query strings. Unknown routes and
-methods fail closed. The server validates the loopback peer, expected `Host`, and
-content type; disables CORS and redirects; and applies short request deadlines and
-bounded concurrent connections.
+`desktop-heartbeat`, `takeover-desktop`, `release-bridge`,
+`user-prompt-submit`, and `stop-wake`. All parameters use bounded request bodies,
+not query strings. Unknown routes and methods fail closed. The server validates
+the loopback peer, expected `Host`, and content type; disables CORS and redirects;
+and applies short request deadlines and bounded concurrent connections.
 
 ### 4.2 Supported Desktop MCP surface
 
@@ -178,34 +179,78 @@ an outbox obligation exists. It does not return prompts, chat/sender IDs, absolu
 paths, credentials, hook keys, raw output, or approval values. MCP discovery or
 status never grants ownership.
 
+Takeover and release controls must not depend on an unsafe model turn. The
+preferred route is a supported MCP/app UI action that calls the relevant endpoint
+independently of a Codex turn. If the installed Desktop cannot invoke such an
+action outside a turn, the only acceptable fallback is an exact, reserved local
+control prompt intercepted by `UserPromptSubmit`: the hook authenticates and
+performs the takeover CAS, or atomically records a bounded `releaseRequested` flag,
+and still returns `decision: block` so that control prompt never reaches the model.
+Release reconciliation then runs asynchronously and performs the release CAS only
+after all obligations are complete. The user submits an actual task only after
+status shows the new generation/owner. Free-form intent parsing, an MCP tool invoked
+by a model turn under the old owner, releasing while a Desktop turn/fence is active,
+or allowing a control prompt to start Codex are prohibited. Which route exists is
+an installed behavior gate, not an assumption.
+
 ### 4.3 Trusted hooks
 
 `UserPromptSubmit` is the enforcement point for an ordinary Desktop root prompt.
-The hook sends no raw prompt. It sends the root `session_id`, a SHA-256 prompt
-digest, hook request ID, and timestamp. The Gateway permits only a bound root whose
-concrete `threadId` is proven to equal that root `session_id`, whose owner is
-`desktop`, whose generation and lease are current, and which has neither an
-active turn nor an unresolved fence. The permit transaction creates the start
-fence before returning success.
+Official hook input includes the raw `prompt`, parent/root `session_id`, and the
+already allocated active `turn_id`. The hook computes the prompt digest locally
+and sends no raw prompt. It sends `session_id`, the actual `turn_id`, a SHA-256
+prompt digest, hook request ID, and timestamp. The Gateway permits only a bound
+root whose concrete `threadId` is proven to equal that root `session_id`, whose
+owner is `desktop`, whose generation and lease are current, and which has neither
+another active turn nor an unresolved fence. The permit transaction creates the
+start fence bound directly to this hook-provided `turn_id` before returning success;
+later reconciliation never guesses which turn matches a fence.
 
 If the Gateway cannot prove every condition, the hook returns the supported block
-decision or exits with code 2 and one concise remediation message. Gateway
-unavailability is a block, not a bypass. The implementation must behavior-prove
-that the installed hook contract cannot silently continue after timeout or error.
+decision or exits with code 2 and one concise remediation message. The hook uses
+a short internal HTTP deadline and catches every handled network, authentication,
+schema, signature, and local I/O error so Gateway unavailability actively produces
+that block before the longer Codex command-hook deadline.
 
-`Stop` sends only event ID, root `session_id`, concrete `threadId`, optional
-`turnId`, and observed timestamp. It may enqueue an idempotent wake-up. Any hook
-text, claimed result, or file list is ignored. Loss or duplication of `Stop` is
-safe because restart and periodic recovery reconcile from authoritative state.
+Official documentation says a command-hook timeout/error is reported as hook
+failure; it does not promise that such a failure blocks `UserPromptSubmit`. Missing
+executable, process crash, outer timeout, untrusted/changed hash, disabled hooks,
+and conflicting hook configuration are therefore explicit installed behavior
+gates rather than assumed fail-closed cases. Before any root is bound,
+`hooks/list` must prove the exact trusted definition is active. Behavior tests must
+show that all six failure modes block or otherwise make prompt submission impossible.
+If any mode silently continues, the fallback is not implementable as specified;
+no binding or same-thread claim is allowed. A periodic heartbeat or MCP status
+cannot close the race created by a skipped hook.
+
+Official command-hook input for `Stop` contains the parent/root `session_id` and
+active `turn_id`, not a separate concrete `threadId`. The root Stop handler sends
+only event ID, `session_id`, `turn_id`, and observed timestamp. The Gateway accepts
+it only when `session_id` exactly matches an explicit root binding and the turn can
+later be found in that root by authoritative read. `SubagentStop` is not registered
+as an export wake-up and cannot use the root binding. Any hook text,
+`last_assistant_message`, claimed result, or file list is ignored. Loss or
+duplication of `Stop` is safe because restart and periodic recovery reconcile from
+authoritative state.
+
+Unlike `UserPromptSubmit`, `Stop` is advisory: official `decision: block` or exit
+code 2 asks Codex to continue the turn. The Stop hook therefore never emits either
+form. After a bounded best-effort wake attempt it exits 0 with no continuation
+decision, including when the Gateway is unavailable; recovery scanning remains
+the correctness path. A Stop hook failure may be diagnosed but must not create a
+continuation prompt or become result content.
 
 ### 4.4 Authoritative reconciler
 
 For each bound Desktop-owned or uncertain root, the reconciler reads the thread
-through supported Codex app-server APIs compatible with the pinned protocol. It
-must validate the concrete root `threadId`, ordered turns, terminal state, item
-shape, and pagination before accepting content. Desktop UI text, hook payloads,
-SQLite scraping, log scraping, and undocumented WebSocket transport are not
-authoritative sources.
+through supported Codex app-server APIs compatible with the pinned protocol. The
+normative read is stable `thread/read` with `includeTurns: true`; it must validate
+the concrete root `threadId`, complete ordered turns, terminal state, and item
+shape before accepting content. Experimental `thread/turns/list` and
+`thread/items/list` may be used only as a version-pinned optimization after
+equivalence with `thread/read` is proven; they are never the only recovery path.
+Desktop UI text, hook payloads, transcript files, SQLite/log scraping, and
+experimental WebSocket transport are not authoritative sources.
 
 The reconciler begins after the binding anchor and advances in authoritative turn
 order. It extracts final text and the existing explicit output declaration only.
@@ -220,8 +265,10 @@ error leaves the fence and high-water mark unchanged and moves ownership to
 
 Provision independent 256-bit random keys for `prompt_hook`, `stop_hook`, and
 `desktop_mcp`. Each key has an immutable endpoint allowlist. The prompt key cannot
-take over or release; the Stop key can only enqueue a wake; the MCP key cannot
-submit hook decisions. Keys live in separate owner-only token files outside the
+call general MCP takeover/release endpoints; inside `user-prompt-submit` it may
+perform only an exact reserved takeover or release-request operation whose keyed
+prompt commitment matches the code-owned literal. The Stop key can only enqueue a
+wake; the MCP key cannot submit hook decisions. Keys live in separate owner-only token files outside the
 durable bridge state and are never placed in command-line arguments, URLs, MCP
 tool results, logs, or source control. Windows ACL and fresh-process behavior must
 be verified before trust.
@@ -233,8 +280,18 @@ and remains separately confirmed.
 
 Every request carries protocol version, key ID, caller role, UUID request ID, UTC
 timestamp, 128-bit random nonce, body SHA-256, and HMAC-SHA-256 over the canonical
-method, path, metadata, and body digest. Comparison is constant-time. The secret
-itself is never transmitted.
+method, path, metadata, and body digest. Canonicalization uses uppercase method,
+the exact normalized path, fixed field order, UTF-8 bytes, explicit byte lengths,
+and the exact received body bytes; duplicate headers/fields and alternate path
+encodings are rejected. Comparison is constant-time. The secret itself is never
+transmitted.
+
+Prompt content uses a domain-separated HMAC-SHA-256 commitment under the scoped
+prompt key, not a plain SHA-256 digest that could disclose low-entropy prompts by
+dictionary attack. The Gateway recomputes commitments for the two code-owned
+control literals before authorizing their narrow mutations. Ordinary prompt
+commitments are used only to bind the authenticated request/fence and are never
+logged or returned by status.
 
 Every response is also authenticated with the caller's scoped key and binds the
 protocol version, request ID, request nonce, decision code, generation, optional
@@ -288,7 +345,13 @@ The conceptual binding record is:
   "lastReconciledTurnId": "opaque turn ID or null",
   "lastMirroredTurnId": "opaque turn ID or null",
   "lastAuthoritativeDigest": "SHA-256 or null",
-  "activeStartFence": null,
+  "activeStartFence": {
+    "turnId": "actual UserPromptSubmit turn_id",
+    "originGeneration": 12,
+    "requestId": "authenticated UUID",
+    "promptCommitment": "domain-separated HMAC-SHA-256",
+    "issuedAt": "UTC timestamp"
+  },
   "pendingWakeIds": [],
   "createdAt": "UTC timestamp",
   "updatedAt": "UTC timestamp"
@@ -323,11 +386,13 @@ cursor. The successful transaction increments generation and changes owner. The
 bridge's pre-turn gate uses the same expected generation.
 
 `UserPromptSubmit` permit is also a state mutation. It stores a one-time fence
-containing generation, request ID, prompt digest, and issued time. While the fence
-exists, bridge takeover and bridge turn start fail. Hook retry with the same
-authenticated request is idempotent; a different body for the same request ID is
-rejected. If no authoritative turn can be matched to the fence, the binding becomes
-`uncertain`; elapsed time never clears it automatically.
+containing the hook's actual `turn_id`, origin generation, request ID, prompt
+commitment, and issued time. While the fence exists, bridge takeover and bridge turn
+start fail. Hook retry with the same authenticated request is idempotent; a
+different body for the same request ID is rejected. If authoritative read does not
+find exactly that fenced turn under the bound root, or finds a digest/order
+conflict, the binding becomes `uncertain`; elapsed time never clears it
+automatically.
 
 Desktop release first reconciles the fenced/completed turn, atomically inserts any
 new outbox entries and advances high water, then increments generation and returns
@@ -338,6 +403,13 @@ owner to `bridge`. Bridge takeover cannot precede that sequence.
 At binding time, `bindingAnchorTurnId` records the last authoritative root turn.
 Nothing at or before the anchor is exportable. For each later terminal root turn,
 the reconciler derives a canonical result digest and ordered delivery parts.
+Turn IDs are opaque and are never compared lexically or numerically. High water
+advances only by the order returned in a complete stable
+`thread/read(includeTurns: true)` snapshot after verifying that the prior anchor/
+high-water turn and its saved digest still exist at the expected position. A
+missing/reordered prior turn or an incomplete/oversized response is an integrity
+conflict; no outbox or cursor change is committed. Experimental pagination may
+optimize reads only after the same ordering/digest invariants are proven.
 
 Each outbox identity is deterministic. `generation` is the origin generation
 recorded on the matching start fence, not whichever generation happens to be
@@ -377,7 +449,10 @@ A child/subagent has a distinct concrete `threadId` while retaining the root
 - child output, declared files, Stop events, and wake-ups never enter the root
   outbox; and
 - if the installed hook payload cannot distinguish the root prompt from a child
-  context as required, the prompt blocks and the primitive fails acceptance.
+  context as required, the prompt blocks and the primitive fails acceptance. The
+  published `UserPromptSubmit` shape has no child `agent_id`; installed behavior
+  must prove whether subagent flows emit this event and that they cannot inherit a
+  root permit.
 
 There is no automatic child binding. A future concrete-child export feature would
 require a separate accepted change and a new explicit binding.
@@ -386,7 +461,8 @@ require a separate accepted change and a new explicit binding.
 
 | Condition | Required behavior |
 | --- | --- |
-| Gateway down, timeout, or protocol mismatch | `UserPromptSubmit` blocks; no Desktop turn is accepted for the claimed bound path |
+| Gateway down, internal deadline, or protocol mismatch | The hook actively returns block/exit 2; no Desktop turn is accepted |
+| Hook missing, crashed, outer-timed-out, untrusted, disabled, or conflicting | Installation gate must behavior-prove prompt cannot continue; otherwise no binding is permitted |
 | Missing/disabled binding | Block with redacted recovery guidance |
 | Stale generation or wrong owner | Block; never refresh or transfer implicitly |
 | Lease or start-fence expiry | Mark `uncertain`; reconcile; do not grant a writer |
@@ -407,9 +483,9 @@ root, followed by the named real Desktop/Weixin evidence where specified.
 | Primitive | Behavior test | Pass condition | Required evidence |
 | --- | --- | --- | --- |
 | 1. Desktop status/MCP surface | First prove shared supported persistence for a disposable root; open the bound root, query status, restart Gateway, query again; use wrong key and unavailable Gateway | Both sides read the identical concrete root before binding; supported MCP loads without `plugin/list`; state is authenticated/redacted/current after reconnect; auth failures reveal no binding data | Shared-persistence/thread digest transcript, timestamped Desktop capture, authenticated decision logs without secrets, before/after state hash, reconnect transcript |
-| 2. `UserPromptSubmit` lease enforcement | Submit under bridge owner, current Desktop owner, stale generation, missing binding, `uncertain`, bad auth, and Gateway down | Only current Desktop owner can create one durable start fence; every negative case blocks through the installed hook | Hook exit/decision records, generation/fence snapshots, Desktop blocked-state capture, zero unexpected turn IDs |
+| 2. `UserPromptSubmit` lease enforcement | Submit under bridge owner, current Desktop owner, stale generation, missing binding, `uncertain`, bad auth, Gateway down, missing/crashed/timed-out/untrusted/disabled hook, and child context; exercise the supported takeover bootstrap | Only current Desktop owner can create one durable fence bound to the hook's actual `turn_id`; every negative case blocks; takeover starts no model turn under the old owner | Hook exit/decision records, generation/fence snapshots, exact `turn_id`, Desktop blocked-state capture, `hooks/list` trust state, zero unexpected turns |
 | 3. Same-thread takeover | Create via Weixin/bridge, transfer bridge→Desktop→bridge, run one turn under each owner | Every turn uses the exact original root `threadId`; generations increase; no cloned/copied thread; no overlapping start | Thread/read transcript, thread IDs, CAS log, process/turn timeline, state hashes |
-| 4. Stop/completion wake-up | Complete a Desktop turn with one Stop, duplicate Stop, missing Stop, and crash before wake handling; inject false hook content | Stop carries IDs only; duplicates are harmless; missing wake is recovered; injected content is ignored | Redacted hook envelopes, durable wake IDs, restart/reconcile logs, proof hook text never becomes outbox text |
+| 4. Stop/completion wake-up | Complete a Desktop root turn with one Stop, duplicate Stop, missing Stop, and crash before wake handling; inject false hook content and a `SubagentStop` | Root Stop carries only `session_id`/`turn_id` wake metadata; duplicates are harmless; missing wake is recovered; injected and subagent content is ignored | Redacted hook envelopes, durable wake IDs, restart/reconcile logs, proof hook/child text never becomes outbox text |
 | 5. Authoritative `thread/read` | Complete bound text plus declared file, then reread using supported APIs; make read unavailable/malformed | Mirrored bytes and hashes match authoritative read/staged file; failure advances neither fence nor high water | Protocol transcript/version, content/file SHA-256, ordered outbox snapshot, negative read log |
 | 6. Single-writer competition | Race bridge start, Desktop prompt, takeover/release, stale request, expired lease, and crash at each CAS/fence boundary | Exactly one owner/generation/start wins; stale or uncertain participants fail closed; no second turn starts | Deterministic race tests, installed timing trace, generation history, zero concurrent turns for root |
 | 7. Unbound/child exclusion | Complete an ordinary unbound Desktop root and a child/subagent sharing the bound root `session_id`; restart reconciliation | Neither concrete unbound/child `threadId` creates wake/outbox/export; root binding remains unchanged | Root/child identity transcript, outbox before/after hash, zero delivery IDs, redacted exclusion diagnostic |
@@ -475,8 +551,12 @@ confirmations when executed.
 3. Prove no active fence, Desktop turn, pending wake, unreconciled turn, or
    non-delivered outbox obligation remains.
 4. On a copy, transform v6 to v5 by removing only fully reconciled Gateway
-   records; verify tasks, threads, outbox, and media hashes/counts. An old v5
-   binary must fail closed on untransformed v6.
+   records; preserve every v5 adapter partition and field byte-equivalently after
+   canonical serialization, including tasks, conversations, chats, jobs, pending
+   messages, diagnostics, image drafts, clarifications, UsageAdvisor, and all
+   text/media outbox entries and staged-file hashes. Verify their counts, owners,
+   references, ordering, and hashes. An old v5 binary must fail closed on
+   untransformed v6.
 5. With separate confirmation, uninstall/disable MCP and hooks, revoke/delete
    scoped keys, stop Gateway, restore the verified v5 copy, and start the old
    package as one bridge writer.
@@ -509,10 +589,10 @@ review immediately; it does not degrade to dashboard-only mirroring.
 
 ## 14. Review and authorization gates
 
-This document is the only authorized deliverable in the current step. After it is
-committed, Haoda must review it. Before that review is approved:
+Haoda approved this design and authorized writing an implementation plan and
+building the Phase 2/UsageAdvisor integration baseline. Until Haoda separately
+approves that implementation plan:
 
-- no implementation plan may be written;
 - no Gateway, state schema, hook, MCP, or reconciler code may be implemented;
 - no `~/.codex` file, Hook trust record, Desktop process, AppX package, production
   state, or Weixin conversation may be changed; and
