@@ -61,6 +61,16 @@ describe("architecture boundaries", () => {
     expect(composition).toMatch(/new\s+JsonStateStore\b/u);
     expect(composition).toMatch(/new\s+AdapterSupervisor\b/u);
   });
+
+  test("UsageAdvisor core has no self-modification, deployment, permission, or external-action capability", async () => {
+    const source = await readFile(path.join(workspaceRoot, "src/core/usage-advisor.ts"), "utf8");
+    const imports = [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map((match) => match[1]);
+    expect(imports).toEqual(["../state/types.js"]);
+    expect(source).not.toMatch(/\b(?:fetch|spawn|spawnSync|exec|execFile|writeFile|appendFile|chmod|unlink|rm|rmdir)\s*\(/u);
+    expect(source).not.toMatch(/(?:process\.env|\bdeploy\s*\(|\bgrantPermission\s*\(|\bsetConfig\s*\()/u);
+    expect(source).not.toContain("apply");
+    expect(source).toContain('export type UsageAdvisorReviewDecision = "approve_for_planning" | "reject"');
+  });
 });
 
 async function typescriptFiles(directory: string): Promise<string[]> {

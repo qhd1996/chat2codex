@@ -10,6 +10,7 @@ Chat2Codex 会把聊天机器人变成本机 Codex CLI 的消息平台。你可�
 
 - 当前生产适配器包括飞书/Lark 长连接和原生微信 ClawBot iLink 长轮询。每个进程通过 `CHAT2CODEX_ADAPTER=feishu|weixin` 二选一；不配置时仍默认飞书，现有配置无需迁移。平台传输已通过契约和 supervisor 与核心隔离，详见 [架构说明](docs/architecture.md)。
 - 私聊路由默认开启，但除 `/whoami` 外，发送者或私聊 chat 必须显式加入允许列表；授权后的私聊可以切换到任意本机目录。
+- UsageAdvisor 是有界的审查入口：运行摩擦只能生成脱敏、由代码模板定义的建议；批准只允许进入规划，不会应用、执行或部署变更。
 - 群聊默认关闭，启用后必须同时允许 chat 和发送者，并且可以用 `CODEX_GROUP_ALLOWED_ROOTS` 限制可访问目录。
 - Codex app-server 协议仍是实验性能力。安装或升级 Codex CLI 后，请先运行 `chat2codex doctor`，再按 [Codex App-Server 防护检查](#codex-app-server-防护检查) 完成验证。
 
@@ -90,8 +91,9 @@ Summarize this repository.
 
 - 支持飞书/Lark 长连接和原生微信 ClawBot 长轮询，都不需要公网 webhook 服务。
 - 每个逻辑 task/thread scope 复用一个 Codex app-server 进程。同一微信会话中的多个任务可以分别拥有 session 和 thread；同一任务始终一次只运行一个 turn，session 级授权不会跨任务继承。
-- 支持 `/help`、`/status`、`/host`、`/projects`、`/project <index|path>`、`/threads`、`/history`、`/search`、`/resume`、`/fork`、`/archive`、`/archived`、`/unarchive`、`/retry`、`/usage`、`/service status|logs|restart`、`/compact`、`/plan <任务>`、`/new`、`/cd <path>`、`/stop`、`/steer`、`/answer`、`/mcp-answer`、`/approve`、`/permit`、`/mcp-decide`、`/summary`、`/files`、`/diff`、`/logs` 和 `/whoami` 命令。
+- 支持 `/help`、`/status`、`/host`、`/projects`、`/project <index|path>`、`/threads`、`/history`、`/search`、`/resume`、`/fork`、`/archive`、`/archived`、`/unarchive`、`/retry`、`/usage`、`/advisor`、`/advisor approve <建议 ID>`、`/advisor reject <建议 ID>`、`/service status|logs|restart`、`/compact`、`/plan <任务>`、`/new`、`/cd <path>`、`/stop`、`/steer`、`/answer`、`/mcp-answer`、`/approve`、`/permit`、`/mcp-decide`、`/summary`、`/files`、`/diff`、`/logs` 和 `/whoami` 命令。
 - 使用 JSON 保存本地状态。
+- UsageAdvisor 只接受闭集信号 `task_target_clarification`、`abandoned_image_draft`、`routing_correction`、`delivery_retry`、`ownership_conflict`、`recovery_action`。当前上限为 proposal threshold: 3、aggregate cap: 6、proposal cap: 6、recent timestamp cap: 8。建议文本从代码模板重建，包含观察、证据、收益、风险、范围、rollback 和验证。`/advisor approve` 只记录 `approve_for_planning`，`/advisor reject` 为终态；两者都不会运行 Codex、修改配置或扩大权限。
 - 使用 Codex app-server JSON-RPC 获取机器可读的进度、最终输出和审批回调。
 - Codex 运行时会在原消息下添加“处理中”表情、限频发送普通文本进度，并在失败时添加失败表情；`/stop`、`/retry` 和本轮详情都使用普通文本命令。
 - 支持用飞书/Lark 审批卡片处理 Codex 命令执行和文件变更审批请求。按钮会根据 Codex 当前提供的审批选项生成，包括 Approve、Approve session、Deny、Cancel turn 等。
@@ -144,9 +146,9 @@ CHAT2CODEX_WORKSPACE_ROUTES={"work":"F:/workspace/workbuddy/Work","travel":"F:/w
 
 任务相关回复使用经过清理、最多 20 个 Unicode code point 的标签。`/status` 只展示有界的任务状态、工作区类型、隔离模式、排队原因、年龄、交互等待和 thread 预览，不展示完整 prompt、回复码、秘密或文件内容。[聊天命令](#聊天命令)中的斜杠命令全部保留；微信主要通过自然语言操作，尤其应在多个候选任务时明确说出任务名。停止、审批、授权、归档等高风险动作不会靠“最近任务”猜测目标；歧义会触发一次澄清，并保留任务、交互和图片草稿状态。
 
-状态会从 schema v3 确定性迁移到 task-aware schema v4。首次保存迁移结果前，原文件保留为 `<BRIDGE_STATE_PATH>.v3.bak`，原 chat/thread 被导入为一个任务。排队任务保留执行元数据；已经运行的任务会标记为 interrupted，绝不自动重放；未知的未来 schema 会安全拒绝。
+旧状态会确定性迁移到当前 task-aware schema v5。首次保存迁移结果前，原文件保留为 `<BRIDGE_STATE_PATH>.v3.bak`，原 chat/thread 被导入为一个任务。排队任务保留执行元数据；已经运行的任务会标记为 interrupted，绝不自动重放；未知的未来 schema 会安全拒绝。
 
-Phase 1 包含微信入站图片和纯文本出站回复，不包含微信出站图片/文件、Codex 桌面版实时状态与同 thread 接管、受控微信群，或 UsageAdvisor/自我改进。这些分别属于 Phase 2、Phase 3 和 Phase 4。
+Phase 1 包含微信入站图片和纯文本出站回复。UsageAdvisor 的有界、脱敏、review-only 基础能力已经实现；微信出站图片/文件、Codex 桌面版实时状态与同 thread 接管、受控微信群仍分别由后续阶段验收。
 
 ## Codex App-Server 防护检查
 
@@ -285,6 +287,9 @@ bun src/index.ts service install --env .env --project-dir . \
 | `/fork --turn <历史编号\|turn_id>` | 从选中的非进行中 turn 分叉当前会话。可以使用 `/history` 中的编号，也可以直接传 turn id；原 thread 保持不变，且不会恢复本地文件。 |
 | `/retry` | 为同一 chat 的原任务发送者重试当前 bridge 进程记住的最近任务；bridge 重启后精确 prompt 上下文会清空。 |
 | `/usage` | 在 Codex 提供用量通知时，查看最近一轮和当前 thread 的累计 token 用量及 context 占用。 |
+| `/advisor` | 最多列出 6 条有界、脱敏的 UsageAdvisor 建议。 |
+| `/advisor approve <建议 ID>` | 记录 `approve_for_planning`，只允许进入规划，不应用任何变更。 |
+| `/advisor reject <建议 ID>` | 终态拒绝建议，不应用任何变更。 |
 | `/archive` | 归档当前选中的 Codex thread 并从 chat 清除选择，不修改本地文件。 |
 | `/archived` | 列出当前项目的已归档 thread。 |
 | `/unarchive <已归档编号\|thread_id>` | 恢复已归档 thread；之后用 `/threads` 和 `/resume` 继续。 |
