@@ -27,6 +27,7 @@ const testFiles = [
   "tests/novice-scenarios.test.ts", "tests/novice-simulator.test.ts", "tests/novice-redaction.test.ts",
   "tests/novice-fresh-journey.test.ts", "tests/novice-upgrade-journey.test.ts", "tests/novice-daily-use.test.ts",
   "tests/novice-recovery.test.ts", "tests/novice-evidence.test.ts", "tests/properties/novice-actions.property.test.ts",
+  "tests/novice-package-matrix.test.ts", "tests/novice-real-upgrade.test.ts",
   "tests/outbox-retry-scheduler.test.ts", "tests/properties/novice-lifecycle.property.test.ts", "tests/novice-restart.test.ts",
 ];
 const records = [];

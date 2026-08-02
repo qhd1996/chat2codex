@@ -16,6 +16,8 @@ describe("novice acceptance documentation and Windows CI", () => {
 
   test("runs the novice fast, native, 30-run, pack, extraction, and residual gates on Windows", async () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
+    const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
+    expect(matrix).toContain("tests/novice-package-matrix.test.ts");
     for (const value of ["windows-latest", "actions/checkout@v7", "actions/setup-node@v7", 'node-version: "24"', "oven-sh/setup-bun@v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "bun run test:novice", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
     expect(workflow).not.toContain("Select-Object -Single");
     expect(workflow).toContain("Select-Object -First 1");
