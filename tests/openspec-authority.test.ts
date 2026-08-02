@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 
 import { validateOpenSpecAuthority } from "../scripts/verify-openspec-authority.mjs";
 
-const authorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
+const authorityCommit = "21a5800c4d725375af256a1e1c827bab75c3f034";
 const authorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
 const changeName = "minimal-quality-acceleration";
 const prohibitedTask = "019fc002-590e-7023-b7e5-2a802168f00a";
@@ -58,6 +58,15 @@ describe("OpenSpec authority overlay", () => {
         lock: validLock(),
       })).resolves.toEqual({ changeName, artifactCount: 4, requirementIds: ["OPS-001", "OPS-003", "OPS-004"] });
     });
+  });
+
+  test("the approved lock includes the reusable distribution requirements and overnight CRs", () => {
+    expect(approvedLock.authorityCommit).toBe(authorityCommit);
+    for (const changeId of ["CR-0006", "CR-0007"]) expect(approvedLock.acceptedChangeIds).toContain(changeId);
+    for (const requirementId of ["DIST-001", "DIST-002", "DIST-003"]) expect(approvedLock.requirementIds).toContain(requirementId);
+    const lockedPaths = approvedLock.files.map((file: { path: string }) => file.path);
+    expect(lockedPaths).toContain("docs/requirements/changes/CR-0006-reusable-windows-distribution.md");
+    expect(lockedPaths).toContain("docs/requirements/changes/CR-0007-overnight-repository-autonomy.md");
   });
 
   for (const [name, override, pattern] of [

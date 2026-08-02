@@ -1,13 +1,14 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const prohibitedTaskId = "019fc002-590e-7023-b7e5-2a802168f00a";
 const approvedAuthorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
-const approvedAuthorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
-const approvedAcceptedChangeIds = ["CR-0001", "CR-0002", "CR-0004", "CR-0005"];
+const approvedAuthorityCommit = "21a5800c4d725375af256a1e1c827bab75c3f034";
+const approvedAcceptedChangeIds = ["CR-0001", "CR-0002", "CR-0004", "CR-0005", "CR-0006", "CR-0007"];
 const approvedRequirementIds = [
   "DESKTOP-001", "DESKTOP-002", "DESKTOP-003",
+  "DIST-001", "DIST-002", "DIST-003",
   "MEDIA-IN-001", "MEDIA-OUT-001", "MEDIA-OUT-002",
   "OPS-001", "OPS-002", "OPS-003", "OPS-004", "OPS-005", "OPS-006",
   "TASK-001", "TASK-002", "TASK-003",
@@ -16,13 +17,15 @@ const approvedRequirementIds = [
 ];
 const approvedFiles = new Map([
   ["docs/requirements/baselines/v1.0.0.md", "27a07bc5d3be5063eb819c68ce143571e400dd04098deddd327c64328273940a"],
-  ["docs/requirements/acceptance-matrix.md", "05af062d2b4bd5450cd482da1414cdb70018d3aa2e150586b1962f97ca93bfa3"],
-  ["docs/requirements/CURRENT.md", "f097f4be8387719b48553c62cd8bdf5ceaaee5bb358e22a54f071391ffadf0ec"],
+  ["docs/requirements/acceptance-matrix.md", "15989304a86c525b9d8fb60bbba55bfde620382097858b1b61e83f6ed9fbf0e2"],
+  ["docs/requirements/CURRENT.md", "e5a8263f5fcd342f4972febc57591253793a5c0fc1b71fb4012fd8773c856b53"],
   ["docs/requirements/changes/CR-0001-initial-ledger-and-scope-migration.md", "9dca7ff19287d473ebab6d37d56a90c7cca7b4a06aad269453d63bb179cc3237"],
   ["docs/requirements/changes/CR-0002-configurable-auto-review.md", "1f78d9e2b258df52dc1d4143cdcdd5609973b22504ecbdff5ea8d1b99aae0f65"],
   ["docs/requirements/changes/CR-0003-risk-timeboxes-and-progress-cadence.md", "84f864e5c79fc7a08647564ea0ddfd3926c567f29d1007890ebc4838cb56b9dc"],
   ["docs/requirements/changes/CR-0004-phase3-loopback-enforcement-fallback.md", "4a611d8d97518889fed50bbe07a93c7846667871c5abe8dbba5aa3f0ac4093b6"],
   ["docs/requirements/changes/CR-0005-adaptive-model-routing.md", "c9cf44c31f432e0fab0746b98c18000616265210b04a3b1110ac2c1d9464cfde"],
+  ["docs/requirements/changes/CR-0006-reusable-windows-distribution.md", "2515dcf163b16c224551925557eda3b1ad66b1e7332dbe4cb806dc3fe922074d"],
+  ["docs/requirements/changes/CR-0007-overnight-repository-autonomy.md", "3544ea91982aba57fa91972b1848526f1ca817c515b849ff97ed9f2e6239bbf3"],
   ["docs/requirements/adr/ADR-0001-ledger-authority.md", "f3b57fd9c5e4c12f182ec8b99dc24eca005994f648ea22a4247e16c37c1df8fe"],
   ["docs/requirements/adr/ADR-0002-task-isolation-and-concurrency.md", "f9233ca2109755611f61202648266b48f308d8c09a2e5c068d6e9526b8353644"],
   ["docs/requirements/adr/ADR-0003-durable-media-delivery.md", "59c716c01d494af6192a059a6a11269cecf50433803baec0e7d2fc768e2afce6"],
@@ -31,7 +34,6 @@ const approvedFiles = new Map([
 ]);
 const artifactFiles = {
   proposal: "proposal.md",
-  specs: path.join("specs", "quality-gates", "spec.md"),
   design: "design.md",
   tasks: "tasks.md",
 };
@@ -41,9 +43,13 @@ const metadataKeys = ["acceptedBy", "artifact", "authorityCommit", "authorityRep
 export async function validateOpenSpecAuthority({ changeRoot, lock }) {
   validateLock(lock);
   const expectedName = path.basename(path.resolve(changeRoot));
+  const specDomains = (await readdir(path.join(changeRoot, "specs"), { withFileTypes: true }).catch(() => []))
+    .filter((entry) => entry.isDirectory() && /^[a-z0-9][a-z0-9-]{0,79}$/u.test(entry.name));
+  if (specDomains.length !== 1) throw new Error("OpenSpec change must contain exactly one bounded spec domain.");
+  const files = { ...artifactFiles, specs: path.join("specs", specDomains[0].name, "spec.md") };
   const observedRequirements = new Set();
   let artifactCount = 0;
-  for (const [artifactKind, relativePath] of Object.entries(artifactFiles)) {
+  for (const [artifactKind, relativePath] of Object.entries(files)) {
     const source = await readFile(path.join(changeRoot, relativePath), "utf8").catch((error) => {
       throw new Error(`OpenSpec artifact is missing: ${relativePath}: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -126,8 +132,15 @@ function assertExactKeys(value, allowed, label) {
 async function main() {
   const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
   const lock = JSON.parse(await readFile(path.join(root, "quality", "authority", "requirements-ledger.json"), "utf8"));
-  const result = await validateOpenSpecAuthority({ changeRoot: path.join(root, "openspec", "changes", "minimal-quality-acceleration"), lock });
-  process.stdout.write(`OpenSpec authority valid: ${result.changeName}; artifacts=${result.artifactCount}; requirements=${result.requirementIds.length}\n`);
+  const changesRoot = path.join(root, "openspec", "changes");
+  const entries = (await readdir(changesRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory() && /^[a-z0-9][a-z0-9-]{0,79}$/u.test(entry.name))
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (entries.length === 0 || entries.length > 32) throw new Error("OpenSpec change inventory is empty or oversized.");
+  for (const entry of entries) {
+    const result = await validateOpenSpecAuthority({ changeRoot: path.join(changesRoot, entry.name), lock });
+    process.stdout.write(`OpenSpec authority valid: ${result.changeName}; artifacts=${result.artifactCount}; requirements=${result.requirementIds.length}\n`);
+  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {

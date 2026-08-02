@@ -1,4 +1,4 @@
-<!-- chat2codex-authority {"changeName":"minimal-quality-acceleration","artifact":"tasks","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"07603ee8ddd38546aca003ff7be8370aa9a51203","requirementIds":["OPS-001","OPS-003","OPS-004"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
+<!-- chat2codex-authority {"changeName":"minimal-quality-acceleration","artifact":"tasks","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"21a5800c4d725375af256a1e1c827bab75c3f034","requirementIds":["OPS-001","OPS-003","OPS-004"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
 
 # Package A tasks
 
