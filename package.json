@@ -73,7 +73,7 @@
     "quality:clean-windows": "node scripts/verify-clean-windows-evidence.mjs quality/evidence/clean-windows-template.json",
     "quality:novice": "bun scripts/verify-novice-evidence.mjs quality/evidence/novice-acceptance-template.json",
     "quality:windows": "bun test tests/windows-security.test.ts tests/process-identity.test.ts tests/shard-wrapper.test.ts tests/windows-workflow.test.ts",
-    "quality:check": "bun run openspec:validate && bun run quality:authority && bun run quality:evidence && bun run quality:distribution && bun run quality:clean-windows",
+    "quality:check": "bun run openspec:validate && bun run quality:authority && bun run quality:evidence && bun run quality:distribution && bun run quality:clean-windows && bun run quality:novice",
     "start": "node dist/index.js",
     "start:bun": "bun src/index.ts",
     "test": "bun test",
