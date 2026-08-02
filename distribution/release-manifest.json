@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.8.0-desktop.1",
+  "packageVersion": "0.8.0-windows.1",
   "windows": { "supported": ["win32-x64"], "unverified": ["win32-arm64"] },
   "node": ">=20.12.0",
   "codexCli": "0.146.0",

@@ -408,8 +408,10 @@ function normalizeSystemdServiceName(value: string): string {
 }
 
 function findExecutable(command: string): string {
-  const result = spawnSync("which", [command], { encoding: "utf8" });
-  const found = result.status === 0 ? result.stdout.trim() : "";
+  if (command === "node" && path.isAbsolute(process.execPath)) return process.execPath;
+  const locator = process.platform === "win32" ? "where.exe" : "which";
+  const result = spawnSync(locator, [command], { encoding: "utf8", windowsHide: true });
+  const found = result.status === 0 ? result.stdout.split(/\r?\n/u).map((item) => item.trim()).find((item) => path.isAbsolute(item)) ?? "" : "";
   if (found) {
     return found;
   }

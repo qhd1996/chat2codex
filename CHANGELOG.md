@@ -7,6 +7,22 @@ numbers once releases are published.
 
 ## Unreleased
 
+### Added
+
+- A reusable Windows current-user Scheduled Task lifecycle with transactionally
+  managed launcher/config/manifest files, three distinct machine-local Gateway
+  keys, SID-based owner-only ACL verification, safe default uninstall, and an
+  expanded read-only distribution doctor.
+- A path-neutral release manifest, package-content verifier, Windows lifecycle and
+  troubleshooting guides, and a fail-closed clean-Windows E2E evidence template.
+
+### Security
+
+- Windows task registration happens only after file/key verification; failure
+  unregisters the new task and restores prior installer-owned files. Repository
+  automation does not install the task, modify real `~/.codex`, trust Hooks,
+  restart Desktop, use Computer Use, or send real Weixin messages.
+
 ## 0.8.0 - 2026-07-29
 
 ### Added

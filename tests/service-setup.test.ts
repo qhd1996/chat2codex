@@ -73,4 +73,9 @@ describe("service setup", () => {
     expect(defaultServiceTarget("linux")).toBe("systemd");
     expect(defaultServiceTarget("win32")).toBe("windows-task");
   });
+
+  test("uses an absolute Node executable for the Windows task by default", () => {
+    const options = createServiceOptions({ target: "windows-task" });
+    expect(path.win32.isAbsolute(options.nodeBin) || path.isAbsolute(options.nodeBin)).toBe(true);
+  });
 });
