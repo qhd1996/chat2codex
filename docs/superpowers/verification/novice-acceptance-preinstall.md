@@ -2,7 +2,7 @@
 
 Date: 2026-08-03 Asia/Shanghai
 
-Repository candidate SHA: `8d7f04a3da6b614ae8575975268f0ec4188e8b93`
+Repository candidate SHA: `0466e126d0d0d6d4b639a66e3e4932ba001d00f5`
 
 Requirements authority: `01e827bbdc6584136627d9f1f137e8051f0a8c97`
 
@@ -38,17 +38,17 @@ and a Node 24 build.
 
 | Property | Candidate A | Reproduction B |
 | --- | --- | --- |
-| Commit | `8d7f04a3da6b614ae8575975268f0ec4188e8b93` | same |
-| Version | `0.8.0-novice.1` | same |
-| Size | 381,978 bytes | 381,978 bytes |
-| SHA-256 | `286395eb33abd020301f567197261092b0c768bc65f2e30891206996e3e73cb8` | same |
+| Commit | `0466e126d0d0d6d4b639a66e3e4932ba001d00f5` | same |
+| Version | `0.8.0-novice.2` | same |
+| Size | 387,190 bytes | 387,190 bytes |
+| SHA-256 | `5949cdc7dfd76575928eab9d6bfa3f007359f2a5c4ff5a243ab073c0da186e84` | same |
 | Byte comparison | equal | equal |
-| Files | 129 | 129 |
+| Files | 131 | 131 |
 
 Candidate A:
-`F:/workspace/chat2codex-custom/.worktrees/novice-candidate-8d7f04a/.tmp/pack/chat2codex-0.8.0-novice.1.tgz`
+`F:/workspace/chat2codex-custom/.worktrees/novice-final-0466e12/.tmp/pack/chat2codex-0.8.0-novice.2.tgz`
 
-The extracted-package verifier passed on Candidate A: 129 files scanned, three
+The extracted-package verifier passed on Candidate A: 131 files scanned, three
 Hook hashes matched, the closed top-level set matched, and machine-path/secret
 hits were zero. Package provenance, Windows/Node/Codex/Desktop support fields,
 state-schema read range `4..6`, and write schema `6` are present.
@@ -70,7 +70,7 @@ the repository, production, and real user profile.
 | Probe | Result |
 | --- | --- |
 | Evidence level / verdict | `isolated_profile_projection` / `package_smoke`; deliberately non-qualifying |
-| Package / installed CLI | `0.8.0-novice.1` / `0.8.0-novice.1` |
+| Package / installed CLI | `0.8.0-novice.2` / `0.8.0-novice.2` |
 | Durable tasks / outbox | 2 / 3 |
 | Network recovery | pass |
 | Gateway wrong-token, unbound-root, child-thread exclusion | fail closed |
@@ -91,15 +91,15 @@ rollback state
 
 | Gate | Result |
 | --- | --- |
-| Full stable gate | 877 pass, 8 platform-conditional skip, 0 fail; typecheck, contracts, and build pass |
+| Full stable gate | 879 pass, 8 platform-conditional skip, 0 fail; typecheck, contracts, and build pass |
 | Router closed set | 184 tests across eight exact-name shards |
 | Router result | 183 pass, 1 Windows symlink skip, 0 fail/timeout/residual; 2.390-3.861 seconds per shard |
 | Novice matrix | 30 complete repetitions x 19 scenarios |
-| Novice result | 1,800 test passes, 30 x 19 scenario coverage, 0 fail/skip/timeout/residual |
-| Repository binding | `repositoryCommit=8d7f04a3da6b614ae8575975268f0ec4188e8b93` |
+| Novice result | 1,890 test passes, 30 x 19 scenario coverage, 570 per-scenario execution records, 0 fail/skip/timeout/residual |
+| Repository binding | `repositoryCommit=0466e126d0d0d6d4b639a66e3e4932ba001d00f5` |
 | Evidence level / verdict | `repository` / `repository_pass` |
-| Matrix report | `.tmp/novice-repository-30-8d7f04a.json` |
-| Matrix report SHA-256 | `db4136749cc6b90b4c563169c2dbb815fc85d37e59f2446a7cc5634a59eeefbd` |
+| Matrix report | `.tmp/novice-repository-30-0466e12-rerun.json` |
+| Matrix report SHA-256 | `855d47084caca706469e48683d0f9854ed85d974c21e86f7b13de58a66101fb7` |
 | Matrix residual processes after completion | 0 |
 | Property runs | fixed seeds, at least 100 runs per declared property |
 
@@ -126,8 +126,8 @@ bun run quality:check
 bun audit
 bun pm pack --destination '<candidate-output>'
 node '<extracted-package>/scripts/verify-distribution-package.mjs' '<extracted-package>'
-node '<extracted-package>/scripts/run-novice-acceptance.mjs' --archive '<candidate.tgz>' --sha256 '286395eb33abd020301f567197261092b0c768bc65f2e30891206996e3e73cb8' --owned-root '<owned-root>' --production-root '<excluded-production-root>' --cleanup
-bun scripts/run-novice-matrix.mjs --repetitions 30 --report '.tmp/novice-repository-30-8d7f04a.json'
+node '<extracted-package>/scripts/run-novice-acceptance.mjs' --archive '<candidate.tgz>' --sha256 '5949cdc7dfd76575928eab9d6bfa3f007359f2a5c4ff5a243ab073c0da186e84' --owned-root '<owned-root>' --production-root '<excluded-production-root>' --cleanup
+bun scripts/run-novice-matrix.mjs --repetitions 30 --report '.tmp/novice-repository-30-0466e12-rerun.json'
 bun scripts/make-router-shards.mjs tests/message-router.test.ts 8
 node scripts/run-test-shard.mjs --name '<router-shard>' --timeout-ms 90000 --report '<report>' -- bun test tests/message-router.test.ts --test-name-pattern '<exact-suffix-pattern>'
 ```
@@ -137,7 +137,7 @@ node scripts/run-test-shard.mjs --name '<router-shard>' --timeout-ms 90000 --rep
 | Environment | Direct automated coverage | Remaining qualification gap |
 | --- | --- | --- |
 | Fresh user | archive/hash and prerequisites; setup/login simulation; doctor; double lifecycle; task/text/image/file; multi-task/workspace/Plan; approvals/permissions/structured input; uninstall preserve and confirmed-only purge | fresh Windows profile and from-zero package-to-mock-E2E report |
-| Upgrade user | synthetic supported v5 tasks/state/outbox; v5-to-v6 migration; backup hashes; rollback; restart; identity/order/exactly-once invariants; double lifecycle | qualifying clean Windows upgrade from installed old package |
+| Upgrade user | pinned old commit `47c2272` built as `0.8.0-orchestrator.4`; exact old/candidate tgz hashes; real private npm install/upgrade/rollback/uninstall/reinstall, each twice; fresh-process v5/v6 stores; config/state/task/outbox/hash preservation | the same bound chain inside a qualifying clean Windows run |
 | Recovery user | config/network/duplicate/crash/disk/permission/schema faults; Gateway offline/wrong token/expired generation; unbound/child non-export; property/fuzz and kill/restart | qualifying clean Windows fault and recovery run |
 
 All novice-facing evidence is scanned for token/private-key/prompt/identity canaries
@@ -181,8 +181,8 @@ Failures remain evidence and are not counted as passes.
    rejected that evidence. Commit `8d7f04a` introduced schema-v2 evidence; the
    current schema-v3 contract additionally binds the archive, repository commit,
    run identity, owned environment, and every executed scenario token so separate
-   lifecycle and journey runs cannot be spliced into a pass.
-   requiring a hash-bound GitHub-hosted no-checkout attestation, real current-user
+   lifecycle and journey runs cannot be spliced into a pass. It requires a
+   hash-bound GitHub-hosted no-checkout attestation, real current-user
    Scheduled Task install/start/graceful stop/restart/double-uninstall/reinstall,
    exact PID+CreationDate single-writer/lock proof, another-interactive-user ACL
    denial, eight installed-file hashes, thirty unique stopped-process proofs, and
@@ -194,6 +194,17 @@ Failures remain evidence and are not counted as passes.
    the capacity notice persisted; the independent retry-scheduler test retains
    retry behavior. The exact test moved from 6.53 seconds/fail to 1.84 seconds/pass
    without extending a timeout, and the fresh full gate passed.
+8. Review found the first schema-v3 repository matrix copied per-scenario records
+   from the inventory without executing the package matrix in every repetition.
+   A RED workflow contract failed, and `0466e12` added both the package matrix and
+   real-upgrade validator to every repetition. An older run was allowed to finish
+   but was retained only as negative evidence.
+9. The first `0466e12` matrix observation reached 30 fast / 29 native reports when
+   the outer 304-second wrapper terminated the root process. It produced no final
+   report and was not counted. A new hidden background run started from zero with
+   PID/CreationDate identity, completed 30/30, exited normally with zero-byte
+   stderr, passed schema-v3 validation, and left zero matching processes. No
+   internal timeout was extended and no partial repetitions were reused.
 
 ## Clean Windows qualification audit
 
@@ -207,10 +218,12 @@ account is therefore claimed as a qualifying environment. No account, password,
 profile, ACL, VM, or process was changed.
 
 The package now ships a no-checkout `windows-latest` job and strict schema-v3
-validator. The clean job downloads only the reviewed archive, privately installs
-it, creates and removes a unique non-production Scheduled Task and temporary ACL
-test user, runs thirty package repetitions, and emits redacted attestation,
-evidence, and zero-residual artifacts. It remains pending until an actual remote
+validator. The build job produces the reviewed candidate and a hash-bound old
+package from pinned commit `47c2272`; the no-checkout clean job downloads both,
+privately runs the old/new lifecycle in one owned environment, creates and removes
+a unique non-production Scheduled Task and temporary ACL test user, runs thirty
+package repetitions, and emits redacted evidence and zero-residual artifacts. It
+remains pending until an actual remote
 run supplies those artifacts and cannot satisfy real Weixin/Desktop `DIST-003`.
 
 ## Routing and escalation
