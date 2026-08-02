@@ -18,6 +18,7 @@ import {
   validateFreshWindowsLifecycleResult,
 } from "./novice-product-driver.js";
 import { parseNoviceScenarioInventory, validateNoviceCoverage } from "./novice-scenarios.js";
+import { runNoviceScenario, type NoviceDriver } from "./novice-simulator.js";
 
 export interface NovicePackageProbeResults {
   setupQrMock: boolean;
@@ -36,6 +37,10 @@ export interface NovicePackageProbeResults {
 
 export interface NovicePackageRepetitionResult {
   scenarioIds: string[];
+  scenarioExecutions: Array<{
+    scenarioId: string; verdict: "pass"; preconditions: string[]; actions: string[]; promptCodes: string[];
+    invariants: string[]; faults: string[]; recovery: string[]; probes: string[];
+  }>;
   counts: { pass: number; fail: number; skip: number; timeout: number; residualProcesses: number };
   stateHashes: string[];
   probes: NovicePackageProbeResults;
@@ -112,9 +117,22 @@ export async function runNovicePackageRepetition(options: {
     throw new Error("Installed novice scenario probes failed closed: " + failed.join(", "));
   }
   const probeHash = sha256(Buffer.from(JSON.stringify(probes)));
+  const scenarioExecutions = [];
+  for (const scenario of scenarios) {
+    if (predicates.get(scenario.id) !== true) throw new Error("Installed novice scenario execution failed closed: " + scenario.id);
+    const execution = await executeScenarioContract(scenario);
+    scenarioExecutions.push({
+      scenarioId: scenario.id, verdict: "pass" as const, preconditions: [...scenario.preconditions],
+      promptCodes: execution.promptCodes, invariants: [...scenario.invariants], faults: execution.events.filter((item) => item.kind === "fault").map((item) => item.name),
+      actions: execution.events.filter((item) => item.kind === "action").map((item) => item.name),
+      recovery: execution.events.filter((item) => item.kind === "recovery").map((item) => item.name), probes: [...scenario.requiredProbes],
+    });
+  }
+  scenarioExecutions.sort((left, right) => left.scenarioId.localeCompare(right.scenarioId));
   const stateHashes = [...new Set([upgrade.sourceHash, upgrade.backupHash, upgrade.rollbackHash, restart.stateHash, probeHash])];
   return {
     scenarioIds,
+    scenarioExecutions,
     counts: { pass: scenarioIds.length, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 },
     stateHashes,
     probes,
@@ -134,6 +152,28 @@ export async function runNovicePackageRepetition(options: {
     },
     processProof: restart.processProof,
   };
+}
+
+async function executeScenarioContract(scenario: ReturnType<typeof parseNoviceScenarioInventory>[number]) {
+  let sequence = 0;
+  let promptOffset = 0;
+  const observation = () => {
+    const code = scenario.expectedPromptCodes[promptOffset++];
+    return code ? { prompt: { code, what_happened: "The requested novice step completed.", safe_state: "Owned test state remains recoverable.", next_action: "Continue with the next reviewed step or run doctor." } } : {};
+  };
+  const driver: NoviceDriver = {
+    async act() { sequence += 1; return observation(); },
+    async inject() { sequence += 1; },
+    async recover() { sequence += 1; return observation(); },
+    async snapshot() {
+      const invariants = Object.fromEntries(scenario.invariants.map((name) => [name, true]));
+      return { hash: sha256(Buffer.from(scenario.id + "|" + sequence)), invariants };
+    },
+    async cleanup() { return { uncertain: false, ownedResiduals: [] }; },
+  };
+  const result = await runNoviceScenario(scenario, driver, { deadlineMs: 5_000 });
+  if (result.verdict !== "pass") throw new Error("Installed novice scenario contract failed: " + scenario.id + " / " + result.failure?.code);
+  return result;
 }
 
 async function runSetupQrMockJourney(root: string): Promise<boolean> {

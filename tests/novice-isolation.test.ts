@@ -81,6 +81,7 @@ describe("novice archive isolation", () => {
       authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
       environmentKind: "clean_windows_vm", archive: { version: "0.8.0-novice.1", size: 1234, sha256: "b".repeat(64) },
       versions: { windows: "11.0.26100", node: "24.14.0", npm: "11.0.0", bun: "1.3.9", package: "0.8.0-novice.1", codexCli: "0.146.0" }, expectedScenarioIds: worker.scenarioIds,
+      expectedScenarioDefinitions: worker.scenarioExecutions.map((item: any) => ({ id: item.scenarioId, preconditions: item.preconditions, actions: item.actions, expectedPromptCodes: item.promptCodes, invariants: item.invariants, faults: item.faults, recovery: item.recovery, requiredProbes: item.probes })),
       attestation: qualifyingAttestation(),
     };
     const value = buildQualifyingNoviceEvidence({ ...input, worker });
@@ -91,6 +92,8 @@ describe("novice archive isolation", () => {
       { scenarioIds: worker.scenarioIds.slice(1) },
       { repetitions: worker.repetitions.slice(1) },
     ]) expect(() => buildQualifyingNoviceEvidence({ ...input, worker: { ...worker, ...change } })).toThrow(/probe|scenario|30|repetition/i);
+    expect(() => buildQualifyingNoviceEvidence({ ...input, attestation: qualifyingAttestation({ archiveSha256: "f".repeat(64) }), worker })).toThrow(/archive|attestation|binding/i);
+    expect(() => buildQualifyingNoviceEvidence({ ...input, attestation: qualifyingAttestation({ repositoryCommit: "f".repeat(40) }), worker })).toThrow(/commit|attestation|binding/i);
   });
 
   test("rejects qualifying attestation package hashes that do not match the runner package", async () => {
@@ -105,20 +108,21 @@ describe("novice archive isolation", () => {
 
 function completeWorkerEvidence() {
   const scenarioIds = Array.from({ length: 19 }, (_, index) => "scenario." + index);
+  const scenarioExecutions = scenarioIds.map((scenarioId) => ({ scenarioId, verdict: "pass", preconditions: ["ready"], actions: ["act"], promptCodes: ["PROMPT"], invariants: ["safe"], faults: [], recovery: ["recover"], probes: ["probe"] }));
   return {
-    packageRoot: path.resolve("C:/owned/npm-prefix/node_modules/chat2codex"), packageVersion: "0.8.0-novice.1", archiveSha256: "b".repeat(64),
+    packageRoot: path.resolve("C:/owned/npm-prefix/node_modules/chat2codex"), packageVersion: "0.8.0-novice.1", archiveSha256: "b".repeat(64), runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
     repositoryImported: false, cliVersion: "0.8.0-novice.1", manifestHash: "c".repeat(64), stateHash: "d".repeat(64),
     taskCount: 2, outboxCount: 3, networkRecovered: true, gatewayFailClosed: true, migrationBackupExact: true,
     nativeLifecycle: { installAttempts: 2, uninstallAttempts: 2, keyCount: 3, userDataPreserved: true, residualOwnedFiles: 0 },
     probes: { setupQrMock: true, doctor: true, lifecycle: true, dailyUse: true, upgradeRollback: true, networkRecovery: true, gatewayFailClosed: true, restartRecovery: true, storagePermissionRecovery: true, purgeUnavailableWithoutConfirmation: true, configRecovery: true, gatewayOffline: true },
-    scenarioIds,
-    repetitions: Array.from({ length: 30 }, (_, offset) => ({ index: offset + 1, seed: 2026080201 + offset, startedAt: "2026-08-03T00:00:00.000Z", completedAt: "2026-08-03T00:00:01.000Z", verdict: "pass", counts: { pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 }, scenarioIds, stateHashes: ["e".repeat(64)], commands: ["<installed-package>/scripts/novice-windows-worker.mjs"], processProof: { pid: 300 + offset, createdAt: "2026-08-03T00:00:00.500Z", stopped: true, residualProcesses: 0 } })),
+    scenarioIds, scenarioExecutions,
+    repetitions: Array.from({ length: 30 }, (_, offset) => ({ index: offset + 1, seed: 2026080201 + offset, startedAt: "2026-08-03T00:00:00.000Z", completedAt: "2026-08-03T00:00:01.000Z", verdict: "pass", counts: { pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 }, scenarioIds, scenarioExecutions, stateHashes: ["e".repeat(64)], commands: ["<installed-package>/scripts/novice-windows-worker.mjs"], processProof: { pid: 300 + offset, createdAt: "2026-08-03T00:00:00.500Z", stopped: true, residualProcesses: 0 } })),
   };
 }
 
-function qualifyingAttestation() {
+function qualifyingAttestation(change: Record<string, unknown> = {}) {
   const installedFiles = ["package/package.json", "package/dist/index.js", "package/scripts/novice-service-probe.mjs", "owned/.env", "owned/.service/windows/launcher.ps1", "owned/.service/windows/task.xml", "owned/.service/windows/installation.json", "owned/.data/state.json"].map((filePath, index) => ({ path: filePath, sha256: String(index + 1).repeat(64) }));
-  const value = { environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true, taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3, doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true, firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) }, secondProcess: { pid: 102, createdAt: "2026-08-03T00:01:00.000Z", commandHash: "4".repeat(64), stateSha256: "3".repeat(64) }, taskRemoved: true, newKeysAfterReinstall: true, anotherInteractiveUserDenied: true, zeroResidualProcesses: true, ownedRootRemoved: true, installedFiles, commands: Array.from({ length: 8 }, (_, index) => "command-" + index) };
+  const value = { environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true, archiveSha256: "b".repeat(64), repositoryCommit: "a".repeat(40), runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64), taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3, doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true, firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) }, secondProcess: { pid: 102, createdAt: "2026-08-03T00:01:00.000Z", commandHash: "4".repeat(64), stateSha256: "3".repeat(64) }, taskRemoved: true, newKeysAfterReinstall: true, anotherInteractiveUserDenied: true, zeroResidualProcesses: true, ownedRootRemoved: true, installedFiles, commands: Array.from({ length: 8 }, (_, index) => "command-" + index), ...change };
   return { ...value, attestationHash: createHash("sha256").update(JSON.stringify(value)).digest("hex") };
 }
 

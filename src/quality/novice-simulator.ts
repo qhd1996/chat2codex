@@ -63,9 +63,6 @@ export async function runNoviceScenario(
       assertInvariants(after, scenario.invariants);
       events.push({ kind: "action", name: action, beforeHash: before.hash, afterHash: after.hash });
     }
-    for (const expected of scenario.expectedPromptCodes) {
-      if (!promptCodes.includes(expected)) throw new NoviceRunFailure("missing_prompt", `Missing expected novice prompt: ${expected}`);
-    }
     for (const step of scenario.recovery) {
       const before = await bounded(driver.snapshot(), options.deadlineMs);
       const observation = await bounded(driver.recover(step, context), options.deadlineMs);
@@ -73,6 +70,9 @@ export async function runNoviceScenario(
       const after = await bounded(driver.snapshot(), options.deadlineMs);
       assertInvariants(after, scenario.invariants);
       events.push({ kind: "recovery", name: step, beforeHash: before.hash, afterHash: after.hash });
+    }
+    for (const expected of scenario.expectedPromptCodes) {
+      if (!promptCodes.includes(expected)) throw new NoviceRunFailure("missing_prompt", `Missing expected novice prompt: ${expected}`);
     }
   } catch (error) {
     failure = normalizeFailure(error);

@@ -53,10 +53,22 @@ export async function runNoviceArchiveAcceptance(input) {
   const workerInfo = await lstat(worker).catch(() => null);
   if (!workerInfo?.isFile() || workerInfo.isSymbolicLink()) throw new Error("Installed novice package worker is missing.");
   const node = input.nodeCommand ?? process.execPath;
+  let attestation = input.attestation;
+  if (plan.qualifyingEnvironment) {
+    const runIdentity = input.runIdentity;
+    if (typeof runIdentity !== "string" || !/^[A-Za-z0-9._-]{8,200}$/u.test(runIdentity)) throw new Error("Qualifying novice run identity is invalid.");
+    const taskName = "Chat2Codex-Novice-" + input.repositoryCommit.slice(0, 8);
+    const attestationRoot = path.join(plan.ownedRoot, "native-lifecycle");
+    const script = path.join(installedRoot, "scripts", "novice-clean-windows-attestation.mjs");
+    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--run-identity", runIdentity], { cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true, env: { ...process.env, CHAT2CODEX_NOVICE_ISOLATION: "1" } });
+    const marker = result.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_CLEAN_WINDOWS_ATTESTATION "));
+    if (result.status !== 0 || !marker) throw new Error("Integrated clean Windows lifecycle attestation failed: " + redactedTail(result.stderr));
+    attestation = JSON.parse(marker.slice("NOVICE_CLEAN_WINDOWS_ATTESTATION ".length));
+  }
   const repetitions = plan.qualifyingEnvironment ? 30 : 1;
   const workerResult = spawnSync(node, [worker, "--owned-root", plan.ownedRoot, "--package-root", installedRoot, "--repetitions", String(repetitions)], {
     cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true, maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, USERPROFILE: plan.environment.userProfile, APPDATA: plan.environment.appData, LOCALAPPDATA: plan.environment.localAppData, CODEX_HOME: plan.environment.codexHome, CHAT2CODEX_HOME: plan.environment.chat2codexHome, CHAT2CODEX_NOVICE_ISOLATION: "1", CHAT2CODEX_NOVICE_ARCHIVE_SHA256: plan.archiveSha256 },
+    env: { ...process.env, USERPROFILE: plan.environment.userProfile, APPDATA: plan.environment.appData, LOCALAPPDATA: plan.environment.localAppData, CODEX_HOME: plan.environment.codexHome, CHAT2CODEX_HOME: plan.environment.chat2codexHome, CHAT2CODEX_NOVICE_ISOLATION: "1", CHAT2CODEX_NOVICE_ARCHIVE_SHA256: plan.archiveSha256, CHAT2CODEX_NOVICE_RUN_IDENTITY: input.runIdentity ?? "package-smoke", CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT: plan.ownedRoot },
   });
   if (workerResult.status !== 0) throw new Error("Installed novice worker failed: " + redactedTail(workerResult.stderr));
   const marker = workerResult.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_PACKAGE_RESULT "));
@@ -72,8 +84,8 @@ export async function runNoviceArchiveAcceptance(input) {
     environmentKind: plan.environmentKind,
     archive: { version: packageVersion, size: (await lstat(plan.archive)).size, sha256: plan.archiveSha256 },
     versions: input.versions,
-    expectedScenarioIds,
-    attestation: input.attestation,
+    expectedScenarioIds, expectedScenarioDefinitions: JSON.parse(await readFile(path.join(installedRoot, "quality", "scenarios", "novice-daily-use.json"), "utf8")),
+    attestation,
   }) : undefined;
   return { plan, qualifying: plan.qualifyingEnvironment, verdict: plan.qualifyingEnvironment ? "pass" : "package_smoke", install: { command: [npm, ...installArgs].map(redactPart), exitCode: install.status }, worker: workerEvidence, evidence };
 }
@@ -97,6 +109,7 @@ export function validateNoviceWorkerEvidence(value, expected) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Installed novice worker evidence is invalid.");
   if (!same(path.resolve(value.packageRoot), expected.installedRoot) || value.repositoryImported !== false) throw new Error("Installed novice worker did not prove package-only imports.");
   if (expected.archiveSha256 && value.archiveSha256 !== expected.archiveSha256) throw new Error("Installed novice worker archive identity is invalid.");
+  if (!/^[a-f0-9]{64}$/u.test(value.runIdentityHash ?? "") || !/^[a-f0-9]{64}$/u.test(value.ownedEnvironmentHash ?? "")) throw new Error("Installed novice worker run binding is invalid.");
   if (value.packageVersion !== expected.packageVersion || value.cliVersion !== expected.packageVersion) throw new Error("Installed novice CLI version evidence is invalid.");
   for (const field of ["manifestHash", "stateHash"]) if (typeof value[field] !== "string" || !/^[a-f0-9]{64}$/u.test(value[field])) throw new Error("Installed novice hash evidence is invalid.");
   if (value.taskCount !== 2 || value.outboxCount !== 3 || value.networkRecovered !== true || value.gatewayFailClosed !== true || value.migrationBackupExact !== true) throw new Error("Installed novice product-boundary evidence is incomplete.");
@@ -104,12 +117,24 @@ export function validateNoviceWorkerEvidence(value, expected) {
   if (!native || native.installAttempts !== 2 || native.uninstallAttempts !== 2 || native.keyCount !== 3 || native.userDataPreserved !== true || native.residualOwnedFiles !== 0) throw new Error("Installed novice native lifecycle evidence is incomplete.");
   if (!value.probes || requiredPackageProbes.some((key) => value.probes[key] !== true) || Object.keys(value.probes).some((key) => !requiredPackageProbes.includes(key))) throw new Error("Installed novice product probes are incomplete.");
   if (!Array.isArray(value.scenarioIds) || value.scenarioIds.length !== 19 || new Set(value.scenarioIds).size !== 19) throw new Error("Installed novice scenario coverage is incomplete.");
+  validateScenarioExecutions(value.scenarioExecutions, value.scenarioIds);
   if (expected.expectedScenarioIds && JSON.stringify([...value.scenarioIds].sort()) !== JSON.stringify([...expected.expectedScenarioIds].sort())) throw new Error("Installed novice scenario inventory differs from the package.");
   if (!Array.isArray(value.repetitions) || value.repetitions.length !== expected.expectedRepetitions) throw new Error("Installed novice repetition coverage is incomplete.");
   for (const [offset, repetition] of value.repetitions.entries()) {
-    if (repetition.index !== offset + 1 || repetition.verdict !== "pass" || repetition.counts?.pass !== 19 || repetition.counts?.fail !== 0 || repetition.counts?.skip !== 0 || repetition.counts?.timeout !== 0 || repetition.counts?.residualProcesses !== 0 || JSON.stringify([...repetition.scenarioIds].sort()) !== JSON.stringify([...value.scenarioIds].sort())) throw new Error("Installed novice repetition failed closed.");
+    if (repetition.index !== offset + 1 || repetition.verdict !== "pass" || repetition.counts?.pass !== 19 || repetition.counts?.fail !== 0 || repetition.counts?.skip !== 0 || repetition.counts?.timeout !== 0 || repetition.counts?.residualProcesses !== 0 || JSON.stringify([...repetition.scenarioIds].sort()) !== JSON.stringify([...value.scenarioIds].sort()) || JSON.stringify(repetition.scenarioExecutions) !== JSON.stringify(value.scenarioExecutions)) throw new Error("Installed novice repetition failed closed.");
   }
   return value;
+}
+function validateScenarioExecutions(raw, scenarioIds) {
+  if (!Array.isArray(raw) || raw.length !== scenarioIds.length) throw new Error("Installed novice scenario executions are incomplete.");
+  const keys = ["actions","faults","invariants","preconditions","probes","promptCodes","recovery","scenarioId","verdict"];
+  const observed = new Set();
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || JSON.stringify(Object.keys(item).sort()) !== JSON.stringify(keys) || typeof item.scenarioId !== "string" || item.verdict !== "pass" || observed.has(item.scenarioId)) throw new Error("Installed novice scenario execution is invalid.");
+    observed.add(item.scenarioId);
+    for (const field of ["preconditions","actions","promptCodes","invariants","faults","recovery","probes"]) if (!Array.isArray(item[field]) || field !== "faults" && item[field].length === 0 || new Set(item[field]).size !== item[field].length || item[field].some((value) => typeof value !== "string" || !value)) throw new Error("Installed novice scenario execution tokens are invalid.");
+  }
+  if (JSON.stringify([...observed].sort()) !== JSON.stringify([...scenarioIds].sort())) throw new Error("Installed novice scenario execution inventory differs.");
 }
 
 export function buildQualifyingNoviceEvidence(input) {
@@ -117,9 +142,10 @@ export function buildQualifyingNoviceEvidence(input) {
   if (input.environmentKind !== "clean_windows_vm" && input.environmentKind !== "equivalent_isolated_windows") throw new Error("Qualifying novice environment kind is invalid.");
   validateNoviceWorkerEvidence(input.worker, { installedRoot: path.resolve(input.worker.packageRoot), packageVersion: input.archive.version, archiveSha256: input.archive.sha256, expectedRepetitions: 30, expectedScenarioIds: input.expectedScenarioIds ?? input.worker.scenarioIds });
   if (!input.attestation) throw new Error("Qualifying novice evidence requires an independent Windows lifecycle attestation.");
+  if (input.attestation.archiveSha256 !== input.archive.sha256 || input.attestation.repositoryCommit !== input.repositoryCommit || input.attestation.runIdentityHash !== input.worker.runIdentityHash || input.attestation.ownedEnvironmentHash !== input.worker.ownedEnvironmentHash) throw new Error("Qualifying novice attestation binding differs from the package journey.");
   const repetitions = input.worker.repetitions.map((item) => ({ ...item }));
   const manifest = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     authorityCommit: input.authorityCommit,
     repositoryCommit: input.repositoryCommit,
     generatedAt: new Date().toISOString(),
@@ -137,7 +163,7 @@ export function buildQualifyingNoviceEvidence(input) {
     ],
     attestation: input.attestation,
   };
-  validateNoviceEvidence(manifest, { scenarioIds: input.worker.scenarioIds });
+  validateNoviceEvidence(manifest, { scenarioIds: input.worker.scenarioIds, scenarioDefinitions: input.expectedScenarioDefinitions });
   return manifest;
 }
 
@@ -156,21 +182,23 @@ async function main() {
   const productionRoot = read("--production-root") ?? process.env.CHAT2CODEX_PRODUCTION_ROOT;
   if (!productionRoot) throw new Error("Novice acceptance requires an explicit production-root exclusion path.");
   const environmentKind = read("--environment-kind") ?? "isolated_profile_projection";
+  const environmentRoot = path.resolve(read("--environment-root") ?? ownedRoot);
+  if (!same(environmentRoot, path.resolve(ownedRoot))) throw new Error("Novice owned root must equal the declared environment root.");
   const qualifying = qualifyingKinds.has(environmentKind);
   const repositoryCommit = read("--repository-commit");
   const reportPath = read("--report");
-  const attestationPath = read("--attestation");
-  if (qualifying && (!repositoryCommit || !reportPath || !attestationPath || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, attestation, and all fresh-environment flags.");
+  const runIdentity = read("--run-identity");
+  const codexBin = read("--codex-bin");
+  if (qualifying && (!repositoryCommit || !reportPath || !runIdentity || !codexBin || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, run identity, Codex binary, and all fresh-environment flags.");
   if (!qualifying && (repositoryCommit || reportPath || args.includes("--fresh-profile") || args.includes("--repository-absent") || args.includes("--prior-package-absent"))) throw new Error("Package smoke cannot claim qualifying environment metadata.");
   const npmVersion = runVersion(node, [await resolveNpmCli(process.env.PATH), "--version"]);
   const codexVersion = runVersion("codex", ["--version"]);
   const bunVersion = runVersion("bun", ["--version"]);
-  const attestation = qualifying ? await readNoviceAttestation(attestationPath, environmentKind) : undefined;
   const result = await runNoviceArchiveAcceptance({
     archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot,
     environmentKind, qualification: qualifying ? { freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true } : undefined,
     repositoryCommit, versions: { windows: os.release(), node: process.versions.node, npm: npmVersion, bun: bunVersion, package: JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8")).version, codexCli: codexVersion },
-    attestation,
+    runIdentity, codexBin,
     dryRun: args.includes("--dry-run"),
   });
   process.stdout.write(JSON.stringify({

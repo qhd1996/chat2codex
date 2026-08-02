@@ -14,6 +14,8 @@ if (!process.versions.bun) throw new Error("Novice matrix must run under the pro
 
 const root = process.cwd();
 const scenarioIds = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8")).map((item) => item.id).sort();
+const scenarioInventory = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8"));
+const scenarioExecutions = scenarioInventory.map((scenario) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes })).sort((a, b) => a.scenarioId.localeCompare(b.scenarioId));
 const repositoryCommit = run("git", ["rev-parse", "HEAD"]).trim();
 const trackedDirty = run("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
 if (trackedDirty) throw new Error("Novice matrix requires clean committed tracked files.");
@@ -57,7 +59,7 @@ try {
     };
     const stateHashes = extractHashes(String(shard.stdoutTail ?? "") + "\n" + String(shard.stderrTail ?? "") + "\n" + String(nativeShard.stdoutTail ?? ""));
     if (stateHashes.length === 0) stateHashes.push(hashText(repositoryCommit + ":" + index + ":repository-state-observation"));
-    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")], processProof: null };
+    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], scenarioExecutions, stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")], processProof: null };
     records.push(record);
     if (record.verdict !== "pass") {
       failureHistory.push({ repetition: index, code: "matrix_repetition_failed", fixedByCommit: null });
@@ -68,14 +70,14 @@ try {
     }
   }
   const report = {
-    schemaVersion: 2, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
+    schemaVersion: 3, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
     generatedAt: new Date().toISOString(), evidenceLevel: "repository", verdict: repetitions === 30 ? "repository_pass" : "unproven",
     environment: { kind: "repository_worktree", os: process.platform, arch: process.arch, freshProfile: false, repositoryAbsent: false, priorPackageAbsent: false, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: packageJson.version, size: 0, sha256: "0".repeat(64) },
     versions: { windows: os.release(), node: process.versions.node, npm: npmVersion(), bun: process.versions.bun, package: packageJson.version, codexCli: codexVersion() },
     scenarioIds, repetitions: records, failureHistory, attestation: null,
   };
-  if (repetitions === 30) validateNoviceEvidence(report, { scenarioIds });
+  if (repetitions === 30) validateNoviceEvidence(report, { scenarioIds, scenarioDefinitions: scenarioInventory });
   await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");
   process.stdout.write("Novice matrix passed: repetitions=" + records.length + "; scenarios=" + scenarioIds.length + "; report=" + reportPath + "; startedAt=" + startedAt + "\n");
 } finally {

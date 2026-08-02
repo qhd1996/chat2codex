@@ -8,27 +8,42 @@ import { resolveNoviceEvidenceInput, validateNoviceEvidence } from "../scripts/v
 const templatePath = path.resolve(import.meta.dir, "..", "quality", "evidence", "novice-acceptance-template.json");
 const scenarioPath = path.resolve(import.meta.dir, "..", "quality", "scenarios", "novice-daily-use.json");
 const scenarioIds = (JSON.parse(await readFile(scenarioPath, "utf8")) as Array<{ id: string }>).map((item) => item.id).sort();
+const scenarioDefinitions = JSON.parse(await readFile(scenarioPath, "utf8"));
+const validationOptions = { scenarioIds, scenarioDefinitions };
 
 describe("novice acceptance evidence", () => {
   test("keeps the checked-in template unproven", async () => {
     const value = JSON.parse(await readFile(templatePath, "utf8"));
-    expect(validateNoviceEvidence(value, { scenarioIds })).toEqual({ qualifying: false, repetitions: 0, scenarios: scenarioIds.length, verdict: "unproven" });
+    expect(validateNoviceEvidence(value, validationOptions)).toEqual({ qualifying: false, repetitions: 0, scenarios: scenarioIds.length, verdict: "unproven" });
   });
 
   test("accepts thirty complete isolated-package repetitions", () => {
-    expect(validateNoviceEvidence(validComplete(), { scenarioIds })).toEqual({ qualifying: true, repetitions: 30, scenarios: scenarioIds.length, verdict: "pass" });
+    expect(validateNoviceEvidence(validComplete(), validationOptions)).toEqual({ qualifying: true, repetitions: 30, scenarios: scenarioIds.length, verdict: "pass" });
+  });
+
+  test("rejects hollow, duplicate, or drifted per-scenario execution evidence", () => {
+    for (const mutate of [
+      (v: any) => { v.repetitions[0].scenarioExecutions.pop(); },
+      (v: any) => { v.repetitions[0].scenarioExecutions[1] = v.repetitions[0].scenarioExecutions[0]; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].actions = []; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].promptCodes = ["FAKE_PROMPT"]; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].probes = ["fake_probe"]; },
+    ]) {
+      const value = validComplete(); mutate(value);
+      expect(() => validateNoviceEvidence(value, validationOptions)).toThrow(/scenario.*execution|action|prompt|probe|duplicate/i);
+    }
   });
 
   test("rejects a qualifying claim without independent Windows lifecycle and per-round process proof", () => {
     const missingAttestation = validComplete();
     missingAttestation.attestation = null;
-    expect(() => validateNoviceEvidence(missingAttestation, { scenarioIds })).toThrow(/attestation|lifecycle/i);
+    expect(() => validateNoviceEvidence(missingAttestation, validationOptions)).toThrow(/attestation|lifecycle/i);
     const missingProcess = validComplete();
     missingProcess.repetitions[0].processProof = null;
-    expect(() => validateNoviceEvidence(missingProcess, { scenarioIds })).toThrow(/process.*proof|residual/i);
+    expect(() => validateNoviceEvidence(missingProcess, validationOptions)).toThrow(/process.*proof|residual/i);
     const missingHash = validComplete();
     missingHash.attestation.installedFiles = [];
-    expect(() => validateNoviceEvidence(missingHash, { scenarioIds })).toThrow(/installed.*hash|attestation/i);
+    expect(() => validateNoviceEvidence(missingHash, validationOptions)).toThrow(/installed.*hash|attestation/i);
   });
 
   test("resolves an explicit external evidence file without treating it as repository input", async () => {
@@ -50,7 +65,7 @@ describe("novice acceptance evidence", () => {
     value.environment.priorPackageAbsent = false;
     value.attestation = null;
     for (const repetition of value.repetitions) repetition.processProof = null;
-    expect(validateNoviceEvidence(value, { scenarioIds })).toEqual({ qualifying: false, repetitions: 30, scenarios: scenarioIds.length, verdict: "repository_pass" });
+    expect(validateNoviceEvidence(value, validationOptions)).toEqual({ qualifying: false, repetitions: 30, scenarios: scenarioIds.length, verdict: "repository_pass" });
   });
 
   for (const [name, mutate, pattern] of [
@@ -69,20 +84,21 @@ describe("novice acceptance evidence", () => {
     ["unclean profile", (v: any) => { v.environment.freshProfile = false; }, /fresh.*profile|environment/i],
     ["real home touched", (v: any) => { v.environment.realUserCodexHomeUntouched = false; }, /codex.*home|environment/i],
     ["secret output", (v: any) => { v.failureHistory.push({ repetition: 1, code: "Bearer abcdefghijklmnopqrstuvwxyz", fixedByCommit: "b".repeat(40) }); }, /sensitive|redact/i],
-  ] as const) test("rejects " + name, () => { const value = validComplete(); mutate(value); expect(() => validateNoviceEvidence(value, { scenarioIds })).toThrow(pattern); });
+  ] as const) test("rejects " + name, () => { const value = validComplete(); mutate(value); expect(() => validateNoviceEvidence(value, validationOptions)).toThrow(pattern); });
 });
 
 function validComplete() {
+  const scenarioExecutions = scenarioDefinitions.map((scenario: any) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes })).sort((a: any, b: any) => a.scenarioId.localeCompare(b.scenarioId));
   const repetitions = Array.from({ length: 30 }, (_, offset) => ({
     index: offset + 1, seed: 2026080200 + offset + 1,
     startedAt: "2026-08-03T01:00:00.000Z", completedAt: "2026-08-03T01:01:00.000Z", verdict: "pass",
     counts: { pass: 78, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 },
-    scenarioIds: [...scenarioIds], stateHashes: ["a".repeat(64), "b".repeat(64)],
+    scenarioIds: [...scenarioIds], scenarioExecutions, stateHashes: ["a".repeat(64), "b".repeat(64)],
     commands: ["chat2codex novice acceptance --archive <candidate> --profile <owned-temp>"],
     processProof: { pid: 200 + offset, createdAt: "2026-08-03T01:00:30.000Z", stopped: true, residualProcesses: 0 },
   }));
   return {
-    schemaVersion: 2, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
+    schemaVersion: 3, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
     generatedAt: "2026-08-03T01:02:00.000Z", evidenceLevel: "isolated_package", verdict: "pass",
     environment: { kind: "clean_windows_vm", os: "win32", arch: "x64", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: "0.8.0-novice.1", size: 1234, sha256: "c".repeat(64) },
@@ -96,6 +112,7 @@ function validAttestation() {
   const value = {
     environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted",
     freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true,
+    archiveSha256: "c".repeat(64), repositoryCommit: "a".repeat(40), runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
     taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3,
     doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true,
     firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) },

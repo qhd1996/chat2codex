@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -20,6 +20,15 @@ test("executes every packaged novice scenario through its required product probe
       lifecycleRunner: async () => ({ evidenceLevel: "repository", taskRegistration: "simulated", installAttempts: 2, uninstallAttempts: 2, uninstallNoopCount: 1, createdKeyCount: 3, preservedKeyCount: 3, distinctKeyFingerprints: 3, taskCreateCount: 2, taskDeleteCount: 1, userDataPreserved: true, residualOwnedFiles: [] }),
     });
     expect(result.scenarioIds).toHaveLength(19);
+    const inventory = JSON.parse(await readFile(path.resolve(import.meta.dir, "..", "quality", "scenarios", "novice-daily-use.json"), "utf8"));
+    expect(result.scenarioExecutions).toHaveLength(19);
+    for (const scenario of inventory) {
+      const execution = result.scenarioExecutions.find((item: { scenarioId: string }) => item.scenarioId === scenario.id);
+      expect(execution).toEqual({
+        scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes,
+        invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes,
+      });
+    }
     expect(result.counts).toEqual({ pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 });
     expect(result.probes).toMatchObject({
       setupQrMock: true,

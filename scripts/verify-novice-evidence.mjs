@@ -8,22 +8,23 @@ const manifestKeys = ["archive", "attestation", "authorityCommit", "environment"
 const environmentKeys = ["arch", "freshProfile", "kind", "os", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent"];
 const archiveKeys = ["sha256", "size", "version"];
 const versionKeys = ["bun", "codexCli", "node", "npm", "package", "windows"];
-const repetitionKeys = ["commands", "completedAt", "counts", "index", "processProof", "scenarioIds", "seed", "startedAt", "stateHashes", "verdict"];
+const repetitionKeys = ["commands", "completedAt", "counts", "index", "processProof", "scenarioExecutions", "scenarioIds", "seed", "startedAt", "stateHashes", "verdict"];
 const countKeys = ["fail", "pass", "residualProcesses", "skip", "timeout"];
 const historyKeys = ["code", "fixedByCommit", "repetition"];
 const processProofKeys = ["createdAt", "pid", "residualProcesses", "stopped"];
-const attestationKeys = ["anotherInteractiveUserDenied", "attestationHash", "commands", "doctorExitCode", "environmentKind", "firstProcess", "freshProfile", "githubActions", "installAttempts", "installedFiles", "lockHealthy", "newKeysAfterReinstall", "ownedRootRemoved", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent", "runnerEnvironment", "secondProcess", "singleWriter", "startAttempts", "stopAttempts", "taskNameHash", "taskRemoved", "uninstallAttempts", "userDataPreserved", "zeroResidualProcesses"];
+const attestationKeys = ["anotherInteractiveUserDenied", "archiveSha256", "attestationHash", "commands", "doctorExitCode", "environmentKind", "firstProcess", "freshProfile", "githubActions", "installAttempts", "installedFiles", "lockHealthy", "newKeysAfterReinstall", "ownedEnvironmentHash", "ownedRootRemoved", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent", "repositoryCommit", "runIdentityHash", "runnerEnvironment", "secondProcess", "singleWriter", "startAttempts", "stopAttempts", "taskNameHash", "taskRemoved", "uninstallAttempts", "userDataPreserved", "zeroResidualProcesses"];
 const attestationProcessKeys = ["commandHash", "createdAt", "pid", "stateSha256"];
 const installedFileKeys = ["path", "sha256"];
 
 export function validateNoviceEvidence(value, options) {
   const manifest = object(value, "manifest"); exactKeys(manifest, manifestKeys, "manifest");
-  if (manifest.schemaVersion !== 2) throw new Error("Novice evidence schema version is unsupported.");
+  if (manifest.schemaVersion !== 3) throw new Error("Novice evidence schema version is unsupported.");
   if (manifest.authorityCommit !== authorityCommit) throw new Error("Novice evidence authority commit is invalid.");
   commit(manifest.repositoryCommit, "repository commit"); timestamp(manifest.generatedAt, "generatedAt");
   if (manifest.evidenceLevel !== "repository" && manifest.evidenceLevel !== "isolated_package") throw new Error("Novice evidence level is invalid.");
   if (manifest.verdict !== "unproven" && manifest.verdict !== "repository_pass" && manifest.verdict !== "pass") throw new Error("Novice evidence verdict is invalid.");
   const expectedScenarioIds = uniqueStrings(options?.scenarioIds, "expected scenario IDs").sort();
+  const expectedScenarioExecutions = buildExpectedScenarioExecutions(options?.scenarioDefinitions);
   if (manifest.verdict === "unproven") {
     if (!Array.isArray(manifest.repetitions) || manifest.repetitions.length !== 0) throw new Error("Unproven novice template cannot contain repetitions.");
     if (!Array.isArray(manifest.scenarioIds) || manifest.scenarioIds.length !== 0) throw new Error("Unproven novice template cannot claim scenario coverage.");
@@ -39,9 +40,14 @@ export function validateNoviceEvidence(value, options) {
   const topScenarios = uniqueStrings(manifest.scenarioIds, "scenario IDs").sort();
   if (JSON.stringify(topScenarios) !== JSON.stringify(expectedScenarioIds)) throw new Error("Novice evidence scenario inventory does not match the required scenarios.");
   if (!Array.isArray(manifest.repetitions) || manifest.repetitions.length !== 30) throw new Error("Novice evidence requires exactly 30 repetitions.");
-  for (const [offset, raw] of manifest.repetitions.entries()) validateRepetition(raw, offset + 1, expectedScenarioIds, qualifying);
+  for (const [offset, raw] of manifest.repetitions.entries()) { validateScenarioExecutionEvidence(raw?.scenarioExecutions, expectedScenarioExecutions); validateRepetition(raw, offset + 1, expectedScenarioIds, qualifying); }
   validateFailureHistory(manifest.failureHistory);
-  if (qualifying) { const identities=new Set(manifest.repetitions.map((item)=>item.processProof.pid+"|"+item.processProof.createdAt)); if(identities.size!==30) throw new Error("Qualifying novice process proofs must be unique for all repetitions."); if(!manifest.failureHistory.length||manifest.failureHistory.some((item)=>item.fixedByCommit===null)) throw new Error("Qualifying novice evidence must retain fixed failure history."); validateAttestation(manifest.attestation); } else if (manifest.attestation !== null) throw new Error("Repository novice evidence cannot contain a qualifying Windows attestation.");
+  if (qualifying) {
+    const binding = object(manifest.attestation, "attestation");
+    if (binding.archiveSha256 !== manifest.archive.sha256 || binding.repositoryCommit !== manifest.repositoryCommit) throw new Error("Novice attestation binding differs from the archive or repository commit.");
+    hash(binding.runIdentityHash, "attestation run identity"); hash(binding.ownedEnvironmentHash, "attestation owned environment");
+  }
+  if (qualifying) { const identities=new Set(manifest.repetitions.map((item)=>item.processProof.pid+"|"+item.processProof.createdAt)); if(identities.size!==30) throw new Error("Qualifying novice process proofs must be unique for all repetitions."); if(!manifest.failureHistory.length||manifest.failureHistory.some((item)=>item.fixedByCommit===null)) throw new Error("Qualifying novice evidence must retain fixed failure history."); validateAttestation(manifest.attestation, manifest); } else if (manifest.attestation !== null) throw new Error("Repository novice evidence cannot contain a qualifying Windows attestation.");
   assertNoviceOutputSafe(manifest);
   return { qualifying, repetitions: 30, scenarios: expectedScenarioIds.length, verdict: manifest.verdict };
 }
@@ -71,6 +77,15 @@ function timestamp(value, label) { if (typeof value !== "string" || !Number.isFi
 function version(value, label) { if (typeof value !== "string" || !/^(?:v)?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/u.test(value)) throw new Error("Novice " + label + " is invalid."); }
 function commit(value, label) { if (typeof value !== "string" || !/^[a-f0-9]{40}$/u.test(value)) throw new Error("Novice " + label + " is invalid."); }
 
+function buildExpectedScenarioExecutions(raw) {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  return raw.map((scenario) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes })).sort((a,b)=>a.scenarioId.localeCompare(b.scenarioId));
+}
+function validateScenarioExecutionEvidence(raw, expected) {
+  if (!Array.isArray(raw) || !expected || raw.length !== expected.length) throw new Error("Novice scenario execution evidence is incomplete.");
+  const sorted = [...raw].sort((a,b)=>String(a?.scenarioId).localeCompare(String(b?.scenarioId)));
+  if (JSON.stringify(sorted) !== JSON.stringify(expected)) throw new Error("Novice scenario execution actions, prompts, invariants, faults, recovery, or probes differ from the accepted inventory.");
+}
 export async function resolveNoviceEvidenceInput(rootInput, args) {
   const root = path.resolve(rootInput);
   if (args[0] === "--external") {
@@ -87,6 +102,6 @@ export async function resolveNoviceEvidenceInput(rootInput, args) {
   if (relative === ".." || relative.startsWith(".." + path.sep) || path.isAbsolute(relative)) throw new Error("Novice evidence path escapes the package.");
   return file;
 }
-async function main() { const root = path.resolve(fileURLToPath(new URL("..", import.meta.url))); const file = await resolveNoviceEvidenceInput(root, process.argv.slice(2)); const value = JSON.parse(await readFile(file, "utf8")); const scenarios = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8")).map((item) => item.id); const result = validateNoviceEvidence(value, { scenarioIds: scenarios }); process.stdout.write("Novice evidence valid: verdict=" + result.verdict + "; repetitions=" + result.repetitions + "; scenarios=" + result.scenarios + "\n"); }
+async function main() { const root = path.resolve(fileURLToPath(new URL("..", import.meta.url))); const file = await resolveNoviceEvidenceInput(root, process.argv.slice(2)); const value = JSON.parse(await readFile(file, "utf8")); const scenarioDefinitions = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8")); const scenarios = scenarioDefinitions.map((item) => item.id); const result = validateNoviceEvidence(value, { scenarioIds: scenarios, scenarioDefinitions }); process.stdout.write("Novice evidence valid: verdict=" + result.verdict + "; repetitions=" + result.repetitions + "; scenarios=" + result.scenarios + "\n"); }
 function same(left, right) { return process.platform === "win32" ? left.toLocaleLowerCase() === right.toLocaleLowerCase() : left === right; }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main().catch((error) => { process.stderr.write("novice-evidence: " + (error instanceof Error ? error.message : String(error)) + "\n"); process.exitCode = 1; });

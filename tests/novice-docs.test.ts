@@ -21,7 +21,10 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(workflow).toContain("Select-Object -First 1");
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
-    for (const value of ["needs: novice-acceptance", "actions/download-artifact@v4", "@openai/codex@0.146.0", "npm install --ignore-scripts --no-audit --no-fund --prefix $installedPrefix $archive.FullName", "node_modules/chat2codex", "novice-clean-windows-attestation.mjs", "C2C_RUNNER_ENVIRONMENT", "--attestation", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
+    for (const value of ["needs: novice-acceptance", "actions/download-artifact@v4", "@openai/codex@0.146.0", "C2C_RUNNER_ENVIRONMENT", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--run-identity", "--codex-bin", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
+    for (const value of ["$environmentRoot", "--environment-root $environmentRoot", "--sha256 $metadata.sha256", "--repository-commit $metadata.repositoryCommit", "--run-identity $runIdentity", "CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT", "CHAT2CODEX_NOVICE_RUN_IDENTITY"]) expect(cleanJob).toContain(value);
+    expect(cleanJob).not.toContain("novice-attestation-owned");
+    expect(cleanJob).toContain("$needle = 'novice-owned-environment'");
     expect(cleanJob).not.toContain("actions/checkout");
     expect(cleanJob).not.toMatch(/Add-Member.*(?:environmentKind|freshProfile|repositoryAbsent|priorPackageAbsent)/iu);
   });

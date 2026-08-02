@@ -10,7 +10,10 @@ const packageRoot = path.resolve(read("--package-root") ?? "");
 const repetitions = Number(read("--repetitions") ?? "1");
 if (!process.env.CHAT2CODEX_NOVICE_ISOLATION || !path.isAbsolute(ownedRoot) || !path.isAbsolute(packageRoot)) throw new Error("Novice package worker requires an isolated owned root and package root.");
 const archiveSha256 = process.env.CHAT2CODEX_NOVICE_ARCHIVE_SHA256;
+const runIdentity = process.env.CHAT2CODEX_NOVICE_RUN_IDENTITY;
+const environmentRoot = path.resolve(process.env.CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT ?? "");
 if (!/^[a-f0-9]{64}$/u.test(archiveSha256 ?? "")) throw new Error("Novice package worker requires a verified archive identity.");
+if (!/^[A-Za-z0-9._-]{8,200}$/u.test(runIdentity ?? "") || !path.isAbsolute(environmentRoot) || !inside(environmentRoot, ownedRoot) || !inside(environmentRoot, packageRoot)) throw new Error("Novice package worker run binding is invalid.");
 if (repetitions !== 1 && repetitions !== 30) throw new Error("Novice package worker repetitions must be 1 or 30.");
 if (!inside(ownedRoot, process.env.USERPROFILE) || !inside(ownedRoot, process.env.CODEX_HOME) || !inside(ownedRoot, process.env.CHAT2CODEX_HOME)) throw new Error("Novice package worker environment escaped the owned root.");
 if (!inside(ownedRoot, packageRoot)) throw new Error("Novice package worker package escaped the owned root.");
@@ -28,6 +31,7 @@ const records = [];
 let product;
 let probes;
 let scenarioIds;
+let scenarioExecutions;
 for (let index = 1; index <= repetitions; index += 1) {
   const startedAt = new Date().toISOString();
   const result = await matrix.runNovicePackageRepetition({
@@ -41,10 +45,11 @@ for (let index = 1; index <= repetitions; index += 1) {
   product ??= result.product;
   probes ??= result.probes;
   scenarioIds ??= result.scenarioIds;
-  if (JSON.stringify(result.probes) !== JSON.stringify(probes) || JSON.stringify(result.scenarioIds) !== JSON.stringify(scenarioIds)) throw new Error("Installed novice repetition coverage drifted.");
+  scenarioExecutions ??= result.scenarioExecutions;
+  if (JSON.stringify(result.probes) !== JSON.stringify(probes) || JSON.stringify(result.scenarioIds) !== JSON.stringify(scenarioIds) || JSON.stringify(result.scenarioExecutions) !== JSON.stringify(scenarioExecutions)) throw new Error("Installed novice repetition coverage drifted.");
   records.push({
     index, seed: 2026080200 + index, startedAt, completedAt: new Date().toISOString(), verdict: "pass",
-    counts: result.counts, scenarioIds: result.scenarioIds, stateHashes: result.stateHashes,
+    counts: result.counts, scenarioIds: result.scenarioIds, scenarioExecutions: result.scenarioExecutions, stateHashes: result.stateHashes,
     commands: ["<installed-package>/scripts/novice-windows-worker.mjs --repetitions " + repetitions],
     processProof: result.processProof,
   });
@@ -52,11 +57,11 @@ for (let index = 1; index <= repetitions; index += 1) {
 const manifestHash = await hashTree(packageRoot);
 const stateHash = records.at(-1).stateHashes.at(-1);
 const evidence = {
-  packageRoot, packageVersion: packageJson.version, archiveSha256, repositoryImported: false, cliVersion: versionRun.stdout.trim(),
+  packageRoot, packageVersion: packageJson.version, archiveSha256, runIdentityHash: createHash("sha256").update(runIdentity).digest("hex"), ownedEnvironmentHash: createHash("sha256").update(environmentRoot.toLocaleLowerCase()).digest("hex"), repositoryImported: false, cliVersion: versionRun.stdout.trim(),
   manifestHash, stateHash, taskCount: product.taskCount, outboxCount: product.outboxCount,
   networkRecovered: product.networkRecovered, gatewayFailClosed: product.gatewayFailClosed,
   migrationBackupExact: product.migrationBackupExact, nativeLifecycle: product.nativeLifecycle,
-  probes, scenarioIds, repetitions: records,
+  probes, scenarioIds, scenarioExecutions, repetitions: records,
 };
 process.stdout.write("NOVICE_PACKAGE_RESULT " + JSON.stringify(evidence) + "\n");
 

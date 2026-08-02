@@ -178,7 +178,10 @@ Failures remain evidence and are not counted as passes.
    a separately validated cleanup action.
 6. The first package-level clean-Windows design allowed caller freshness flags and
    simulated lifecycle results to create a qualifying `pass`. Independent review
-   rejected that evidence. Commit `8d7f04a` replaces it with schema-v2 evidence
+   rejected that evidence. Commit `8d7f04a` introduced schema-v2 evidence; the
+   current schema-v3 contract additionally binds the archive, repository commit,
+   run identity, owned environment, and every executed scenario token so separate
+   lifecycle and journey runs cannot be spliced into a pass.
    requiring a hash-bound GitHub-hosted no-checkout attestation, real current-user
    Scheduled Task install/start/graceful stop/restart/double-uninstall/reinstall,
    exact PID+CreationDate single-writer/lock proof, another-interactive-user ACL
@@ -203,7 +206,7 @@ repository-absent, prior-package-absent, service/state/secret-absent flags. Neit
 account is therefore claimed as a qualifying environment. No account, password,
 profile, ACL, VM, or process was changed.
 
-The package now ships a no-checkout `windows-latest` job and strict schema-v2
+The package now ships a no-checkout `windows-latest` job and strict schema-v3
 validator. The clean job downloads only the reviewed archive, privately installs
 it, creates and removes a unique non-production Scheduled Task and temporary ACL
 test user, runs thirty package repetitions, and emits redacted attestation,
@@ -233,7 +236,7 @@ run supplies those artifacts and cannot satisfy real Weixin/Desktop `DIST-003`.
 | `DIST-001` | PASS candidate evidence | release handoff remains coupled to final acceptance, but archive/version/manifest/hash/provenance/reproduction are direct |
 | `DIST-002` | PARTIAL | clean/disposable Windows installed task, another-user ACL denial, doctor, upgrade, rollback, uninstall, reinstall direct run |
 | `DIST-003` | MISSING | same reviewed archive on a qualifying clean Windows environment through install, real login, Codex/Desktop, E2E, upgrade, rollback, uninstall |
-| `NOVICE-001..003` | PARTIAL | no-checkout clean Windows job is implemented with schema-v2 attestation but has not produced direct remote artifacts |
+| `NOVICE-001..003` | PARTIAL | no-checkout clean Windows job is implemented with schema-v3 bound attestation but has not produced direct remote artifacts |
 | Task 12 / `DESKTOP-001..003` | MISSING/PARTIAL | separately approved real backup, install, Hook trust, Desktop restart, and seven installed primitives |
 | Real Weixin / production rows | PARTIAL/MISSING | separately approved production single-writer recovery/deploy and real inbound/outbound evidence |
 
