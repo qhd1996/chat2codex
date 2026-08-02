@@ -105,7 +105,7 @@ export async function loadGatewayCapabilities(
     if (path.resolve(resolved).toLowerCase() !== absolute.toLowerCase())
       throw new Error("Gateway token path must not traverse a symbolic link");
     if ((options.platform ?? process.platform) === "win32") {
-      requireOwnerOnlyAcl(await (options.inspectWindowsAcl ?? inspectWindowsTokenAcl)(absolute));
+      requireOwnerOnlyWindowsTokenAcl(await (options.inspectWindowsAcl ?? inspectWindowsTokenAcl)(absolute));
     }
     const handle = await open(absolute, "r");
     let temporary = Buffer.alloc(0);
@@ -143,7 +143,7 @@ async function statNoFollow(filePath: string): Promise<{ symbolic: boolean; regu
 
 const broadReadSids = new Set(["S-1-1-0", "S-1-5-11", "S-1-5-32-545", "S-1-5-32-546"]);
 const privilegedSids = new Set(["S-1-5-18", "S-1-5-32-544"]);
-function requireOwnerOnlyAcl(report: WindowsTokenAclReport): void {
+export function requireOwnerOnlyWindowsTokenAcl(report: WindowsTokenAclReport): void {
   if (!report.protected || report.ownerSid !== report.currentUserSid)
     throw new Error("Gateway token ACL must be owner-only and protected");
   for (const rule of report.rules) {

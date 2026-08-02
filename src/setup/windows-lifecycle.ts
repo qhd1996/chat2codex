@@ -51,6 +51,20 @@ export function replaceManagedEnvBlock(source: string, values: Record<string, st
   return source.slice(0, start) + block + source.slice(finish);
 }
 
+export function removeManagedEnvBlock(source: string): string {
+  const begins = occurrences(source, begin);
+  const ends = occurrences(source, end);
+  if (begins === 0 && ends === 0) return source;
+  if (begins !== 1 || ends !== 1) throw new Error("Managed block markers are ambiguous.");
+  const start = source.indexOf(begin);
+  const finishMarker = source.indexOf(end, start);
+  if (finishMarker < start) throw new Error("Managed block markers are reversed.");
+  let finish = finishMarker + end.length;
+  if (source.slice(finish, finish + 2) === "\r\n") finish += 2;
+  else if (source[finish] === "\n") finish += 1;
+  return source.slice(0, start) + source.slice(finish);
+}
+
 export function parseWindowsInstallationManifest(value: unknown, home: string): WindowsInstallationManifestV1 {
   object(value, "Windows installation manifest");
   exactKeys(value, manifestKeys);

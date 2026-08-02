@@ -1,10 +1,16 @@
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { defaultChat2CodexHome, defaultEnvPath } from "../config/paths.js";
+import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../desktop-gateway/server.js";
+import { readPackageVersion } from "../package-info.js";
+import { applyOwnerOnlyWindowsAcl, ensureWindowsGatewayKeys } from "./windows-private-files.js";
+import { installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "./windows-service.js";
 import { renderWindowsLauncher, renderWindowsTaskXml, windowsTaskPath } from "./windows-task.js";
 
 export type ServiceTarget = "launchd" | "systemd" | "windows-task";
@@ -28,6 +34,7 @@ export interface ServiceOptions {
 const defaultLaunchdLabel = "com.chat2codex.bridge";
 const defaultSystemdServiceName = "chat2codex";
 const defaultWindowsTaskName = "Chat2Codex";
+const execFileAsync = promisify(execFile);
 
 if (isDirectRun()) {
   await runServiceSetup(process.argv.slice(2));
@@ -175,6 +182,20 @@ WantedBy=default.target
 
 async function installService(options: ServiceOptions): Promise<void> {
   await ensureInstallInputs(options);
+  if (options.target === "windows-task") {
+    assertPlatform("win32", "windows-task");
+    const home = path.resolve(options.projectDir);
+    const serviceRoot = path.join(home, ".service", "windows");
+    const result = await installWindowsUserTask({
+      home, envFile: options.envFile, launcherPath: options.windowsLauncherPath,
+      taskXmlPath: path.join(serviceRoot, "task.xml"), manifestPath: path.join(serviceRoot, "installation.json"),
+      nodeBin: options.nodeBin, entrypoint: options.entrypoint, logFile: options.stderrPath,
+      pathEnv: options.pathEnv, taskName: options.windowsTaskName,
+    }, windowsServiceIo(home));
+    console.log(`Installed Windows user task: ${result.taskPath}`);
+    console.log(`Manifest: ${path.join(serviceRoot, "installation.json")}`);
+    return;
+  }
   if (options.target === "launchd") {
     await installLaunchd(options);
     return;
@@ -183,6 +204,13 @@ async function installService(options: ServiceOptions): Promise<void> {
 }
 
 async function uninstallService(options: ServiceOptions): Promise<void> {
+  if (options.target === "windows-task") {
+    assertPlatform("win32", "windows-task");
+    const home = path.resolve(options.projectDir);
+    await uninstallWindowsUserTask(path.join(home, ".service", "windows", "installation.json"), windowsServiceIo(home));
+    console.log(`Uninstalled Windows user task: ${windowsTaskPath(options.windowsTaskName)}`);
+    return;
+  }
   if (options.target === "launchd") {
     await uninstallLaunchd(options);
     return;
@@ -409,6 +437,44 @@ function run(
   if ((result.status ?? 1) !== 0 && !options.allowFailure) {
     throw new Error(`Command failed: ${command} ${args.join(" ")}`);
   }
+}
+
+function windowsServiceIo(home: string): WindowsServiceIo {
+  return {
+    currentUserSid: async () => {
+      const { stdout } = await execFileAsync("powershell.exe", [
+        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
+        "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
+      ], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
+      const sid = stdout.trim();
+      if (!/^S-[0-9]+(?:-[0-9]+)+$/u.test(sid)) throw new Error("Could not determine the current Windows user SID.");
+      return sid;
+    },
+    now: () => new Date(), packageVersion: readPackageVersion,
+    readText: async (filePath) => fs.readFile(filePath, "utf8").catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error)),
+    writeTextAtomic: async (filePath, content) => {
+      await fs.mkdir(path.dirname(filePath), { recursive: true });
+      const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(temporary, content, { encoding: "utf8", flag: "wx" });
+        await fs.rename(temporary, filePath);
+      } finally { await fs.rm(temporary, { force: true }); }
+    },
+    removeFile: (filePath) => fs.rm(filePath, { force: true }),
+    ensureGatewayKeys: () => ensureWindowsGatewayKeys({
+      root: path.join(home, ".secrets", "desktop-gateway"),
+      applyAcl: applyOwnerOnlyWindowsAcl,
+      inspectAcl: async (filePath) => {
+        const report = await inspectWindowsTokenAcl(filePath);
+        requireOwnerOnlyWindowsTokenAcl(report);
+        return report;
+      },
+    }),
+    runFile: async (command, args) => {
+      const { stdout } = await execFileAsync(command, args, { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
+      return stdout;
+    },
+  };
 }
 
 function assertPlatform(expected: NodeJS.Platform, target: ServiceTarget): void {
