@@ -27,7 +27,14 @@ const testFiles = [
   "tests/novice-recovery.test.ts", "tests/novice-evidence.test.ts", "tests/properties/novice-actions.property.test.ts",
   "tests/properties/novice-lifecycle.property.test.ts", "tests/novice-restart.test.ts",
 ];
-const records = []; const failureHistory = [];
+const records = [];
+const priorReport = await readFile(reportPath, "utf8").then((source) => JSON.parse(source)).catch(() => null);
+const failureHistory = Array.isArray(priorReport?.failureHistory)
+  ? priorReport.failureHistory.map((item) => ({
+      repetition: item.repetition, code: item.code,
+      fixedByCommit: item.fixedByCommit ?? repositoryCommit,
+    }))
+  : [];
 try {
   for (let index = 1; index <= repetitions; index += 1) {
     const repetitionStartedAt = new Date().toISOString();
@@ -42,7 +49,12 @@ try {
     records.push(record);
     if (record.verdict !== "pass") {
       failureHistory.push({ repetition: index, code: "matrix_repetition_failed", fixedByCommit: null });
-      await writeFile(reportPath, JSON.stringify({ status: "failed", repositoryCommit, repetitions: records, failureHistory }, null, 2) + "\n");
+      const failedShard = {
+        name: shard.name, startedAt: shard.startedAt, wallMs: shard.wallMs, timedOut: shard.timedOut,
+        exitCode: shard.exitCode, rootIdentity: shard.rootIdentity, residualRoot: shard.residualRoot,
+        residualChildren: shard.residualChildren, stdoutTail: shard.stdoutTail, stderrTail: shard.stderrTail,
+      };
+      await writeFile(reportPath, JSON.stringify({ status: "failed", repositoryCommit, repetitions: records, failureHistory, failedShard }, null, 2) + "\n");
       throw new Error("Novice matrix repetition failed: " + index);
     }
   }

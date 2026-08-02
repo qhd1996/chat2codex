@@ -115,9 +115,23 @@ function windowsLifecycleIo(input: WindowsServiceInstallInput, home: string) {
     writeTextAtomic: async (file, content) => { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, content); },
     removeFile: async (file) => { await rm(file, { force: true }); },
     ensureGatewayKeys: async () => {
+      const existing = await Promise.all(Object.values(keyPaths).map(async (file) => await stat(file).then(() => true).catch(() => false)));
+      const freshReports = existing.every(Boolean)
+        ? new Map(await Promise.all(Object.values(keyPaths).map(async (file) => {
+            const report = await inspectWindowsTokenAcl(file);
+            requireOwnerOnlyWindowsTokenAcl(report);
+            return [file, report] as const;
+          })))
+        : new Map<string, Awaited<ReturnType<typeof inspectWindowsTokenAcl>>>();
       const result = await ensureWindowsGatewayKeys({
         root: keyRoot, applyAcl: applyOwnerOnlyWindowsAcl,
-        inspectAcl: async (file) => { const report = await inspectWindowsTokenAcl(file); requireOwnerOnlyWindowsTokenAcl(report); return report; },
+        inspectAcl: async (file) => {
+          const fresh = freshReports.get(file);
+          if (fresh) return fresh;
+          const report = await inspectWindowsTokenAcl(file);
+          requireOwnerOnlyWindowsTokenAcl(report);
+          return report;
+        },
       });
       for (const file of Object.values(result.paths)) {
         const source = await readFile(file, "utf8");

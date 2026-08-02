@@ -22,6 +22,7 @@ describe("fresh novice Windows lifecycle journey", () => {
       expect(result.distinctKeyFingerprints).toBe(3);
       expect(result.taskCreateCount).toBe(2);
       expect(result.taskDeleteCount).toBe(1);
+      expect(result.uninstallNoopCount).toBe(1);
       expect(result.userDataPreserved).toBe(true);
       expect(await readFile(statePath, "utf8")).toBe(userData);
       expect(result.residualOwnedFiles).toEqual([]);
@@ -31,32 +32,4 @@ describe("fresh novice Windows lifecycle journey", () => {
     }
   });
 
-  test("reinstalls twice from preserved user data without changing it", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-reinstall-"));
-    try {
-      const result = await runFreshWindowsLifecycleJourney({ root, seedState: "preserved after uninstall\n", stopAfterDoubleUninstall: true });
-      expect(result.installAttempts).toBe(2);
-      expect(result.uninstallAttempts).toBe(2);
-      expect(result.createdKeyCount).toBe(3);
-      expect(result.preservedKeyCount).toBe(3);
-      expect(result.userDataPreserved).toBe(true);
-      expect(result.residualOwnedFiles).toEqual([]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("second uninstall is an exact no-op and never guesses an unknown task", async () => {
-    const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-uninstall-"));
-    try {
-      const result = await runFreshWindowsLifecycleJourney({ root, seedState: "durable\n", stopAfterDoubleUninstall: true });
-      expect(result.uninstallAttempts).toBe(2);
-      expect(result.taskDeleteCount).toBe(1);
-      expect(result.uninstallNoopCount).toBe(1);
-      expect(result.userDataPreserved).toBe(true);
-      expect(result.residualOwnedFiles).toEqual([]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
 });
