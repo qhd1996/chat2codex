@@ -58,6 +58,20 @@ describe("Desktop Gateway contracts", () => {
     expect(() => parseGatewayRequest({ kind: "status", requestId, rootThreadId: sessionId, prompt: "secret" })).toThrow();
   });
 
+  test("keeps external binding and fence identities opaque while request ids remain UUIDs", () => {
+    expect(parseGatewayRequest({
+      kind: "takeover_desktop", requestId, bindingId: "binding/root-1",
+      expectedGeneration: 2, ownerInstanceId: "desktop-1", observedAt: "2026-08-02T10:00:00.000Z",
+    })).toMatchObject({ bindingId: "binding/root-1" });
+    expect(parseGatewayResponse({
+      requestId, decision: "allow", generation: 3, fenceId: "fence/turn-1",
+    })).toMatchObject({ fenceId: "fence/turn-1" });
+    expect(() => parseGatewayRequest({
+      kind: "takeover_desktop", requestId: "request-1", bindingId: "binding/root-1",
+      expectedGeneration: 2, ownerInstanceId: "desktop-1", observedAt: "2026-08-02T10:00:00.000Z",
+    })).toThrow();
+  });
+
   test("accepts only closed bounded response decisions", () => {
     expect(parseGatewayResponse({ requestId, decision: "allow", generation: 3, fenceId: requestId })).toEqual({ requestId, decision: "allow", generation: 3, fenceId: requestId });
     expect(() => parseGatewayResponse({ requestId, decision: "apply" })).toThrow();

@@ -33,15 +33,15 @@ const statusRequestSchema = z.object({
   kind: z.literal("status"), requestId: uuid, rootThreadId: opaqueId,
 }).strict();
 const heartbeatRequestSchema = z.object({
-  kind: z.literal("desktop_heartbeat"), requestId: uuid, bindingId: uuid,
+  kind: z.literal("desktop_heartbeat"), requestId: uuid, bindingId: opaqueId,
   expectedGeneration: generation, ownerInstanceId: opaqueId, observedAt: timestamp,
 }).strict();
 const takeoverRequestSchema = z.object({
-  kind: z.literal("takeover_desktop"), requestId: uuid, bindingId: uuid,
+  kind: z.literal("takeover_desktop"), requestId: uuid, bindingId: opaqueId,
   expectedGeneration: generation, ownerInstanceId: opaqueId, observedAt: timestamp,
 }).strict();
 const releaseRequestSchema = z.object({
-  kind: z.literal("release_bridge"), requestId: uuid, bindingId: uuid,
+  kind: z.literal("release_bridge"), requestId: uuid, bindingId: opaqueId,
   expectedGeneration: generation, observedAt: timestamp,
 }).strict();
 const userPromptSubmitRequestSchema = z.object({
@@ -62,7 +62,7 @@ export const gatewayResponseSchema = z.object({
   requestId: uuid,
   decision: z.enum(gatewayDecisionCodes),
   generation: generation.optional(),
-  fenceId: uuid.optional(),
+  fenceId: opaqueId.optional(),
   message: z.string().trim().min(1).max(500).optional(),
 }).strict();
 
