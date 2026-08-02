@@ -1,3 +1,6 @@
+# Reproducible package bytes must not depend on Windows core.autocrlf or worktree history.
+* text=auto eol=lf
+
 # Evidence manifests hash repository bytes. Keep their checked-out bytes stable on Windows.
 quality/evidence/*.json text eol=lf
 docs/superpowers/verification/*.md text eol=lf

@@ -51,6 +51,11 @@ test("packages every novice acceptance runtime asset and declares Node 20.19 min
   ]) expect(packageJson.files).toContain(asset);
 });
 
+test("normalizes tracked text bytes for reproducible Windows package archives", async () => {
+  const attributes = await Bun.file(path.join(repositoryRoot, ".gitattributes")).text();
+  expect(attributes).toContain("* text=auto eol=lf");
+});
+
 async function fixture(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-dist-package-"));
   await mkdir(path.join(root, "distribution"), { recursive: true });
