@@ -37,6 +37,7 @@ describe("JsonStateStore", () => {
         imageDrafts: {},
         clarifications: {},
         usageAdvisor: emptyUsageAdvisorState(),
+        desktopGateway: { bindings: {}, wakes: {} },
       });
 
       await store.save({
@@ -203,7 +204,7 @@ describe("JsonStateStore", () => {
       await store.save(loaded);
 
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(5);
+      expect(persisted.schemaVersion).toBe(6);
       expect(persisted.adapters["lark:default"].processedMessageIds).toEqual(["m_legacy"]);
       expect(JSON.parse(await readFile(`${statePath}.v0.6.bak`, "utf8"))).toEqual(legacy);
       if (process.platform !== "win32") {
@@ -241,6 +242,7 @@ describe("JsonStateStore", () => {
         imageDrafts: {},
         clarifications: {},
         usageAdvisor: emptyUsageAdvisorState(),
+        desktopGateway: { bindings: {}, wakes: {} },
       });
       slackState.processedMessageIds.push("same-message-id");
       slackState.chats.same_chat = {
@@ -276,7 +278,7 @@ describe("JsonStateStore", () => {
       expect(loaded.conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
       await store.save(loaded);
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(5);
+      expect(persisted.schemaVersion).toBe(6);
       expect(JSON.parse(await readFile(`${statePath}.v3.bak`, "utf8"))).toEqual(legacy);
       expect((await store.load()).conversations.wx_chat?.taskIds).toEqual([imported[0]!.taskId]);
     } finally { await rm(tempDir, { recursive: true, force: true }); }
@@ -285,14 +287,14 @@ describe("JsonStateStore", () => {
   test("refuses to overwrite an unknown future state schema", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-"));
     const statePath = path.join(tempDir, "state.json");
-    const futureState = `${JSON.stringify({ schemaVersion: 6, adapters: {} }, null, 2)}\n`;
+    const futureState = `${JSON.stringify({ schemaVersion: 7, adapters: {} }, null, 2)}\n`;
     try {
       await writeFile(statePath, futureState, { mode: 0o600 });
       const store = new JsonStateStore(statePath, { adapterId: "feishu:default" });
 
-      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 6");
+      await expect(store.load()).rejects.toThrow("Unsupported bridge state schema version: 7");
       await expect(store.save(emptyState())).rejects.toThrow(
-        "Unsupported bridge state schema version: 6",
+        "Unsupported bridge state schema version: 7",
       );
       expect(await readFile(statePath, "utf8")).toBe(futureState);
       expect(await stat(`${statePath}.v0.6.bak`).catch(() => null)).toBeNull();
@@ -323,7 +325,7 @@ describe("JsonStateStore", () => {
       };
       await store.save(state);
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
-      expect(persisted.schemaVersion).toBe(5);
+      expect(persisted.schemaVersion).toBe(6);
       expect((await store.load()).imageDrafts["chat:user"]?.images).toHaveLength(1);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -343,7 +345,7 @@ describe("JsonStateStore", () => {
       const state = await store.load();
       expect(state.outbox["legacy-text"]?.text).toBe("delivery legacy-text");
       await store.save(state);
-      expect(JSON.parse(await readFile(statePath, "utf8")).schemaVersion).toBe(5);
+      expect(JSON.parse(await readFile(statePath, "utf8")).schemaVersion).toBe(6);
       expect(JSON.parse(await readFile(statePath + ".v4.bak", "utf8"))).toEqual(legacy);
     } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
@@ -388,6 +390,166 @@ describe("JsonStateStore", () => {
       await expectRejected("bad-idempotency", (state) => { state.outbox["media-entry"]!.idempotencyKey = ""; }, /idempotency/i);
       await expectRejected("unknown-kind", (state) => { (state.outbox["media-entry"] as { kind: string }).kind = "video"; }, /kind/i);
     } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("schema v6 migrates a complete v5 partition without losing media or UsageAdvisor and preserves a private v5 backup", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-state-v5-"));
+    const statePath = path.join(tempDir, "state.json");
+    const taskId = "tsk_bbbbbbbbbbbbbbbbbbbbbbbb";
+    const jobId = "media-job";
+    const stagedDirectory = path.join(tempDir, "outbound", taskId, jobId);
+    const stagedPath = path.join(stagedDirectory, "00-image.png");
+    try {
+      await mkdir(stagedDirectory, { recursive: true });
+      await writeFile(stagedPath, "image-bytes");
+      const state = emptyState();
+      delete state.desktopGateway;
+      state.tasks[taskId] = registeredTask(taskId, "conversation", tempDir);
+      state.tasks[taskId]!.threadId = "root-thread-v5";
+      state.tasks[taskId]!.status = "completed";
+      state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+      state.jobs[jobId] = durableJob(jobId, "completed", timestamp(1), ["media-entry"]);
+      state.jobs[jobId]!.chatId = "conversation";
+      state.jobs[jobId]!.taskId = taskId;
+      state.outbox["media-entry"] = {
+        id: "media-entry", jobId, taskId, chatId: "conversation", kind: "image", text: "", sequence: 0,
+        stagedPath, fileName: "image.png", mediaType: "image/png", size: 11,
+        sha256: new Bun.CryptoHasher("sha256").update("image-bytes").digest("hex"),
+        status: "pending", idempotencyKey: "media-entry", attempts: 0, createdAt: timestamp(1), updatedAt: timestamp(1),
+      };
+      const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+      for (const at of [timestamp(1), timestamp(2), timestamp(3)]) advisor.record({ code: "delivery_retry", at });
+      state.usageAdvisor = advisor.state;
+      const legacy = { schemaVersion: 5, adapters: { "weixin:bot": state } };
+      await writeFile(statePath, JSON.stringify(legacy));
+
+      const store = new JsonStateStore(statePath, { adapterId: "weixin:bot", chat2codexHome: tempDir });
+      const loaded = await store.load();
+      expect(loaded.desktopGateway).toEqual({ bindings: {}, wakes: {} });
+      expect(loaded.outbox["media-entry"]).toEqual(state.outbox["media-entry"]);
+      expect(loaded.usageAdvisor).toEqual(advisor.state);
+      await store.save(loaded);
+
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+      expect(persisted.schemaVersion).toBe(6);
+      expect(persisted.adapters["weixin:bot"].desktopGateway).toEqual({ bindings: {}, wakes: {} });
+      expect(persisted.adapters["weixin:bot"].outbox["media-entry"]).toEqual(state.outbox["media-entry"]);
+      expect(persisted.adapters["weixin:bot"].usageAdvisor).toEqual(advisor.state);
+      expect(JSON.parse(await readFile(statePath + ".v5.bak", "utf8"))).toEqual(legacy);
+      if (process.platform !== "win32") expect((await stat(statePath + ".v5.bak")).mode & 0o777).toBe(0o600);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("schema v6 rejects orphan and duplicate Desktop root bindings", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-desktop-bindings-"));
+    try {
+      const taskId = "tsk_bbbbbbbbbbbbbbbbbbbbbbbb";
+      const makeState = () => {
+        const state = emptyState();
+        state.tasks[taskId] = registeredTask(taskId, "conversation", tempDir);
+        state.tasks[taskId]!.threadId = "root-thread";
+        state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+        state.desktopGateway!.bindings.first = desktopBinding({ bindingId: "first", taskId });
+        return state;
+      };
+      const expectLoadRejected = async (name: string, mutate: (state: BridgeState) => void, pattern: RegExp) => {
+        const state = makeState();
+        mutate(state);
+        const statePath = path.join(tempDir, name + ".json");
+        await writeFile(statePath, JSON.stringify({ schemaVersion: 6, adapters: { "weixin:bot": state } }));
+        await expect(new JsonStateStore(statePath, { adapterId: "weixin:bot" }).load()).rejects.toThrow(pattern);
+      };
+
+      await expectLoadRejected("orphan-task", (state) => { delete state.tasks[taskId]; }, /orphan.*task|task.*binding/i);
+      await expectLoadRejected("wrong-thread", (state) => { state.tasks[taskId]!.threadId = "other-thread"; }, /root.*thread|thread.*task/i);
+      await expectLoadRejected("duplicate-root", (state) => {
+        state.tasks.other = { ...registeredTask("other", "other-conversation", tempDir), threadId: "root-thread" };
+        state.conversations["other-conversation"] = { taskIds: ["other"] };
+        state.desktopGateway!.bindings.second = desktopBinding({ bindingId: "second", taskId: "other", conversationId: "other-conversation" });
+      }, /duplicate.*root|root.*multiple/i);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("schema v6 upgrades every adapter in one v4 envelope before saving", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-all-adapter-v4-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const legacy = { schemaVersion: 4, adapters: {
+        "weixin:one": { ...emptyState(), desktopGateway: undefined, processedMessageIds: ["one"] },
+        "weixin:two": { ...emptyState(), desktopGateway: undefined, processedMessageIds: ["two"] },
+      } };
+      await writeFile(statePath, JSON.stringify(legacy));
+      const store = new JsonStateStore(statePath, { adapterId: "weixin:one", chat2codexHome: tempDir });
+      await store.save(await store.load());
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+      expect(persisted.schemaVersion).toBe(6);
+      expect(persisted.adapters["weixin:one"].desktopGateway).toEqual({ bindings: {}, wakes: {} });
+      expect(persisted.adapters["weixin:two"].desktopGateway).toEqual({ bindings: {}, wakes: {} });
+      expect(persisted.adapters["weixin:two"].processedMessageIds).toEqual(["two"]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("schema v6 rejects duplicate Desktop roots across adapter partitions", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-cross-adapter-binding-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const makePartition = (adapterId: string, taskId: string, conversationId: string, bindingId: string) => {
+        const state = emptyState();
+        state.tasks[taskId] = { ...registeredTask(taskId, conversationId, tempDir), threadId: "shared-root" };
+        state.conversations[conversationId] = { taskIds: [taskId] };
+        state.desktopGateway!.bindings[bindingId] = desktopBinding({ bindingId, taskId, conversationId });
+        state.desktopGateway!.bindings[bindingId]!.rootThreadId = "shared-root";
+        state.desktopGateway!.bindings[bindingId]!.adapterId = adapterId;
+        return state;
+      };
+      await writeFile(statePath, JSON.stringify({ schemaVersion: 6, adapters: {
+        "weixin:one": makePartition("weixin:one", "task-one", "conversation-one", "binding-one"),
+        "weixin:two": makePartition("weixin:two", "task-two", "conversation-two", "binding-two"),
+      } }));
+      await expect(new JsonStateStore(statePath, { adapterId: "weixin:one" }).load()).rejects.toThrow(/duplicate.*root.*adapter/i);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("schema v6 rejects malformed active bindings and wake references", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-desktop-active-"));
+    try {
+      const taskId = "tsk_bbbbbbbbbbbbbbbbbbbbbbbb";
+      const makeState = () => {
+        const state = emptyState();
+        state.tasks[taskId] = registeredTask(taskId, "conversation", tempDir);
+        state.tasks[taskId]!.threadId = "root-thread";
+        state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+        state.desktopGateway!.bindings.first = desktopBinding({ bindingId: "first", taskId });
+        return state;
+      };
+      const expectSaveRejected = async (name: string, mutate: (state: BridgeState) => void, pattern: RegExp) => {
+        const state = makeState();
+        mutate(state);
+        await expect(new JsonStateStore(path.join(tempDir, name + ".json"), { adapterId: "weixin:bot" }).save(state)).rejects.toThrow(pattern);
+      };
+
+      await expectSaveRejected("desktop-without-lease", (state) => { state.desktopGateway!.bindings.first!.owner = "desktop"; }, /desktop.*lease|owner.*instance/i);
+      await expectSaveRejected("bridge-with-fence", (state) => {
+        state.desktopGateway!.bindings.first!.activeStartFence = { turnId: "turn", originGeneration: 1, requestId: "request", promptCommitment: "a".repeat(64), issuedAt: timestamp(2) };
+      }, /bridge.*fence|fence.*owner/i);
+      await expectSaveRejected("orphan-wake", (state) => {
+        state.desktopGateway!.wakes.wake = { eventId: "wake", bindingId: "first", turnId: "turn", observedAt: timestamp(2) };
+      }, /wake.*pending|orphan.*wake/i);
+      await expectSaveRejected("missing-wake", (state) => { state.desktopGateway!.bindings.first!.pendingWakeIds = ["missing"]; }, /wake.*missing|pending.*wake/i);
+      await expectSaveRejected("unknown-binding-field", (state) => {
+        (state.desktopGateway!.bindings.first as unknown as Record<string, unknown>).rawPrompt = "must-not-persist";
+      }, /unknown.*binding|binding.*field/i);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("loads only bounded image clarification references and drops descriptor-like fields", async () => {
@@ -741,7 +903,7 @@ describe("JsonStateStore", () => {
     } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 
-  test("UsageAdvisor state survives save and reload without changing schema v5", async () => {
+  test("UsageAdvisor state survives save and reload in schema v6", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-usage-advisor-"));
     const statePath = path.join(tempDir, "state.json");
     try {
@@ -758,7 +920,7 @@ describe("JsonStateStore", () => {
       const loaded = await store.load();
       const persisted = JSON.parse(await readFile(statePath, "utf8"));
 
-      expect(persisted.schemaVersion).toBe(5);
+      expect(persisted.schemaVersion).toBe(6);
       expect(loaded.usageAdvisor).toEqual(advisor.state);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
@@ -900,6 +1062,16 @@ function durableState(
     pendingMessages: {},
     processedMessageIds: [],
     diagnostics: {},
+  };
+}
+
+function desktopBinding(overrides: { bindingId: string; taskId: string; conversationId?: string }) {
+  return {
+    bindingId: overrides.bindingId, rootThreadId: "root-thread", taskId: overrides.taskId,
+    conversationId: overrides.conversationId ?? "conversation", adapterId: "weixin:bot",
+    owner: "bridge" as const, generation: 1, bindingAnchorTurnId: "anchor-turn",
+    lastReconciledTurnId: "anchor-turn", excludedControlTurns: {}, pendingWakeIds: [],
+    processedMutationIds: { bind: "a".repeat(64) }, createdAt: timestamp(1), updatedAt: timestamp(1),
   };
 }
 

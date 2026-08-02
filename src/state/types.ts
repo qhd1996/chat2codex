@@ -363,6 +363,63 @@ export interface UsageAdvisorState {
   proposals: Record<string, UsageAdvisorProposal>;
 }
 
+export type DesktopOwner = "bridge" | "desktop" | "uncertain" | "disabled";
+
+export interface DesktopStartFence {
+  turnId: string;
+  originGeneration: number;
+  requestId: string;
+  promptCommitment: string;
+  issuedAt: string;
+}
+
+export interface ExcludedDesktopControlTurn {
+  kind: "takeover" | "release_request";
+  originGeneration: number;
+  promptCommitment: string;
+  recordedAt: string;
+}
+
+export interface DesktopBinding {
+  bindingId: string;
+  rootThreadId: string;
+  taskId: string;
+  conversationId: string;
+  adapterId: string;
+  owner: DesktopOwner;
+  generation: number;
+  ownerInstanceId?: string;
+  leaseExpiresAt?: string;
+  bindingAnchorTurnId: string;
+  lastReconciledTurnId?: string;
+  lastMirroredTurnId?: string;
+  lastAuthoritativeDigest?: string;
+  activeStartFence?: DesktopStartFence;
+  excludedControlTurns: Record<string, ExcludedDesktopControlTurn>;
+  releaseRequested?: boolean;
+  pendingWakeIds: string[];
+  processedMutationIds: Record<string, string>;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DesktopWake {
+  eventId: string;
+  bindingId: string;
+  turnId: string;
+  observedAt: string;
+}
+
+export interface DesktopGatewayState {
+  bindings: Record<string, DesktopBinding>;
+  wakes: Record<string, DesktopWake>;
+}
+
+export const emptyDesktopGatewayState = (): DesktopGatewayState => ({
+  bindings: {},
+  wakes: {},
+});
+
 export const emptyUsageAdvisorState = (): UsageAdvisorState => ({
   aggregates: {},
   proposals: {},
@@ -380,12 +437,13 @@ export interface BridgeState {
   imageDrafts?: Record<string, ImageDraft>;
   clarifications?: Record<string, PendingClarification>;
   usageAdvisor?: UsageAdvisorState;
+  desktopGateway?: DesktopGatewayState;
 }
 
-export const bridgeStateSchemaVersion = 5 as const;
+export const bridgeStateSchemaVersion = 6 as const;
 
 /** On-disk envelope. Each adapter receives an isolated v0.6-compatible state partition. */
-export interface BridgeStateEnvelopeV5 {
+export interface BridgeStateEnvelopeV6 {
   schemaVersion: typeof bridgeStateSchemaVersion;
   adapters: Record<string, BridgeState>;
 }
@@ -402,4 +460,5 @@ export const emptyState = (): BridgeState => ({
   imageDrafts: {},
   clarifications: {},
   usageAdvisor: emptyUsageAdvisorState(),
+  desktopGateway: emptyDesktopGatewayState(),
 });

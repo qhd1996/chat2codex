@@ -9,7 +9,9 @@ import {
 } from "../core/usage-advisor.js";
 import {
   type BridgeState,
-  type BridgeStateEnvelopeV5,
+  type BridgeStateEnvelopeV6,
+  type DesktopBinding,
+  type DesktopGatewayState,
   type DurableCodexJob,
   type DurableOutboxMessage,
   type ImageDraft,
@@ -23,6 +25,7 @@ import {
   bridgeStateSchemaVersion,
   createSessionEpoch,
   emptyState,
+  emptyDesktopGatewayState,
   emptyUsageAdvisorState,
 } from "./types.js";
 
@@ -70,12 +73,14 @@ export class JsonStateStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const persisted = JSON.parse(raw) as unknown;
       assertSupportedSchema(persisted);
-      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV4(persisted) || isBridgeStateEnvelopeV3(persisted) || isBridgeStateEnvelopeV2(persisted)
+      if (isBridgeStateEnvelope(persisted)) validateDesktopGatewaysAcrossAdapters(persisted.adapters);
+      const state = isBridgeStateEnvelope(persisted) || isBridgeStateEnvelopeV5(persisted) || isBridgeStateEnvelopeV4(persisted) || isBridgeStateEnvelopeV3(persisted) || isBridgeStateEnvelopeV2(persisted)
         ? coerceBridgeState(persisted.adapters[this.adapterId])
         : coerceBridgeState(persisted);
       normalizeChatSessionEpochs(state);
       importLegacyChatTasks(state, this.adapterId);
       normalizeTaskReferences(state);
+      validateDesktopGatewayState(state, this.adapterId);
       await validateMediaOutbox(state, this.chat2codexHome, true);
       const stagingBeforeRetention = mediaStagingDirectories(state);
       enforceDurableRetention(
@@ -100,9 +105,11 @@ export class JsonStateStore {
     state.tasks ??= {};
     state.conversations ??= {};
     state.usageAdvisor = coerceUsageAdvisorState(state.usageAdvisor);
+    state.desktopGateway ??= emptyDesktopGatewayState();
     normalizeChatSessionEpochs(state);
     importLegacyChatTasks(state, this.adapterId);
     normalizeTaskReferences(state);
+    validateDesktopGatewayState(state, this.adapterId);
     await validateMediaOutbox(state, this.chat2codexHome, false);
     const stagingBeforeRetention = new Set([...this.pendingStagingCleanup, ...mediaStagingDirectories(state)]);
     for (const directory of stagingBeforeRetention) this.pendingStagingCleanup.add(directory);
@@ -132,18 +139,21 @@ export class JsonStateStore {
 
       const currentPersisted = await readPersistedState(this.filePath);
       assertSupportedSchema(currentPersisted);
-      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted) && !isBridgeStateEnvelopeV4(currentPersisted) && !isBridgeStateEnvelopeV3(currentPersisted) && !isBridgeStateEnvelopeV2(currentPersisted);
+      const migratedLegacy = currentPersisted !== null && !isBridgeStateEnvelope(currentPersisted) && !isBridgeStateEnvelopeV5(currentPersisted) && !isBridgeStateEnvelopeV4(currentPersisted) && !isBridgeStateEnvelopeV3(currentPersisted) && !isBridgeStateEnvelopeV2(currentPersisted);
+      const migratedV5 = isBridgeStateEnvelopeV5(currentPersisted);
       const migratedV4 = isBridgeStateEnvelopeV4(currentPersisted);
       const migratedV3 = isBridgeStateEnvelopeV3(currentPersisted);
       const migratedV2 = isBridgeStateEnvelopeV2(currentPersisted);
-      const envelope: BridgeStateEnvelopeV5 = isBridgeStateEnvelope(currentPersisted)
+      const envelope: BridgeStateEnvelopeV6 = isBridgeStateEnvelope(currentPersisted)
         ? currentPersisted
+        : migratedV5
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: addDesktopGatewayToAdapters(currentPersisted.adapters) }
         : migratedV4
-          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: addDesktopGatewayToAdapters(currentPersisted.adapters) }
         : migratedV3
-          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: addDesktopGatewayToAdapters(currentPersisted.adapters) }
         : migratedV2
-          ? { schemaVersion: bridgeStateSchemaVersion, adapters: currentPersisted.adapters }
+          ? { schemaVersion: bridgeStateSchemaVersion, adapters: addDesktopGatewayToAdapters(currentPersisted.adapters) }
         : {
             schemaVersion: bridgeStateSchemaVersion,
             adapters: currentPersisted === null
@@ -151,6 +161,7 @@ export class JsonStateStore {
               : { [this.adapterId]: coerceBridgeState(currentPersisted) },
           };
       envelope.adapters[this.adapterId] = state;
+      validateDesktopGatewaysAcrossAdapters(envelope.adapters);
       const referencedStagingDirectories = mediaStagingDirectoriesAcrossAdapters(envelope.adapters);
       const serializedState = `${JSON.stringify(envelope, null, 2)}\n`;
 
@@ -162,6 +173,9 @@ export class JsonStateStore {
       }
       if (migratedV4) {
         await preserveVersionedBackup(this.filePath, "v4");
+      }
+      if (migratedV5) {
+        await preserveVersionedBackup(this.filePath, "v5");
       }
       if (migratedV2) {
         await preserveVersionedBackup(this.filePath, "v2");
@@ -221,8 +235,138 @@ function coerceBridgeState(value: unknown): BridgeState {
     imageDrafts: coerceImageDrafts(parsed.imageDrafts),
     clarifications: coerceClarifications(parsed.clarifications),
     usageAdvisor: coerceUsageAdvisorState(parsed.usageAdvisor),
+    desktopGateway: coerceDesktopGatewayState(parsed.desktopGateway),
   };
 }
+
+function addDesktopGatewayToAdapters(adapters: Record<string, BridgeState>): Record<string, BridgeState> {
+  return Object.fromEntries(Object.entries(adapters).map(([adapterId, state]) => [
+    adapterId,
+    { ...state, desktopGateway: state.desktopGateway ?? emptyDesktopGatewayState() },
+  ]));
+}
+
+function coerceDesktopGatewayState(value: unknown): DesktopGatewayState {
+  if (!isRecord(value)) return emptyDesktopGatewayState();
+  return {
+    bindings: isRecord(value.bindings) ? value.bindings as Record<string, DesktopBinding> : {},
+    wakes: isRecord(value.wakes) ? value.wakes as DesktopGatewayState["wakes"] : {},
+  };
+}
+
+const desktopGatewayKeys = ["bindings", "wakes"] as const;
+const desktopBindingKeys = [
+  "activeStartFence", "adapterId", "bindingAnchorTurnId", "bindingId", "conversationId",
+  "createdAt", "excludedControlTurns", "generation", "lastAuthoritativeDigest",
+  "lastMirroredTurnId", "lastReconciledTurnId", "leaseExpiresAt", "owner",
+  "ownerInstanceId", "pendingWakeIds", "processedMutationIds", "releaseRequested",
+  "rootThreadId", "taskId", "updatedAt",
+] as const;
+const desktopFenceKeys = ["issuedAt", "originGeneration", "promptCommitment", "requestId", "turnId"] as const;
+const desktopControlKeys = ["kind", "originGeneration", "promptCommitment", "recordedAt"] as const;
+const desktopWakeKeys = ["bindingId", "eventId", "observedAt", "turnId"] as const;
+
+function validateDesktopGatewaysAcrossAdapters(adapters: Record<string, BridgeState>): void {
+  const rootOwners = new Map<string, string>();
+  for (const [adapterId, state] of Object.entries(adapters)) {
+    validateDesktopGatewayState(state, adapterId);
+    for (const binding of Object.values(state.desktopGateway?.bindings ?? {})) {
+      const previous = rootOwners.get(binding.rootThreadId);
+      if (previous) throw new Error(`Duplicate Desktop root binding across adapters: ${binding.rootThreadId}`);
+      rootOwners.set(binding.rootThreadId, `${adapterId}:${binding.bindingId}`);
+    }
+  }
+}
+
+function validateDesktopGatewayState(state: BridgeState, adapterId: string): void {
+  const gateway = state.desktopGateway;
+  if (!isRecord(gateway)) throw new Error("Schema v6 Desktop Gateway state is missing.");
+  assertExactObjectKeys(gateway, desktopGatewayKeys, "Desktop Gateway");
+  if (!isRecord(gateway.bindings) || !isRecord(gateway.wakes)) throw new Error("Desktop Gateway bindings and wakes must be records.");
+  const roots = new Set<string>();
+  const tasks = new Set<string>();
+  for (const [bindingId, rawBinding] of Object.entries(gateway.bindings)) {
+    if (!isRecord(rawBinding)) throw new Error(`Desktop binding is malformed: ${bindingId}`);
+    assertExactObjectKeys(rawBinding, desktopBindingKeys, "Desktop binding");
+    validateOpaqueStateId(bindingId, "binding key");
+    if (rawBinding.bindingId !== bindingId) throw new Error(`Desktop binding key does not match bindingId: ${bindingId}`);
+    for (const [name, value] of [["rootThreadId", rawBinding.rootThreadId], ["taskId", rawBinding.taskId], ["conversationId", rawBinding.conversationId], ["adapterId", rawBinding.adapterId], ["bindingAnchorTurnId", rawBinding.bindingAnchorTurnId]] as const) validateOpaqueStateId(value, name);
+    if (rawBinding.adapterId !== adapterId) throw new Error(`Desktop binding adapter does not match its partition: ${bindingId}`);
+    if (roots.has(rawBinding.rootThreadId as string)) throw new Error(`Duplicate Desktop root binding: ${String(rawBinding.rootThreadId)}`);
+    if (tasks.has(rawBinding.taskId as string)) throw new Error(`Duplicate Desktop task binding: ${String(rawBinding.taskId)}`);
+    roots.add(rawBinding.rootThreadId as string); tasks.add(rawBinding.taskId as string);
+    const task = state.tasks[rawBinding.taskId as string];
+    if (!task) throw new Error(`Orphan Desktop binding task: ${String(rawBinding.taskId)}`);
+    if (task.threadId !== rawBinding.rootThreadId) throw new Error(`Desktop root thread does not match its task: ${bindingId}`);
+    if (task.conversationId !== rawBinding.conversationId) throw new Error(`Desktop binding conversation does not match its task: ${bindingId}`);
+    if (rawBinding.owner !== "bridge" && rawBinding.owner !== "desktop" && rawBinding.owner !== "uncertain" && rawBinding.owner !== "disabled") throw new Error(`Desktop binding owner is invalid: ${bindingId}`);
+    if (!Number.isSafeInteger(rawBinding.generation) || Number(rawBinding.generation) < 1) throw new Error(`Desktop binding generation is invalid: ${bindingId}`);
+    validateCanonicalStateTimestamp(rawBinding.createdAt, "binding createdAt");
+    validateCanonicalStateTimestamp(rawBinding.updatedAt, "binding updatedAt");
+    if (rawBinding.owner === "desktop") {
+      validateOpaqueStateId(rawBinding.ownerInstanceId, "Desktop owner instance");
+      validateCanonicalStateTimestamp(rawBinding.leaseExpiresAt, "Desktop lease expiry");
+    } else if (rawBinding.ownerInstanceId !== undefined || rawBinding.leaseExpiresAt !== undefined) {
+      throw new Error(`Non-Desktop owner cannot retain a Desktop lease: ${bindingId}`);
+    }
+    if (rawBinding.releaseRequested !== undefined && typeof rawBinding.releaseRequested !== "boolean") throw new Error(`Desktop releaseRequested is invalid: ${bindingId}`);
+    if (rawBinding.releaseRequested === true && rawBinding.owner !== "desktop" && rawBinding.owner !== "uncertain") throw new Error(`Desktop release request has an invalid owner: ${bindingId}`);
+    validateDesktopFence(rawBinding.activeStartFence, rawBinding as unknown as DesktopBinding);
+    validateDesktopControlTurns(rawBinding.excludedControlTurns, Number(rawBinding.generation));
+    validateProcessedMutations(rawBinding.processedMutationIds);
+    if (!Array.isArray(rawBinding.pendingWakeIds) || rawBinding.pendingWakeIds.length > 128 || !rawBinding.pendingWakeIds.every((value) => typeof value === "string")) throw new Error(`Desktop pending wake IDs are invalid: ${bindingId}`);
+    if (new Set(rawBinding.pendingWakeIds).size !== rawBinding.pendingWakeIds.length) throw new Error(`Duplicate Desktop pending wake ID: ${bindingId}`);
+    for (const wakeId of rawBinding.pendingWakeIds) validateOpaqueStateId(wakeId, "pending wake ID");
+    for (const optionalId of [rawBinding.lastReconciledTurnId, rawBinding.lastMirroredTurnId]) if (optionalId !== undefined) validateOpaqueStateId(optionalId, "Desktop high-water turn ID");
+    if (rawBinding.lastAuthoritativeDigest !== undefined && (typeof rawBinding.lastAuthoritativeDigest !== "string" || !/^[0-9a-f]{64}$/u.test(rawBinding.lastAuthoritativeDigest))) throw new Error(`Desktop authoritative digest is invalid: ${bindingId}`);
+    if (rawBinding.owner === "bridge" && rawBinding.activeStartFence !== undefined) throw new Error(`Bridge owner cannot retain a Desktop start fence: ${bindingId}`);
+    if (rawBinding.owner === "disabled" && (rawBinding.activeStartFence !== undefined || rawBinding.pendingWakeIds.length > 0 || rawBinding.releaseRequested === true)) throw new Error(`Disabled Desktop binding retains obligations: ${bindingId}`);
+  }
+  for (const [wakeId, rawWake] of Object.entries(gateway.wakes)) {
+    if (!isRecord(rawWake)) throw new Error(`Desktop wake is malformed: ${wakeId}`);
+    assertExactObjectKeys(rawWake, desktopWakeKeys, "Desktop wake");
+    validateOpaqueStateId(wakeId, "wake key");
+    if (rawWake.eventId !== wakeId) throw new Error(`Desktop wake key does not match eventId: ${wakeId}`);
+    validateOpaqueStateId(rawWake.bindingId, "wake bindingId");
+    validateOpaqueStateId(rawWake.turnId, "wake turnId");
+    validateCanonicalStateTimestamp(rawWake.observedAt, "wake observedAt");
+    const binding = gateway.bindings[rawWake.bindingId as string];
+    if (!binding || !binding.pendingWakeIds.includes(wakeId)) throw new Error(`Orphan wake is not referenced by its binding: ${wakeId}`);
+  }
+  for (const binding of Object.values(gateway.bindings)) {
+    for (const wakeId of binding.pendingWakeIds) {
+      const wake = gateway.wakes[wakeId];
+      if (!wake || wake.bindingId !== binding.bindingId) throw new Error(`Pending wake is missing or belongs to another binding: ${wakeId}`);
+    }
+  }
+}
+
+function validateDesktopFence(value: unknown, binding: DesktopBinding): void {
+  if (value === undefined) return;
+  if (!isRecord(value)) throw new Error(`Desktop start fence is malformed: ${binding.bindingId}`);
+  assertExactObjectKeys(value, desktopFenceKeys, "Desktop start fence");
+  validateOpaqueStateId(value.turnId, "fence turnId"); validateOpaqueStateId(value.requestId, "fence requestId");
+  if (!Number.isSafeInteger(value.originGeneration) || Number(value.originGeneration) < 1 || Number(value.originGeneration) > binding.generation) throw new Error(`Desktop fence generation is invalid: ${binding.bindingId}`);
+  validateSha256StateValue(value.promptCommitment, "fence prompt commitment"); validateCanonicalStateTimestamp(value.issuedAt, "fence issuedAt");
+}
+function validateDesktopControlTurns(value: unknown, generation: number): void {
+  if (!isRecord(value) || Object.keys(value).length > 128) throw new Error("Excluded Desktop control turns are invalid.");
+  for (const [turnId, raw] of Object.entries(value)) {
+    validateOpaqueStateId(turnId, "excluded control turn ID"); if (!isRecord(raw)) throw new Error(`Excluded Desktop control turn is malformed: ${turnId}`);
+    assertExactObjectKeys(raw, desktopControlKeys, "excluded Desktop control turn");
+    if (raw.kind !== "takeover" && raw.kind !== "release_request") throw new Error(`Excluded Desktop control kind is invalid: ${turnId}`);
+    if (!Number.isSafeInteger(raw.originGeneration) || Number(raw.originGeneration) < 1 || Number(raw.originGeneration) > generation) throw new Error(`Excluded Desktop control generation is invalid: ${turnId}`);
+    validateSha256StateValue(raw.promptCommitment, "excluded control prompt commitment"); validateCanonicalStateTimestamp(raw.recordedAt, "excluded control recordedAt");
+  }
+}
+function validateProcessedMutations(value: unknown): void {
+  if (!isRecord(value) || Object.keys(value).length > 256) throw new Error("Processed Desktop mutations are invalid.");
+  for (const [id, digest] of Object.entries(value)) { validateOpaqueStateId(id, "processed mutation ID"); validateSha256StateValue(digest, "processed mutation digest"); }
+}
+function validateOpaqueStateId(value: unknown, name: string): asserts value is string { if (typeof value !== "string" || value.trim() !== value || value.length < 1 || value.length > 160 || /[\u0000-\u001f\u007f]/u.test(value)) throw new Error(`${name} must be a bounded opaque string.`); }
+function validateSha256StateValue(value: unknown, name: string): void { if (typeof value !== "string" || !/^[0-9a-f]{64}$/u.test(value)) throw new Error(`${name} must be a lowercase SHA-256 value.`); }
+function validateCanonicalStateTimestamp(value: unknown, name: string): void { if (typeof value !== "string" || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) throw new Error(`${name} must be a canonical UTC timestamp.`); }
+function assertExactObjectKeys(value: Record<string, unknown>, allowed: readonly string[], label: string): void { const unknown = Object.keys(value).filter((key) => !allowed.includes(key)); if (unknown.length) throw new Error(`Unknown ${label} field: ${unknown.join(", ")}`); }
 
 function coerceUsageAdvisorState(value: unknown): UsageAdvisorState {
   if (!isRecord(value)) return emptyUsageAdvisorState();
@@ -316,12 +460,16 @@ function normalizedIsoTimestamp(value: unknown): string | undefined {
   }
 }
 
-function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV5 {
+function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV6 {
   return Boolean(
     isRecord(value) &&
       value.schemaVersion === bridgeStateSchemaVersion &&
       isRecord(value.adapters),
   );
+}
+
+function isBridgeStateEnvelopeV5(value: unknown): value is { schemaVersion: 5; adapters: Record<string, BridgeState> } {
+  return Boolean(isRecord(value) && value.schemaVersion === 5 && isRecord(value.adapters));
 }
 
 function isBridgeStateEnvelopeV4(value: unknown): value is { schemaVersion: 4; adapters: Record<string, BridgeState> } {
@@ -340,7 +488,7 @@ function assertSupportedSchema(value: unknown): void {
   if (
     isRecord(value) &&
     Object.prototype.hasOwnProperty.call(value, "schemaVersion") &&
-    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV4(value) && !isBridgeStateEnvelopeV3(value) && !isBridgeStateEnvelopeV2(value)
+    !isBridgeStateEnvelope(value) && !isBridgeStateEnvelopeV5(value) && !isBridgeStateEnvelopeV4(value) && !isBridgeStateEnvelopeV3(value) && !isBridgeStateEnvelopeV2(value)
   ) {
     throw new Error(`Unsupported bridge state schema version: ${String(value.schemaVersion)}`);
   }
