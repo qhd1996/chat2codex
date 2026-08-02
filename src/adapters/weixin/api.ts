@@ -134,7 +134,7 @@ export class WeixinApiClient {
       );
       const media = {
         encrypt_query_param: downloadParam,
-        aes_key: aesKey.toString("base64"),
+        aes_key: Buffer.from(aesKey.toString("hex"), "utf8").toString("base64"),
         encrypt_type: 1,
       };
       const item = params.input.kind === "image"
@@ -279,7 +279,7 @@ export class WeixinApiClient {
       });
       const text = await response.text();
       if (!response.ok) {
-        throw new Error(`Weixin POST failed with HTTP ${response.status}.`);
+        throw new SafeWeixinRequestError(`Weixin POST failed with HTTP ${response.status}.`);
       }
       return JSON.parse(text) as T;
     } catch (error) {
@@ -292,10 +292,13 @@ export class WeixinApiClient {
       if (!isAbortError(error)) {
         this.options.logger.warn("Weixin API request failed", {
           endpoint,
-          error: error instanceof Error ? error.message : String(error),
+          errorKind: error instanceof Error ? error.name : typeof error,
         });
       }
-      throw error;
+      if (error instanceof SafeWeixinRequestError || isAbortError(error)) {
+        throw error;
+      }
+      throw new Error("Weixin API request failed.");
     } finally {
       clearTimeout(timer);
       abortSignal?.removeEventListener("abort", abort);
@@ -464,6 +467,8 @@ function assertApiSuccess(
     );
   }
 }
+
+class SafeWeixinRequestError extends Error {}
 
 function trailingSlash(value: string): string {
   return value.endsWith("/") ? value : `${value}/`;

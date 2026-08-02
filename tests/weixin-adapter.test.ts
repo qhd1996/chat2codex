@@ -357,7 +357,10 @@ describe("Weixin protocol adapter", () => {
             image_item: {
               media: {
                 encrypt_query_param: tencent246Fixture.downloadParam,
-                aes_key: tencent246Fixture.aesKey.toString("base64"),
+                aes_key: Buffer.from(
+                  tencent246Fixture.aesKey.toString("hex"),
+                  "utf8",
+                ).toString("base64"),
                 encrypt_type: 1,
               },
               mid_size: 16,
@@ -482,9 +485,24 @@ describe("Weixin protocol adapter", () => {
     await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable", timeoutMs: 10 })).rejects.toThrow("staged media");
     await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
     await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable", timeoutMs: 10 })).rejects.toThrow("timed out");
+
+    const syntheticNetworkSecret = "network-key=ffeeddccbbaa99887766554433221100";
+    const failingClient = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret-never-log",
+      logger: capturingLogger,
+      randomBytesImpl: () => Buffer.from("00112233445566778899aabbccddeeff", "hex"),
+      fetchImpl: async () => {
+        throw new Error(syntheticNetworkSecret);
+      },
+    });
+    await expect(
+      failingClient.sendMedia({ to: "wx-user", input, clientId: "stable" }),
+    ).rejects.toThrow("Weixin API request failed.");
     const renderedLogs = logLines.join("\n");
     expect(renderedLogs).not.toContain("bot-secret-never-log");
     expect(renderedLogs).not.toContain("00112233445566778899aabbccddeeff");
+    expect(renderedLogs).not.toContain(syntheticNetworkSecret);
   });
 
   test("rejects failed upload responses before any native media message is sent", async () => {
