@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "phase3-preinstall",
+  "authorityCommit": "07603ee8ddd38546aca003ff7be8370aa9a51203",
+  "repositoryCommit": "55c8710c3a83c4317dd4fb058e76613cedea855c",
+  "generatedAt": "2026-08-02T12:00:00.000Z",
+  "targets": [
+    { "id": "DESKTOP-001", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "DESKTOP-002", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "DESKTOP-003", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "WX-REAL-E2E", "requiredLevel": "real_e2e", "verdict": "unproven", "evidenceIds": [] }
+  ],
+  "evidence": []
+}
