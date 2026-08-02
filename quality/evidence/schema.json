@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://chat2codex.local/quality/evidence/v1",
+  "title": "Chat2Codex quality evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "manifestId", "authorityCommit", "repositoryCommit", "generatedAt", "targets", "evidence"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "manifestId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "authorityCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "repositoryCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "generatedAt": { "type": "string", "format": "date-time" },
+    "targets": { "type": "array", "maxItems": 128, "items": { "$ref": "#/$defs/target" } },
+    "evidence": { "type": "array", "maxItems": 256, "items": { "$ref": "#/$defs/evidence" } }
+  },
+  "$defs": {
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "requiredLevel", "verdict", "evidenceIds"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9._-]{2,127}$" },
+        "requiredLevel": { "enum": ["static", "automated", "installed_behavior", "real_e2e"] },
+        "verdict": { "enum": ["unproven", "pass", "contradicted"] },
+        "evidenceIds": { "type": "array", "uniqueItems": true, "maxItems": 64, "items": { "type": "string" } }
+      }
+    },
+    "evidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "targetId", "level", "outcome", "observedAt", "repositoryCommit", "dirty", "platform", "versions", "procedure", "counts", "artifact", "note"],
+      "properties": {
+        "id": { "type": "string" }, "targetId": { "type": "string" },
+        "level": { "enum": ["static", "automated", "installed_behavior", "real_e2e"] },
+        "outcome": { "enum": ["pass", "fail", "incomplete", "contradicted"] },
+        "observedAt": { "type": "string", "format": "date-time" },
+        "repositoryCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "dirty": { "type": "boolean" },
+        "platform": { "$ref": "#/$defs/platform" }, "versions": { "$ref": "#/$defs/versions" },
+        "procedure": { "$ref": "#/$defs/procedure" }, "counts": { "$ref": "#/$defs/counts" },
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "note": { "type": "string", "minLength": 1, "maxLength": 500 }
+      }
+    },
+    "platform": { "type": "object", "additionalProperties": false, "required": ["os", "arch"], "properties": { "os": { "type": "string" }, "arch": { "type": "string" } } },
+    "versions": { "type": "object", "additionalProperties": false, "required": ["node", "bun", "package"], "properties": { "node": { "type": "string" }, "bun": { "type": "string" }, "package": { "type": "string" } } },
+    "procedure": { "type": "object", "additionalProperties": false, "required": ["kind", "value"], "properties": { "kind": { "enum": ["command", "manual"] }, "value": { "type": "string", "minLength": 1, "maxLength": 1000 } } },
+    "counts": { "type": "object", "additionalProperties": false, "required": ["pass", "fail", "skip", "timeout", "residualRoot", "residualChildren"], "properties": { "pass": { "type": "integer", "minimum": 0 }, "fail": { "type": "integer", "minimum": 0 }, "skip": { "type": "integer", "minimum": 0 }, "timeout": { "type": "integer", "minimum": 0 }, "residualRoot": { "type": "integer", "minimum": 0 }, "residualChildren": { "type": "integer", "minimum": 0 } } },
+    "artifact": { "type": "object", "additionalProperties": false, "required": ["path", "sha256"], "properties": { "path": { "type": "string" }, "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" } } }
+  }
+}

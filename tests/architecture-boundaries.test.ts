@@ -78,6 +78,19 @@ describe("architecture boundaries", () => {
     expect(imports).toEqual(["zod"]);
     expect(source).not.toMatch(/(?:node:http|state\/store|adapters|bridge-runner|fetch\s*\(|writeFile\s*\(|process\.env)/u);
   });
+
+  test("quality tooling has no product mutation or external-action capability", async () => {
+    const qualityFiles = [
+      "scripts/run-local-openspec.mjs",
+      "scripts/verify-openspec-authority.mjs",
+      "scripts/verify-quality-evidence.mjs",
+      "scripts/assert-private-windows-file.mjs",
+    ];
+    const source = (await Promise.all(qualityFiles.map((file) => readFile(path.join(workspaceRoot, file), "utf8")))).join("\n");
+    expect(source).not.toMatch(/(?:src[\\/]core|src[\\/]adapters|message-router|bridge-runtime|F:[\\/]Chat2Codex|hooks?\W*(?:install|trust)|Computer Use|send.*Weixin|微信.*发送)/iu);
+    expect(source).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec(?:\.js)?["'`]?\s*,?\s*["'`](?:init|update|archive)/iu);
+    expect(source).not.toMatch(/\b(?:Set-Acl|icacls|schtasks|Start-ScheduledTask|Stop-Process)\b/iu);
+  });
 });
 
 async function typescriptFiles(directory: string): Promise<string[]> {

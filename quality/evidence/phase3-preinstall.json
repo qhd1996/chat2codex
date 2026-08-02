@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "manifestId": "phase3-preinstall",
+  "authorityCommit": "07603ee8ddd38546aca003ff7be8370aa9a51203",
+  "repositoryCommit": "efec4a5ec8c995fbbd7cc2dac00130638f095bfd",
+  "generatedAt": "2026-08-02T12:17:49.758Z",
+  "targets": [
+    { "id": "QUALITY-PACKAGE-A-AUTOMATED", "requiredLevel": "automated", "verdict": "pass", "evidenceIds": ["package-a-clean-stable-final"] },
+    { "id": "DESKTOP-001", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "DESKTOP-002", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "DESKTOP-003", "requiredLevel": "installed_behavior", "verdict": "unproven", "evidenceIds": [] },
+    { "id": "WX-REAL-E2E", "requiredLevel": "real_e2e", "verdict": "unproven", "evidenceIds": [] }
+  ],
+  "evidence": [
+    {
+      "id": "package-a-clean-stable-final",
+      "targetId": "QUALITY-PACKAGE-A-AUTOMATED",
+      "level": "automated",
+      "outcome": "pass",
+      "observedAt": "2026-08-02T12:16:57.033Z",
+      "repositoryCommit": "efec4a5ec8c995fbbd7cc2dac00130638f095bfd",
+      "dirty": false,
+      "platform": { "os": "win32", "arch": "x64" },
+      "versions": { "node": "24.14.0", "bun": "1.3.14", "package": "0.8.0-media.1" },
+      "procedure": { "kind": "command", "value": "node scripts/run-test-shard.mjs --name package-a-clean-stable-final --timeout-ms 180000 --report <external-evidence>/package-a-clean-stable-final.json -- bun run check:stable" },
+      "counts": { "pass": 628, "fail": 0, "skip": 8, "timeout": 0, "residualRoot": 0, "residualChildren": 0 },
+      "artifact": { "path": "docs/superpowers/verification/2026-08-02-minimal-quality-acceleration-package-a.md", "sha256": "c828078148e47d83766d62ce386922999c2f50e0c0e6b85acb856e8d22ec6f6a" },
+      "note": "Clean deterministic full gate; installed and real external rows remain unproven."
+    }
+  ]
+}
