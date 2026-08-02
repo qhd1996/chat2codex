@@ -1,0 +1,22 @@
+schema: spec-driven
+
+context: |
+  Chat2Codex is a TypeScript ESM project using Bun for tests and package management.
+  Product requirements remain authoritative only in the separate requirements ledger.
+  OpenSpec records implementation deltas for already-authorized work and cannot accept or close requirements.
+  Superpowers owns design approval, worktrees, TDD, review, and completion verification.
+  Production, user Codex configuration, Desktop operation, and real Weixin sends remain separate approval gates.
+
+rules:
+  proposal:
+    - Cite the locked requirements-ledger commit and applicable requirement IDs.
+    - State that production and real external actions are not authorized.
+  specs:
+    - Use observable scenarios and distinguish automated, installed_behavior, and real_e2e evidence.
+    - Never claim that automated evidence satisfies a named real E2E requirement.
+  design:
+    - Preserve Superpowers and the requirements ledger as the execution and authority layers.
+    - Keep project tooling local and forbid user-home mutation.
+  tasks:
+    - Use TDD with explicit RED and GREEN commands.
+    - Include Windows and evidence-integrity verification.

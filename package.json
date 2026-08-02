@@ -46,6 +46,11 @@
     "check": "bun run typecheck && bun run typecheck:contracts && bun test && bun run build",
     "prepack": "bun run build",
     "release:check": "bun run check && bun audit && bun pm pack --dry-run",
+    "openspec:validate": "node scripts/run-local-openspec.mjs validate --all --strict --no-color --no-interactive",
+    "quality:authority": "node scripts/verify-openspec-authority.mjs",
+    "quality:evidence": "node scripts/verify-quality-evidence.mjs quality/evidence/phase3-preinstall.json",
+    "quality:windows": "bun test tests/windows-security.test.ts tests/process-identity.test.ts tests/shard-wrapper.test.ts tests/windows-workflow.test.ts",
+    "quality:check": "bun run openspec:validate && bun run quality:authority && bun run quality:evidence",
     "start": "node dist/index.js",
     "start:bun": "bun src/index.ts",
     "test": "bun test",
@@ -64,6 +69,7 @@
     "protobufjs": "7.6.5"
   },
   "devDependencies": {
+    "@fission-ai/openspec": "1.7.0",
     "@types/node": "^26.0.1",
     "@types/proper-lockfile": "^4.1.4",
     "@types/qrcode-terminal": "^0.12.2",
