@@ -193,6 +193,16 @@ by a model turn under the old owner, releasing while a Desktop turn/fence is act
 or allowing a control prompt to start Codex are prohibited. Which route exists is
 an installed behavior gate, not an assumption.
 
+Because Codex allocates `turn_id` before `UserPromptSubmit`, the design does not
+assume a blocked control turn is absent from persisted history. The control
+mutation records that exact `turn_id`, control kind, origin generation, and the
+code-owned prompt commitment in a bounded `excludedControlTurns` map. During
+authoritative reconciliation, a matching persisted control turn is validated and
+advanced as non-exportable with zero outbox parts; an absent control turn is also
+safe and the exclusion remains bounded until retention. A different prompt,
+assistant output, tool item, or digest at that turn ID is an integrity conflict.
+Control-turn exclusion never applies to an ordinary prompt fence.
+
 ### 4.3 Trusted hooks
 
 `UserPromptSubmit` is the enforcement point for an ordinary Desktop root prompt.
@@ -276,6 +286,15 @@ be verified before trust.
 Creating token files or referencing them from `~/.codex` is an installation action
 and remains separately confirmed.
 
+Both sides validate token files, not only the Hook/MCP client. Before the Gateway
+listens, it opens each configured absolute file without following symlinks, requires
+a regular file, verifies owner-only Windows ACLs and no inherited broad read ACE,
+reads exactly one bounded base64url secret, and rejects duplicate key material or
+paths. It retains decoded key bytes in memory only and zeroes temporary buffers
+where the runtime permits. Any validation failure prevents Gateway readiness and
+therefore keeps prompt submission blocked. The same checks run in a fresh process
+after rotation; a prior successful process is not evidence for current ACL/content.
+
 ### 5.2 Signed request
 
 Every request carries protocol version, key ID, caller role, UUID request ID, UTC
@@ -352,6 +371,14 @@ The conceptual binding record is:
     "promptCommitment": "domain-separated HMAC-SHA-256",
     "issuedAt": "UTC timestamp"
   },
+  "excludedControlTurns": {
+    "turn-control-1": {
+      "kind": "takeover | release_request",
+      "originGeneration": 12,
+      "promptCommitment": "domain-separated HMAC-SHA-256",
+      "recordedAt": "UTC timestamp"
+    }
+  },
   "pendingWakeIds": [],
   "createdAt": "UTC timestamp",
   "updatedAt": "UTC timestamp"
@@ -410,6 +437,9 @@ high-water turn and its saved digest still exist at the expected position. A
 missing/reordered prior turn or an incomplete/oversized response is an integrity
 conflict; no outbox or cursor change is committed. Experimental pagination may
 optimize reads only after the same ordering/digest invariants are proven.
+An exact excluded control turn may advance reconciliation high water with no
+outbox entry only after its code-owned commitment and no-model-output shape are
+validated. It can never satisfy, replace, or clear an ordinary start fence.
 
 Each outbox identity is deterministic. `generation` is the origin generation
 recorded on the matching start fence, not whichever generation happens to be
@@ -472,6 +502,8 @@ require a separate accepted change and a new explicit binding.
 | Authoritative content differs for an existing outbox identity | Quarantine as integrity conflict; do not deliver or advance |
 | Token authentication failure | Generic denial, no existence leak, no state mutation |
 | Child or unbound thread event | Ignore for export, record bounded redacted diagnostic |
+| Blocked control turn is absent from history | Keep its bounded exclusion record until retention; do not create outbox or block ordinary high-water recovery |
+| Control turn contains non-control prompt or model/tool output | Integrity conflict; mark uncertain and do not advance or deliver |
 | Gateway crash during ownership transfer | Atomic CAS yields old or new generation; restart reconciles before new work |
 
 ## 10. Seven-primitive behavior acceptance matrix
@@ -505,7 +537,7 @@ Before installation, automated verification covers:
 - a disposable shared-Codex-home compatibility rehearsal that proves identical
   `threadId`/turn digests and leaves existing isolated production roots untouched;
 - every legal and illegal ownership transition, stale generation, start fence,
-  expiry-to-uncertain, and crash point;
+  excluded control turn present/absent/conflicting, expiry-to-uncertain, and crash point;
 - hook permit/block response construction with no prompt persistence;
 - Stop idempotency, missed wake, authoritative pagination/read errors, high-water
   invariants, outbox identity conflicts, restart convergence, and no Codex rerun;
