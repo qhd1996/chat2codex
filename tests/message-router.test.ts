@@ -179,6 +179,9 @@ class FailingDeliverySender implements ChatSender {
 
 class FinalFailingSender extends CollectingSender {
   readonly idempotencyKeys: string[] = [];
+  private readonly firstFailure = deferred<void>();
+
+  waitForFirstFailure(): Promise<void> { return this.firstFailure.promise; }
 
   override async sendMarkdown(
     _chatId: string,
@@ -188,6 +191,7 @@ class FinalFailingSender extends CollectingSender {
     if (options?.idempotencyKey) {
       this.idempotencyKeys.push(options.idempotencyKey);
     }
+    this.firstFailure.resolve();
     throw new Error("simulated final delivery failure");
   }
 }
@@ -2428,15 +2432,9 @@ describe("MessageRouter access control", () => {
         sender: { openId: "ou_user" },
         text: "retry after restart",
       });
-
-      await waitForState(store, (state) =>
-        Object.values(state.outbox).some(
-          (delivery) =>
-            delivery.jobId === "m_replay" &&
-            delivery.attempts === 1 &&
-            delivery.status === "pending",
-        ) || ["failed", "interrupted", "cancelled"].includes(state.jobs.m_replay?.status ?? ""),
-      );
+      await failedSender.waitForFirstFailure();
+      await failedRouter.dispose();
+      failedRouter = undefined;
       const failed = await store.load();
       if (failed.jobs.m_replay?.status !== "completed") {
         throw new Error(`Unexpected replay fixture terminal: ${JSON.stringify({
@@ -2457,9 +2455,6 @@ describe("MessageRouter access control", () => {
       expect(failedDelivery?.status).toBe("pending");
       expect(failedDelivery?.lastError).toContain("simulated final delivery failure");
       expect(failedSender.idempotencyKeys).toEqual([failedDelivery?.idempotencyKey]);
-      await failedRouter.dispose();
-      failedRouter = undefined;
-
       const replayCodex = new FakeCodex();
       const replaySender = new IdempotencyCollectingSender();
       replayRouter = new MessageRouter(
