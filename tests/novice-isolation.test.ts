@@ -1,0 +1,46 @@
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import { describe, expect, test } from "bun:test";
+
+import { planNoviceIsolation, runNoviceArchiveAcceptance } from "../scripts/run-novice-acceptance.mjs";
+
+describe("novice archive isolation", () => {
+  test("plans a private profile, Codex Home, Chat2Codex Home, and npm prefix", async () => {
+    await withArchive(async ({ root, archive, sha256 }) => {
+      const owned = path.join(root, "owned");
+      const plan = await planNoviceIsolation({ archive, expectedSha256: sha256, ownedRoot: owned, repositoryRoot: process.cwd(), realUserProfile: os.homedir(), realCodexHome: path.join(os.homedir(), ".codex"), productionRoot: "F:/Chat2Codex", environmentKind: "isolated_profile_projection" });
+      expect(plan.archive).toBe(await realpath(archive));
+      for (const value of Object.values(plan.environment)) expect(path.relative(owned, value)).not.toStartWith("..");
+      expect(plan.installedPackageRoot).toStartWith(plan.environment.npmPrefix);
+      expect(plan.qualifyingEnvironment).toBe(false);
+    });
+  });
+
+  test("rejects wrong hash, repository entrypoint, real profile/Home, and production overlap", async () => {
+    await withArchive(async ({ root, archive, sha256 }) => {
+      const base = { archive, expectedSha256: sha256, ownedRoot: path.join(root, "owned"), repositoryRoot: process.cwd(), realUserProfile: os.homedir(), realCodexHome: path.join(os.homedir(), ".codex"), productionRoot: "F:/Chat2Codex", environmentKind: "isolated_profile_projection" as const };
+      await expect(planNoviceIsolation({ ...base, expectedSha256: "0".repeat(64) })).rejects.toThrow(/archive.*hash/i);
+      await expect(planNoviceIsolation({ ...base, ownedRoot: process.cwd() })).rejects.toThrow(/repository|owned root/i);
+      await expect(planNoviceIsolation({ ...base, ownedRoot: os.homedir() })).rejects.toThrow(/profile|owned root/i);
+      await expect(planNoviceIsolation({ ...base, ownedRoot: path.join(os.homedir(), ".codex") })).rejects.toThrow(/codex home|owned root/i);
+      await expect(planNoviceIsolation({ ...base, ownedRoot: "F:/Chat2Codex/test" })).rejects.toThrow(/production|owned root/i);
+    });
+  });
+
+  test("never promotes a current-host profile projection to a clean Windows pass", async () => {
+    await withArchive(async ({ root, archive, sha256 }) => {
+      await expect(runNoviceArchiveAcceptance({ archive, expectedSha256: sha256, ownedRoot: path.join(root, "owned"), repositoryRoot: process.cwd(), realUserProfile: os.homedir(), realCodexHome: path.join(os.homedir(), ".codex"), productionRoot: "F:/Chat2Codex", environmentKind: "isolated_profile_projection", dryRun: true })).resolves.toMatchObject({ qualifying: false, verdict: "package_smoke" });
+    });
+  });
+});
+
+async function withArchive(run: (value: { root: string; archive: string; sha256: string }) => Promise<void>) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-isolation-"));
+  const archive = path.join(root, "chat2codex-test.tgz");
+  const bytes = Buffer.from("synthetic archive bytes");
+  await writeFile(archive, bytes);
+  const sha256 = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
+  try { await run({ root, archive, sha256 }); } finally { await rm(root, { recursive: true, force: true }); }
+}
