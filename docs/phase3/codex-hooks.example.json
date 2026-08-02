@@ -5,8 +5,26 @@
   "approval_required_before_hook_trust": true,
   "approval_required_before_desktop_restart": true,
   "hooks": {
-    "UserPromptSubmit": [{ "command": ["node", "<ABSOLUTE_REPOSITORY_PATH>/scripts/codex-hooks/user-prompt-submit.mjs"], "timeout_seconds": 3 }],
-    "Stop": [{ "command": ["node", "<ABSOLUTE_REPOSITORY_PATH>/scripts/codex-hooks/stop-wake.mjs"], "timeout_seconds": 3 }]
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "CHAT2CODEX_DESKTOP_GATEWAY_PORT='<LOOPBACK_PORT>' CHAT2CODEX_DESKTOP_PROMPT_KEY_ID='<NON_SECRET_PROMPT_KEY_ID>' CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE='<ABSOLUTE_OWNER_ONLY_PROMPT_TOKEN_FILE>' '<ABSOLUTE_NODE_24_PATH>' '<ABSOLUTE_PACKAGE_PATH>/scripts/codex-hooks/user-prompt-submit.mjs'",
+        "commandWindows": "$env:CHAT2CODEX_DESKTOP_GATEWAY_PORT='<LOOPBACK_PORT>'; $env:CHAT2CODEX_DESKTOP_PROMPT_KEY_ID='<NON_SECRET_PROMPT_KEY_ID>'; $env:CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE='<ABSOLUTE_OWNER_ONLY_PROMPT_TOKEN_FILE>'; & '<ABSOLUTE_NODE_24_PATH>' '<ABSOLUTE_PACKAGE_PATH>/scripts/codex-hooks/user-prompt-submit.mjs'",
+        "async": false,
+        "timeoutSec": 3,
+        "statusMessage": "Checking Chat2Codex Desktop ownership"
+      }]
+    }],
+    "Stop": [{
+      "hooks": [{
+        "type": "command",
+        "command": "CHAT2CODEX_DESKTOP_GATEWAY_PORT='<LOOPBACK_PORT>' CHAT2CODEX_DESKTOP_STOP_KEY_ID='<NON_SECRET_STOP_KEY_ID>' CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE='<ABSOLUTE_OWNER_ONLY_STOP_TOKEN_FILE>' '<ABSOLUTE_NODE_24_PATH>' '<ABSOLUTE_PACKAGE_PATH>/scripts/codex-hooks/stop-wake.mjs'",
+        "commandWindows": "$env:CHAT2CODEX_DESKTOP_GATEWAY_PORT='<LOOPBACK_PORT>'; $env:CHAT2CODEX_DESKTOP_STOP_KEY_ID='<NON_SECRET_STOP_KEY_ID>'; $env:CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE='<ABSOLUTE_OWNER_ONLY_STOP_TOKEN_FILE>'; & '<ABSOLUTE_NODE_24_PATH>' '<ABSOLUTE_PACKAGE_PATH>/scripts/codex-hooks/stop-wake.mjs'",
+        "async": false,
+        "timeoutSec": 3,
+        "statusMessage": "Waking Chat2Codex reconciliation"
+      }]
+    }]
   },
   "prohibitions": ["Do not register SubagentStop.", "Do not place token values in this file, argv, or URLs.", "Do not install or trust this example without separate approval."]
 }

@@ -642,6 +642,23 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for local development and pull request
 guidance. See [SECURITY.md](SECURITY.md) before running Chat2Codex in a shared
 chat or reporting a security issue.
 
+## Phase 3 Desktop Gateway (pre-install)
+
+The repository contains a disabled-by-default authenticated Gateway candidate
+for exact same-thread Desktop handoff. It binds only IPv4 127.0.0.1, uses three
+scoped owner-only token files and signed responses, and binds one explicit root
+threadId to a single owner/generation. UserPromptSubmit must fail closed and fence
+the actual turn_id; Stop is advisory wake-only. Stable thread/read is authoritative,
+and immutable ordered outbox reconciliation advances high water atomically.
+Unbound roots and concrete child Agent threads are never exportable.
+
+The route does not depend on plugin/list. Schema v6 preserves Phase 2 media and
+UsageAdvisor while adding Desktop binding/fence/wake state. Installation, ~/.codex
+changes, Hook trust, Desktop restart, production writes, Computer Use, and every
+real Weixin send remain separately approved Task 12 actions. See
+docs/phase3/installation-runbook.md and docs/phase3/rollback-runbook.md; the latter
+separates immediate bridge-only mode from a guarded schema v6 to v5 downgrade.
+
 ## Next Features To Add
 
 1. Complete production and real-client acceptance for ordered Weixin outbound media.

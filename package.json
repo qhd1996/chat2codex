@@ -14,7 +14,12 @@
     "THIRD_PARTY_NOTICES.md",
     "dist",
     "docs/architecture.md",
-    "docs/codex-app-server-protocol"
+    "docs/codex-app-server-protocol",
+    "docs/phase3",
+    "scripts/codex-hooks",
+    "scripts/generate-phase3-temp-codex-home.mjs",
+    "scripts/stage-phase3-codex-home.mjs",
+    "scripts/verify-phase3-temp-codex-home.mjs"
   ],
   "keywords": [
     "codex",
