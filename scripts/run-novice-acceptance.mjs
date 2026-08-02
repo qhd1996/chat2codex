@@ -74,7 +74,9 @@ async function main() {
   const archive = read("--archive"); const expectedSha256 = read("--sha256"); const ownedRoot = read("--owned-root");
   if (!archive || !expectedSha256 || !ownedRoot) throw new Error("Usage: node run-novice-acceptance.mjs --archive FILE --sha256 HASH --owned-root DIR");
   const repositoryRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
-  const result = await runNoviceArchiveAcceptance({ archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot: process.env.CHAT2CODEX_PRODUCTION_ROOT ?? "F:/Chat2Codex", environmentKind: read("--environment-kind") ?? "isolated_profile_projection", dryRun: args.includes("--dry-run") });
+  const productionRoot = read("--production-root") ?? process.env.CHAT2CODEX_PRODUCTION_ROOT;
+  if (!productionRoot) throw new Error("Novice acceptance requires an explicit production-root exclusion path.");
+  const result = await runNoviceArchiveAcceptance({ archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot, environmentKind: read("--environment-kind") ?? "isolated_profile_projection", dryRun: args.includes("--dry-run") });
   process.stdout.write(JSON.stringify({ qualifying: result.qualifying, verdict: result.verdict, archiveSha256: result.plan.archiveSha256 }) + "\n");
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main().catch((error) => { process.stderr.write("novice-acceptance: " + (error instanceof Error ? error.message : String(error)) + "\n"); process.exitCode = 1; });

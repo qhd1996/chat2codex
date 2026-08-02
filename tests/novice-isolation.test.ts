@@ -34,6 +34,11 @@ describe("novice archive isolation", () => {
       await expect(runNoviceArchiveAcceptance({ archive, expectedSha256: sha256, ownedRoot: path.join(root, "owned"), repositoryRoot: process.cwd(), realUserProfile: os.homedir(), realCodexHome: path.join(os.homedir(), ".codex"), productionRoot: "F:/Chat2Codex", environmentKind: "isolated_profile_projection", dryRun: true })).resolves.toMatchObject({ qualifying: false, verdict: "package_smoke" });
     });
   });
+
+  test("ships no developer or production drive path in the archive runner", async () => {
+    const source = await Bun.file(path.resolve(import.meta.dir, "..", "scripts", "run-novice-acceptance.mjs")).text();
+    expect(source).not.toMatch(/[A-Za-z]:[\\/](?:Users|workspace|Chat2Codex|codex)/iu);
+  });
 });
 
 async function withArchive(run: (value: { root: string; archive: string; sha256: string }) => Promise<void>) {
