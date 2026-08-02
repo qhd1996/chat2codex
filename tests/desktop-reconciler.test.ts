@@ -82,6 +82,7 @@ describe("DesktopReconciler", () => {
         rootThreadId: "root-thread",
         originGeneration: 7,
         turnId: "turn_02",
+        authoritativeTurnIndex: 1,
         priorDigest: authoritativeTurnDigest(anchor),
         authoritativeDigest: authoritativeTurnDigest(target),
         visibleText: "Finished.",

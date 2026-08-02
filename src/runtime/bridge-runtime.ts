@@ -29,6 +29,8 @@ import { TaskScheduler } from "../core/task-scheduler.js";
 import { TaskTargetResolver } from "../core/task-target-resolver.js";
 import { WorkspaceRouter } from "../core/workspace-router.js";
 import { DesktopGatewayServer, loadGatewayCapabilities } from "../desktop-gateway/server.js";
+import { createPromptCommitment } from "../desktop-gateway/auth.js";
+import { desktopGatewayControlPrompts } from "../desktop-gateway/contracts.js";
 
 export interface PlatformAdapterBundle {
   adapter: ChatAdapter;
@@ -99,6 +101,12 @@ export async function runBridgeRuntime(
         { keyId: "desktop-mcp-v1", role: "desktop_mcp", filePath: config.desktopGateway.tokenFiles.desktopMcp },
       ]);
       const surface = router.getDesktopGatewaySurface();
+      const promptCapability = capabilities.find((entry) => entry.role === "prompt_hook");
+      if (!promptCapability) throw new Error("Desktop prompt Hook capability is missing.");
+      router.configureDesktopControlCommitments({
+        takeover: createPromptCommitment(promptCapability.secret, desktopGatewayControlPrompts.takeover),
+        release_request: createPromptCommitment(promptCapability.secret, desktopGatewayControlPrompts.release_request),
+      });
       return new DesktopGatewayServer({
         port: config.desktopGateway.port, expectedHost: config.desktopGateway.expectedHost,
         capabilities, controller: surface.controller, mutationReplay: surface.replay,

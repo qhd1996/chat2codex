@@ -17,6 +17,7 @@ export interface Phase3GatewayControllerOptions {
   ownership: DesktopOwnershipCoordinator;
   readState<T>(read: (state: BridgeState) => T | Promise<T>): Promise<T>;
   mutateState<T>(mutation: (state: BridgeState) => T | Promise<T>): Promise<T>;
+  onWake?: (bindingId: string) => void;
 }
 
 export class DurableGatewayRequestReplay implements DurableMutationReplay {
@@ -139,6 +140,7 @@ export class Phase3GatewayController implements DesktopGatewayController {
           eventId: request.eventId, bindingId: binding.bindingId,
           turnId: request.turnId, observedAt: request.observedAt,
         });
+        this.options.onWake?.(updated.bindingId);
         return response(request.eventId, "accepted", updated);
       });
     } catch (error) {

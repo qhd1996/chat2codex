@@ -37,6 +37,7 @@ export interface DesktopReconciliationPlan {
   rootThreadId: string;
   originGeneration: number;
   turnId: string;
+  authoritativeTurnIndex: number;
   priorDigest?: string;
   authoritativeDigest: string;
   visibleText: string;
@@ -141,6 +142,7 @@ function reconcileDesktopThread(input: DesktopReconciliationInput): DesktopRecon
       rootThreadId: binding.rootThreadId,
       originGeneration: fence.originGeneration,
       turnId: nextTurn.id,
+      authoritativeTurnIndex: priorTurnIndex + 1,
       priorDigest,
       authoritativeDigest: authoritativeTurnDigest(nextTurn),
       visibleText: parsed.visibleText,
@@ -179,6 +181,7 @@ function planExcludedControlTurn(
     rootThreadId: binding.rootThreadId,
     originGeneration: exclusion.originGeneration,
     turnId: turn.id,
+    authoritativeTurnIndex: (binding.lastReconciledTurnIndex ?? binding.bindingAnchorTurnIndex) + 1,
     priorDigest,
     authoritativeDigest: authoritativeTurnDigest(turn),
     visibleText: "",

@@ -35,6 +35,7 @@ import {
   type CodexThreadTurnItemListResult,
   type CodexThreadTurnListInput,
   type CodexThreadTurnListResult,
+  type AuthoritativeCodexThread,
 } from "../agent/codex-runner.js";
 import { buildCodexChildEnv } from "../agent/codex-environment.js";
 import { BridgeConfig } from "../config/env.js";
@@ -82,6 +83,7 @@ import {
   claimBoundBridgeStart,
 } from "./phase3-gateway-controller.js";
 import { DesktopOwnershipCoordinator } from "./desktop-ownership.js";
+import { DesktopResultCoordinator } from "./desktop-result-coordinator.js";
 import type {
   ApprovalCardInput,
   HostHealthCardInput,
@@ -252,6 +254,7 @@ export interface CodexClient {
   compactThread?(threadId: string): Promise<void>;
   archiveThread?(threadId: string): Promise<void>;
   unarchiveThread?(threadId: string): Promise<CodexThread>;
+  readThreadWithTurns?(threadId: string): Promise<AuthoritativeCodexThread>;
 }
 
 export interface MessageRouterRuntimeControl {
@@ -462,6 +465,10 @@ export class BridgeRunner {
   private readonly codex: CodexClient;
   readonly desktopGatewayController: Phase3GatewayController;
   readonly desktopGatewayReplay: DurableGatewayRequestReplay;
+  private readonly desktopResultCoordinator: DesktopResultCoordinator;
+  private desktopReconcileTimer?: NodeJS.Timeout;
+  private desktopReconcileTail: Promise<void> = Promise.resolve();
+  private desktopReconciliationConfigured = false;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
 
@@ -482,6 +489,7 @@ export class BridgeRunner {
     };
     this.desktopGatewayController = new Phase3GatewayController({
       ownership: new DesktopOwnershipCoordinator({ leaseDurationMs: config.desktopGateway.leaseMs }),
+      onWake: (bindingId) => this.scheduleDesktopReconciliation(bindingId),
       ...stateAccess,
     });
     this.desktopGatewayReplay = new DurableGatewayRequestReplay(stateAccess);
@@ -490,6 +498,13 @@ export class BridgeRunner {
       maxCount: config.outboundMediaMaxCount,
       maxFileBytes: config.outboundMediaMaxFileBytes,
       maxTotalBytes: config.outboundMediaMaxTotalBytes,
+    });
+    this.desktopResultCoordinator = new DesktopResultCoordinator({
+      readThread: async (threadId) => {
+        if (!this.codex.readThreadWithTurns) throw new Error("Stable authoritative thread/read is unavailable.");
+        return this.codex.readThreadWithTurns(threadId);
+      },
+      ...stateAccess, stager: this.deliverableStager, mediaOutbox: this.mediaOutbox,
     });
   }
 
@@ -502,6 +517,7 @@ export class BridgeRunner {
       clearTimeout(timer);
     }
     this.outboxRetryTimers.clear();
+    if (this.desktopReconcileTimer) clearInterval(this.desktopReconcileTimer);
     for (const pending of this.pendingRunSteers.values()) {
       clearTimeout(pending.timeoutTimer);
     }
@@ -557,6 +573,7 @@ export class BridgeRunner {
         ...this.queues.values(),
         ...this.outboxTasks.values(),
         this.attachmentTaskTail,
+        this.desktopReconcileTail,
       ]);
       for (const result of taskResults) {
         if (result.status === "rejected") {
@@ -822,6 +839,31 @@ export class BridgeRunner {
       return;
     }
     this.scheduleAcceptedMessage(message);
+  }
+
+  configureDesktopControlCommitments(value: Record<"takeover" | "release_request", string>): void {
+    this.desktopResultCoordinator.setControlPromptCommitments(value);
+    if (!this.desktopReconciliationConfigured && this.config.desktopGateway.enabled && this.codex.readThreadWithTurns) {
+      this.desktopReconciliationConfigured = true;
+      this.scheduleDesktopReconciliation();
+      this.desktopReconcileTimer = setInterval(() => this.scheduleDesktopReconciliation(), this.config.desktopGateway.reconcileMs);
+      this.desktopReconcileTimer.unref?.();
+    }
+  }
+
+  private scheduleDesktopReconciliation(bindingId?: string): void {
+    if (this.disposed || !this.codex.readThreadWithTurns) return;
+    this.desktopReconcileTail = this.desktopReconcileTail.catch(() => undefined).then(async () => {
+      const ids = bindingId ? [bindingId] : await this.readState((state) => Object.values(state.desktopGateway?.bindings ?? {})
+        .filter((binding) => binding.owner === "desktop" || binding.owner === "uncertain")
+        .map((binding) => binding.bindingId));
+      for (const id of ids) {
+        try {
+          const outcome = await this.desktopResultCoordinator.reconcileBinding(id);
+          if (outcome.kind === "committed" && outcome.jobId) this.scheduleOutboxDrain(outcome.jobId);
+        } catch (error) { this.logger.warn("Desktop reconciliation scan failed", { code: error instanceof Error ? error.name : "unknown" }); }
+      }
+    });
   }
 
   async recordEventDiagnostic(

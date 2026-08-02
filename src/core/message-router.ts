@@ -55,6 +55,10 @@ export class MessageRouter {
     return { controller: this.runner.desktopGatewayController, replay: this.runner.desktopGatewayReplay };
   }
 
+  configureDesktopControlCommitments(value: Record<"takeover" | "release_request", string>): void {
+    this.runner.configureDesktopControlCommitments(value);
+  }
+
   dispose(): Promise<void> {
     return this.runner.dispose();
   }
