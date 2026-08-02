@@ -83,7 +83,14 @@ export class DeliverableStager {
     const home = await canonicalDirectory(this.home, "CHAT2CODEX_HOME");
     const workspaceRoot = await canonicalDirectory(input.workspaceRoot, "Task workspace root");
     const authorizedRoots = [workspaceRoot];
-    if (input.isolationMode === "output_only") {
+    if (input.isolationMode === "git_worktree") {
+      const executionCwd = await canonicalDirectory(input.executionCwd, "Task Git worktree execution directory");
+      const expectedExecutionCwd = path.join(home, "worktrees", input.taskId);
+      if (!samePath(executionCwd, expectedExecutionCwd)) {
+        throw new Error("Git worktree deliverables require the task exact worktree execution directory.");
+      }
+      authorizedRoots.push(executionCwd);
+    } else if (input.isolationMode === "output_only") {
       const executionCwd = await canonicalDirectory(input.executionCwd, "Output-only private execution directory");
       const expectedExecutionCwd = path.join(workspaceRoot, "outputs", "tasks", input.taskId);
       if (!samePath(executionCwd, expectedExecutionCwd)) {

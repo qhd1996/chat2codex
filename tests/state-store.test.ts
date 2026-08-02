@@ -667,6 +667,44 @@ describe("JsonStateStore", () => {
     } finally { await rm(tempDir, { recursive: true, force: true }); }
   });
 
+  test("media retention preserves recent complete groups until the configured age expires", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-age-retention-"));
+    try {
+      const state = emptyState();
+      const taskId = "tsk_ffffffffffffffffffffffff";
+      const task = registeredTask(taskId, "conversation", tempDir);
+      state.tasks[taskId] = task;
+      state.conversations.conversation = { taskIds: [taskId], lastTaskId: taskId };
+      const now = Date.now();
+      for (const [jobId, ageHours] of [["recent-media", 2], ["expired-media", 48]] as const) {
+        const at = new Date(now - ageHours * 60 * 60 * 1_000).toISOString();
+        const dir = path.join(tempDir, "outbound", taskId, jobId);
+        const file = path.join(dir, "01-output.bin");
+        const bytes = Buffer.from(jobId);
+        await mkdir(dir, { recursive: true });
+        await writeFile(file, bytes);
+        const job = durableJob(jobId, "completed", at, [jobId + "-file"]);
+        job.chatId = "conversation"; job.taskId = taskId; state.jobs[jobId] = job;
+        state.outbox[jobId + "-file"] = {
+          id: jobId + "-file", jobId, taskId, chatId: "conversation", kind: "file", text: "", sequence: 0,
+          stagedPath: file, fileName: "output.bin", mediaType: "application/octet-stream", size: bytes.length,
+          sha256: new Bun.CryptoHasher("sha256").update(bytes).digest("hex"), status: "delivered",
+          idempotencyKey: jobId + "-file", attempts: 1, createdAt: at, updatedAt: at, deliveredAt: at,
+        };
+      }
+      const store = new JsonStateStore(path.join(tempDir, "state.json"), {
+        chat2codexHome: tempDir, jobRetentionCount: 0, outboxRetentionCount: 0, outboundMediaRetentionHours: 24,
+      });
+      await store.save(state);
+      expect(state.jobs["recent-media"]).toBeDefined();
+      expect(state.outbox["recent-media-file"]).toBeDefined();
+      expect(state.jobs["expired-media"]).toBeUndefined();
+      expect(state.outbox["expired-media-file"]).toBeUndefined();
+      expect(await stat(path.join(tempDir, "outbound", taskId, "recent-media"))).toBeTruthy();
+      expect(await stat(path.join(tempDir, "outbound", taskId, "expired-media")).catch(() => null)).toBeNull();
+    } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
   test("media retention keeps a delivered prefix while a later sibling is pending", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-prefix-"));
     try {

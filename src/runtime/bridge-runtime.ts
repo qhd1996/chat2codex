@@ -77,6 +77,7 @@ export async function runBridgeRuntime(
       adapterId,
       jobRetentionCount: config.jobRetentionCount,
       outboxRetentionCount: config.outboxRetentionCount,
+      outboundMediaRetentionHours: config.outboundMediaRetentionHours,
       chat2codexHome: config.chat2codexHome,
     }),
     sender,

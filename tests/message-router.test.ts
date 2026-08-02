@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -517,6 +517,25 @@ class QueueIntentClassifier implements NaturalIntentClassifier {
   async classify(): Promise<unknown> { this.calls += 1; return this.decisions.shift() ?? { intent: "ordinary", confidence: 1 }; }
 }
 
+class FailNextMediaTerminalSaveStore extends JsonStateStore {
+  mediaSaveFailures = 0;
+  failMediaJobId?: string;
+
+  override async save(state: Parameters<JsonStateStore["save"]>[0]): Promise<void> {
+    if (
+      this.failMediaJobId
+      && Object.values(state.outbox).some((item) =>
+        item.jobId === this.failMediaJobId && (item.kind === "image" || item.kind === "file"),
+      )
+    ) {
+      this.failMediaJobId = undefined;
+      this.mediaSaveFailures += 1;
+      throw new Error("simulated media terminal save failure");
+    }
+    await super.save(state);
+  }
+}
+
 class MediaCollectingSender extends CollectingSender {
   readonly media: Array<{
     chatId: string;
@@ -530,6 +549,65 @@ class MediaCollectingSender extends CollectingSender {
     options?: { idempotencyKey?: string },
   ): Promise<void> {
     this.media.push({ chatId, input, idempotencyKey: options?.idempotencyKey });
+  }
+}
+
+class OrderedMediaSender extends MediaCollectingSender {
+  readonly order: Array<"markdown" | "image" | "file"> = [];
+  readonly mediaBytes: Buffer[] = [];
+
+  constructor(private failuresRemaining = 0) {
+    super();
+  }
+
+  override async sendMarkdown(chatId: string, markdown: string): Promise<void> {
+    this.order.push("markdown");
+    await super.sendMarkdown(chatId, markdown);
+  }
+
+  override async sendMedia(
+    chatId: string,
+    input: OutboundMediaInput,
+    options?: { idempotencyKey?: string },
+  ): Promise<void> {
+    if (this.failuresRemaining > 0) {
+      this.failuresRemaining -= 1;
+      throw new Error("simulated first media delivery failure");
+    }
+    this.order.push(input.kind);
+    this.mediaBytes.push(await readFile(input.stagedPath));
+    await super.sendMedia(chatId, input, options);
+  }
+}
+
+class DeclaredOutputCodex implements CodexClient {
+  readonly runs: CodexRunInput[] = [];
+  readonly sourcePaths: string[] = [];
+  nextDeclarationError?: string;
+  nextOutputFiles?: string[];
+
+  async run(input: CodexRunInput): Promise<CodexRunResult> {
+    this.runs.push(input);
+    const taskId = input.sessionScope?.taskId;
+    if (!taskId) throw new Error("Declared-output run omitted task identity.");
+    const threadId = "thread-" + taskId;
+    await input.onThreadBound?.(threadId);
+    if (this.nextDeclarationError) {
+      const outputDeclarationError = this.nextDeclarationError;
+      this.nextDeclarationError = undefined;
+      return { threadId, finalText: "unsafe declaration", outputDeclarationError, stderr: "", exitCode: 0 };
+    }
+    if (this.nextOutputFiles) {
+      const outputFiles = this.nextOutputFiles;
+      this.nextOutputFiles = undefined;
+      return { threadId, finalText: "outside declaration", outputFiles, stderr: "", exitCode: 0 };
+    }
+    const imagePath = path.join(input.cwd, "answer.png");
+    const filePath = path.join(input.cwd, "notes.txt");
+    await writeFile(imagePath, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]));
+    await writeFile(filePath, "immutable notes");
+    this.sourcePaths.push(imagePath, filePath);
+    return { threadId, finalText: "visible answer", outputFiles: [imagePath, filePath], stderr: "", exitCode: 0 };
   }
 }
 
@@ -7358,6 +7436,154 @@ describe("MessageRouter access control", () => {
 
       expect(sender.messages.at(-1)?.text).toContain("没有收到 Codex 的 token usage 通知");
     });
+  });
+
+  test("captures declared task outputs atomically and resumes only the undelivered media suffix", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-output-media-result-"));
+    let firstRouter: MessageRouter | undefined;
+    let replayRouter: MessageRouter | undefined;
+    try {
+      const roots = Object.fromEntries(
+        await Promise.all(["work", "travel", "personal", "finance", "ai_lab", "learning"].map(async (kind) => {
+          const root = path.join(tempDir, kind);
+          await mkdir(root);
+          return [kind, root] as const;
+        })),
+      );
+      const home = path.join(tempDir, "home");
+      const statePath = path.join(tempDir, "state.json");
+      const config = loadConfig({
+        CHAT2CODEX_ADAPTER: "weixin", WEIXIN_NATURAL_ROUTING: "true",
+        CODEX_WORKDIR: roots.work, CHAT2CODEX_HOME: home,
+        CHAT2CODEX_WORKSPACE_ROUTES: JSON.stringify(roots), BRIDGE_STATE_PATH: statePath,
+        ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user",
+      });
+      const classifier = new QueueTaskClassifier([
+        () => ({ action: { kind: "create_task", instruction: "生成媒体结果", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "show_status" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "非法声明结果", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "越界声明结果", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+        () => ({ action: { kind: "create_task", instruction: "原子保存失败", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
+      ]);
+      const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+      const dependencies: NaturalConversationDependencies = {
+        classifier,
+        imageDrafts: new ImageDraftService({
+          root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs,
+          maxCount: config.weixinImageDraftMaxCount, maxFileBytes: config.weixinImageDraftMaxFileBytes,
+          maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
+        }),
+        taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter,
+        executionWorkspaces: await ExecutionWorkspaceService.create({
+          chat2codexHome: home, codexBin: config.codexBin,
+          sandboxProbe: async () => ({ verified: false, reason: "canonical FIFO test" }),
+        }),
+        taskScheduler: new TaskScheduler({ maxConcurrentRuns: 1 }),
+      };
+      const store = new FailNextMediaTerminalSaveStore(statePath, { chat2codexHome: home });
+      const firstSender = new OrderedMediaSender(Number.MAX_SAFE_INTEGER);
+      const firstCodex = new DeclaredOutputCodex();
+      firstRouter = new MessageRouter(config, store, firstSender, silentLogger, firstCodex, {}, dependencies);
+      await firstRouter.start();
+      await firstRouter.accept({
+        messageId: "declared-media", chatId: "weixin-chat", chatType: "direct",
+        sender: { openId: "ou_user" }, text: "创建一个任务并返回图片和文件",
+      });
+      await waitForState(store, (state) => {
+        const deliveries = Object.values(state.outbox).filter((item) => item.jobId === "declared-media");
+        return deliveries.length === 3
+          && deliveries[0]?.status === "delivered"
+          && deliveries[1]?.status === "pending"
+          && deliveries[1]?.attempts === 1;
+      });
+      const failedState = await store.load();
+      const failedDeliveries = Object.values(failedState.outbox)
+        .filter((item) => item.jobId === "declared-media")
+        .sort((left, right) => left.sequence - right.sequence);
+      expect(failedDeliveries.map((item) => item.kind)).toEqual(["markdown", "image", "file"]);
+      expect(firstSender.order).toEqual(["markdown"]);
+      expect(firstCodex.runs).toHaveLength(1);
+      await firstRouter.accept({
+        messageId: "media-status", chatId: "weixin-chat", chatType: "direct",
+        sender: { openId: "ou_user" }, text: "查看任务状态",
+      });
+      await waitFor(() => firstSender.messages.at(-1)?.text.startsWith("任务状态") === true);
+      const mediaStatus = firstSender.messages.at(-1)!.text;
+      expect(mediaStatus).toContain("answer.png");
+      expect(mediaStatus).toContain("image");
+      expect(mediaStatus).toContain("剩余：2");
+      expect(mediaStatus).not.toContain(failedDeliveries[1]?.stagedPath ?? "missing-staged-path");
+      expect(mediaStatus).not.toContain(failedDeliveries[1]?.sha256 ?? "missing-hash");
+      expect(mediaStatus).not.toContain(firstCodex.sourcePaths[0] ?? "missing-source-path");
+
+      firstCodex.nextDeclarationError = "输出声明无效，未发送任何文件。";
+      await firstRouter.accept({
+        messageId: "invalid-declaration", chatId: "weixin-chat", chatType: "direct",
+        sender: { openId: "ou_user" }, text: "创建另一个非法声明任务",
+      });
+      await waitForState(store, (state) => state.jobs["invalid-declaration"]?.status === "completed");
+      const invalidState = await store.load();
+      const invalidDeliveries = Object.values(invalidState.outbox).filter((item) => item.jobId === "invalid-declaration");
+      expect(invalidDeliveries).toHaveLength(1);
+      expect(invalidDeliveries[0]?.kind).toBe("text");
+      expect(invalidDeliveries[0]?.text.startsWith("[非法声明结果]")).toBe(true);
+      expect(invalidDeliveries[0]?.text).toContain("未发送任何文件");
+
+      const outsidePath = path.join(tempDir, "private-outside.txt");
+      await writeFile(outsidePath, "must not leak");
+      firstCodex.nextOutputFiles = [outsidePath];
+      await firstRouter.accept({
+        messageId: "outside-declaration", chatId: "weixin-chat", chatType: "direct",
+        sender: { openId: "ou_user" }, text: "创建越界声明任务",
+      });
+      await waitForState(store, (state) => state.jobs["outside-declaration"]?.status === "completed");
+      const outsideState = await store.load();
+      const outsideDeliveries = Object.values(outsideState.outbox).filter((item) => item.jobId === "outside-declaration");
+      expect(outsideDeliveries).toHaveLength(1);
+      expect(outsideDeliveries[0]?.kind).toBe("text");
+      expect(outsideDeliveries[0]?.text).toContain("输出文件未发送");
+      expect(outsideDeliveries[0]?.text).not.toContain(outsidePath);
+      expect(Object.values(outsideState.outbox).some((item) => item.jobId === "outside-declaration" && (item.kind === "image" || item.kind === "file"))).toBe(false);
+
+      store.failMediaJobId = "atomic-media-failure";
+      await firstRouter.accept({
+        messageId: "atomic-media-failure", chatId: "weixin-chat", chatType: "direct",
+        sender: { openId: "ou_user" }, text: "创建媒体任务并模拟原子保存失败",
+      });
+      await waitForState(store, (state) => state.jobs["atomic-media-failure"]?.status === "failed");
+      const atomicState = await store.load();
+      const atomicJob = atomicState.jobs["atomic-media-failure"]!;
+      expect(store.mediaSaveFailures).toBe(1);
+      expect(Object.values(atomicState.outbox).some((item) => item.jobId === atomicJob.id && (item.kind === "image" || item.kind === "file"))).toBe(false);
+      expect(Object.values(atomicState.outbox).filter((item) => item.jobId === atomicJob.id)).toHaveLength(1);
+      expect(await stat(path.join(home, "outbound", atomicJob.taskId!, atomicJob.id)).catch(() => null)).toBeNull();
+      await Promise.all(firstCodex.sourcePaths.map((sourcePath) => writeFile(sourcePath, "mutated source")));
+      await firstRouter.dispose();
+      firstRouter = undefined;
+
+      const replayCodex = new FakeCodex();
+      const replaySender = new OrderedMediaSender();
+      replayRouter = new MessageRouter(
+        config, new JsonStateStore(statePath, { chat2codexHome: home }), replaySender,
+        silentLogger, replayCodex, {}, dependencies,
+      );
+      await replayRouter.start();
+      await waitForState(store, (state) =>
+        Object.values(state.outbox)
+          .filter((item) => item.jobId === "declared-media")
+          .every((item) => item.status === "delivered"),
+      );
+      expect(replayCodex.runs).toHaveLength(0);
+      expect(replaySender.order).toEqual(["image", "file"]);
+      expect(replaySender.mediaBytes).toEqual([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]),
+        Buffer.from("immutable notes"),
+      ]);
+    } finally {
+      await firstRouter?.dispose();
+      await replayRouter?.dispose();
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 
   test("media sender preserves task ownership, sequence, and stable idempotency without exposing bytes", async () => {

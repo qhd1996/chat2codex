@@ -23,6 +23,7 @@ export interface JsonStateStoreOptions {
   adapterId?: string;
   jobRetentionCount?: number;
   outboxRetentionCount?: number;
+  outboundMediaRetentionHours?: number;
   chat2codexHome?: string;
 }
 
@@ -32,6 +33,7 @@ export class JsonStateStore {
   readonly adapterId: string;
   private readonly jobRetentionCount: number;
   private readonly outboxRetentionCount: number;
+  private readonly outboundMediaRetentionMs: number;
   private readonly chat2codexHome: string;
   private readonly pendingStagingCleanup = new Set<string>();
 
@@ -48,6 +50,7 @@ export class JsonStateStore {
       options.outboxRetentionCount,
       "outboxRetentionCount",
     );
+    this.outboundMediaRetentionMs = retentionHoursMs(options.outboundMediaRetentionHours);
     this.chat2codexHome = path.resolve(options.chat2codexHome ?? path.dirname(this.filePath));
   }
 
@@ -68,6 +71,7 @@ export class JsonStateStore {
         state,
         this.jobRetentionCount,
         this.outboxRetentionCount,
+        this.outboundMediaRetentionMs,
       );
       for (const directory of stagingBeforeRetention) {
         if (!mediaStagingDirectories(state).has(directory)) this.pendingStagingCleanup.add(directory);
@@ -94,6 +98,7 @@ export class JsonStateStore {
       state,
       this.jobRetentionCount,
       this.outboxRetentionCount,
+      this.outboundMediaRetentionMs,
     );
     state.processedMessageIds = state.processedMessageIds.slice(-maxProcessedMessageIds);
     if (state.diagnostics.recentFailures) {
@@ -433,15 +438,40 @@ function retentionCount(value: number | undefined, name: string): number {
   return value;
 }
 
+function retentionHoursMs(value: number | undefined): number {
+  if (value === undefined) return 0;
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new RangeError("outboundMediaRetentionHours must be a non-negative safe integer.");
+  }
+  return value * 60 * 60 * 1_000;
+}
+
 function enforceDurableRetention(
   state: BridgeState,
   jobRetentionCount: number,
   outboxRetentionCount: number,
+  outboundMediaRetentionMs: number,
 ): void {
   normalizeDeliveryReferences(state);
-  pruneDeliveredOutbox(state, outboxRetentionCount);
-  pruneTerminalJobs(state, jobRetentionCount);
+  const protectedMediaJobs = recentTerminalMediaJobs(state, outboundMediaRetentionMs);
+  pruneDeliveredOutbox(state, outboxRetentionCount, protectedMediaJobs);
+  pruneTerminalJobs(state, jobRetentionCount, protectedMediaJobs);
   normalizeDeliveryReferences(state);
+}
+
+function recentTerminalMediaJobs(state: BridgeState, retentionMs: number): Set<string> {
+  const protectedJobs = new Set<string>();
+  if (retentionMs <= 0) return protectedJobs;
+  const cutoff = Date.now() - retentionMs;
+  for (const job of Object.values(state.jobs)) {
+    if (!isTerminalJob(job)) continue;
+    const deliveries = Object.values(state.outbox).filter((item) => item.jobId === job.id);
+    if (!deliveries.some((item) => item.kind === "image" || item.kind === "file")) continue;
+    if (!deliveries.length || !deliveries.every((item) => item.status === "delivered")) continue;
+    const terminalAt = Date.parse(job.completedAt ?? job.updatedAt);
+    if (!Number.isFinite(terminalAt) || terminalAt > cutoff) protectedJobs.add(job.id);
+  }
+  return protectedJobs;
 }
 
 async function validateMediaOutbox(state: BridgeState, chat2codexHome: string, verifyDigest: boolean): Promise<void> {
@@ -527,12 +557,17 @@ function safeIdentifierComponent(value: string): string {
   return "job-" + createHash("sha256").update(value).digest("hex").slice(0, 32);
 }
 
-function pruneDeliveredOutbox(state: BridgeState, retentionCount: number): void {
+function pruneDeliveredOutbox(
+  state: BridgeState,
+  retentionCount: number,
+  protectedMediaJobs: Set<string>,
+): void {
   let outboxCount = Object.keys(state.outbox).length;
   if (outboxCount <= retentionCount) return;
   const groups = completeTerminalDeliveryGroups(state);
   for (const group of groups) {
     if (outboxCount <= retentionCount) break;
+    if (protectedMediaJobs.has(group[0]!.jobId)) continue;
     for (const message of group) {
       delete state.outbox[message.id];
       outboxCount -= 1;
@@ -555,7 +590,11 @@ function completeTerminalDeliveryGroups(state: BridgeState): DurableOutboxMessag
     .sort((left, right) => compareOutboxAge(left[0]!, right[0]!));
 }
 
-function pruneTerminalJobs(state: BridgeState, retentionCount: number): void {
+function pruneTerminalJobs(
+  state: BridgeState,
+  retentionCount: number,
+  protectedMediaJobs: Set<string>,
+): void {
   let jobCount = Object.keys(state.jobs).length;
   if (jobCount <= retentionCount) {
     return;
@@ -577,7 +616,8 @@ function pruneTerminalJobs(state: BridgeState, retentionCount: number): void {
         isTerminalJob(job) &&
         job.capacityNoticeActive !== true &&
         !jobsWithActiveOutbox.has(job.id) &&
-        !jobsWithActiveTaskObligations.has(job.id),
+        !jobsWithActiveTaskObligations.has(job.id) &&
+        !protectedMediaJobs.has(job.id),
     )
     .sort(compareJobAge);
 

@@ -67,6 +67,8 @@ import { chooseNaturalApprovalDecision } from "./natural-interactions.js";
 import { parseSlashCommand, type CommandAction } from "./command-actions.js";
 import { ImageDraftService } from "./image-drafts.js";
 import { ExecutionWorkspaceService } from "./execution-workspaces.js";
+import { DeliverableStager, type StagedDeliverable } from "./deliverable-stager.js";
+import { MediaOutbox } from "./media-outbox.js";
 import { resolveNaturalTaskDecision, type NaturalTaskClassifier } from "./natural-task-router.js";
 import { prefixTaskMessage } from "./task-labels.js";
 import { TaskRegistry } from "./task-registry.js";
@@ -444,6 +446,8 @@ export class BridgeRunner {
   private readonly restartAfterMessageIds = new Set<string>();
   private readonly globalRunWaiters: GlobalRunWaiter[] = [];
   private readonly activeCodexRunTasks = new Set<Promise<CodexRunResult>>();
+  private readonly deliverableStager: DeliverableStager;
+  private readonly mediaOutbox = new MediaOutbox();
   private readonly orchestratedRunTasks = new Set<Promise<void>>();
   private activeGlobalRuns = 0;
   private readonly codex: CodexClient;
@@ -461,6 +465,12 @@ export class BridgeRunner {
     private readonly naturalConversation?: NaturalConversationDependencies,
   ) {
     this.codex = codex;
+    this.deliverableStager = new DeliverableStager({
+      chat2codexHome: config.chat2codexHome,
+      maxCount: config.outboundMediaMaxCount,
+      maxFileBytes: config.outboundMediaMaxFileBytes,
+      maxTotalBytes: config.outboundMediaMaxTotalBytes,
+    });
   }
 
   dispose(): Promise<void> {
@@ -1402,13 +1412,23 @@ export class BridgeRunner {
       return;
     }
     const scheduler = this.orchestrator!.taskScheduler.snapshot();
+    const state = this.requireState();
     const lines = tasks.slice(0, 12).map((task) => {
       const scheduled = scheduler.jobs.find((job) => job.taskId === task.taskId);
       const queue = scheduled?.queueReason ? `，等待：${scheduled.queueReason}` : "";
       const approvalWait = this.taskInteractionWait(task.taskId);
       const thread = task.threadId ? `，thread：${truncateInline(task.threadId, 12)}` : "";
       const age = `，年龄：${formatDuration(Math.max(0, Date.now() - parsedTimestamp(task.lastActiveAt)))}`;
-      return truncateInline(`${prefixTaskMessage(task, task.status)}，工作区：${task.workspaceKind}，模式：${task.isolationMode}${queue}${age}${approvalWait}${thread}`, 320);
+      const pendingMedia = Object.values(state.outbox)
+        .filter((delivery): delivery is Extract<DurableOutboxMessage, { kind: "image" | "file" }> =>
+          delivery.taskId === task.taskId
+          && (delivery.kind === "image" || delivery.kind === "file")
+          && delivery.status !== "delivered")
+        .sort((left, right) => left.jobId.localeCompare(right.jobId) || left.sequence - right.sequence);
+      const media = pendingMedia.length > 0
+        ? `，媒体：${pendingMedia.slice(0, 3).map((item) => `${item.kind} ${truncateInline(item.fileName, 48)}`).join("、")}，剩余：${pendingMedia.length}`
+        : "";
+      return truncateInline(`${prefixTaskMessage(task, task.status)}，工作区：${task.workspaceKind}，模式：${task.isolationMode}${queue}${age}${approvalWait}${thread}${media}`, 320);
     });
     await this.sender.sendText(conversationId, ["任务状态", ...lines].join("\n"));
   }
@@ -2300,6 +2320,42 @@ export class BridgeRunner {
         durationMs: Date.now() - startedAtMs,
       });
       const chatOutput = truncateChatOutput(result.finalText, this.config.chatOutputMaxChars);
+      let stagedFiles: StagedDeliverable[] | undefined;
+      if (task && queuedRun.messageId && (result.outputFiles?.length || result.outputDeclarationError)) {
+        if (result.outputDeclarationError) {
+          const correction = prefixTaskMessage(task, result.outputDeclarationError);
+          const durable = await this.persistRunTerminal({
+            chatId, messageId: queuedRun.messageId, status: "completed", lastRun,
+            threadId: resultThreadId, deliveries: [{ kind: "text", text: correction }],
+          });
+          if (durable) await this.drainOutboxForJob(queuedRun.messageId);
+          return;
+        }
+        try {
+          stagedFiles = await this.deliverableStager.stage({
+            taskId: task.taskId,
+            jobId: queuedRun.messageId,
+            workspaceRoot: task.workspaceRoot,
+            executionCwd: task.executionCwd,
+            isolationMode: task.isolationMode,
+            paths: result.outputFiles ?? [],
+          });
+        } catch (error) {
+          this.logger.warn("Declared output staging failed", {
+            taskId: task.taskId,
+            errorKind: error instanceof Error ? error.name : typeof error,
+          });
+          const correction = prefixTaskMessage(task,
+            "输出文件未发送：声明的文件未通过任务路径、所有权或配额校验。请确认文件位于当前任务工作区后重试。",
+          );
+          const durable = await this.persistRunTerminal({
+            chatId, messageId: queuedRun.messageId, status: "completed", lastRun,
+            threadId: resultThreadId, deliveries: [{ kind: "text", text: correction }],
+          });
+          if (durable) await this.drainOutboxForJob(queuedRun.messageId);
+          return;
+        }
+      }
       const durable = await this.persistRunTerminal({
         chatId,
         messageId: queuedRun.messageId,
@@ -2310,6 +2366,7 @@ export class BridgeRunner {
           kind: "markdown" as const,
           text: task ? prefixTaskMessage(task, text) : text,
         })),
+        stagedFiles,
       });
       await this.updateStatusCard(statusCard, {
         status: "success",
@@ -2759,8 +2816,10 @@ export class BridgeRunner {
     threadId?: string;
     updateSessionThread?: boolean;
     deliveries: Array<{ kind: "text" | "markdown"; text: string }>;
+    stagedFiles?: readonly StagedDeliverable[];
   }): Promise<boolean> {
-    return this.mutateState((state) => {
+    try {
+      return await this.mutateState((state) => {
       const job = input.messageId ? state.jobs[input.messageId] : undefined;
       const session = this.ensureSession(input.chatId, state, job?.chatType);
       if ((input.status !== "failed" || input.updateSessionThread) && input.threadId) {
@@ -2792,12 +2851,29 @@ export class BridgeRunner {
         durableJob.result = input.lastRun;
         durableJob.completedAt = input.lastRun.completedAt;
         durableJob.updatedAt = input.lastRun.completedAt;
-        appendOutboxDeliveries(state, durableJob, input.deliveries, input.lastRun.completedAt);
         state.jobs[input.messageId] = durableJob;
+        if (input.stagedFiles) {
+          this.mediaOutbox.appendResult(state, durableJob, {
+            textEntries: input.deliveries,
+            stagedFiles: input.stagedFiles,
+            createdAt: input.lastRun.completedAt,
+          });
+        } else {
+          appendOutboxDeliveries(state, durableJob, input.deliveries, input.lastRun.completedAt);
+        }
       }
       markMessageProcessed(state, input.messageId);
       return true;
-    });
+      });
+    } catch (error) {
+      if (input.stagedFiles && input.messageId) {
+        const taskId = this.requireState().jobs[input.messageId]?.taskId;
+        if (taskId) {
+          await this.deliverableStager.cleanup({ taskId, jobId: input.messageId }).catch(() => undefined);
+        }
+      }
+      throw error;
+    }
   }
 
   private scheduleOutboxDrain(jobId: string): void {

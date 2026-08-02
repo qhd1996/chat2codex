@@ -74,6 +74,28 @@ describe("DeliverableStager", () => {
     })).rejects.toThrow(/private execution|output-only/i);
   });
 
+  test("allows only the exact task-owned Git worktree execution directory", async () => {
+    const fixture = await createFixture();
+    const executionCwd = path.join(fixture.home, "worktrees", taskId);
+    await mkdir(executionCwd, { recursive: true });
+    const output = path.join(executionCwd, "answer.txt");
+    await writeFile(output, "worktree answer");
+
+    const staged = await fixture.stager.stage({
+      taskId, jobId, workspaceRoot: fixture.workspace, executionCwd, isolationMode: "git_worktree", paths: [output],
+    });
+    expect(await readFile(staged[0]!.stagedPath, "utf8")).toBe("worktree answer");
+
+    const otherExecutionCwd = path.join(fixture.home, "worktrees", "tsk_aaaaaaaaaaaaaaaaaaaaaaaa");
+    await mkdir(otherExecutionCwd, { recursive: true });
+    const otherOutput = path.join(otherExecutionCwd, "other.txt");
+    await writeFile(otherOutput, "other task");
+    await expect(fixture.stager.stage({
+      taskId, jobId: "job_wrong_worktree", workspaceRoot: fixture.workspace, executionCwd: otherExecutionCwd,
+      isolationMode: "git_worktree", paths: [otherOutput],
+    })).rejects.toThrow(/task.*worktree|exact.*worktree|execution directory/i);
+  });
+
   test("rejects relative, missing, directory, outside-root, and duplicate canonical paths", async () => {
     const fixture = await createFixture();
     const inside = path.join(fixture.workspace, "inside.txt");

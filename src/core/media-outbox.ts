@@ -6,6 +6,7 @@ import type { BridgeState, DurableCodexJob, DurableMediaOutboxMessage, DurableOu
 export interface AppendMediaResultInput {
   text?: string;
   textKind?: "text" | "markdown";
+  textEntries?: ReadonlyArray<{ kind: "text" | "markdown"; text: string }>;
   stagedFiles?: readonly StagedDeliverable[];
   createdAt: string;
 }
@@ -17,6 +18,9 @@ export class MediaOutbox {
     if (state.jobs[job.id] !== job) throw new Error("Media outbox job must belong to the current durable state.");
     if (job.deliveryIds.length > 0) throw new Error("Media outbox result has already been appended.");
     const text = input.text?.trim() ? input.text : undefined;
+    const textEntries = input.textEntries ?? (text === undefined
+      ? []
+      : [{ kind: input.textKind ?? "text", text }]);
     const stagedFiles = [...(input.stagedFiles ?? [])];
     stagedFiles.forEach(validateStagedDeliverable);
     const candidates: DurableOutboxMessage[] = [];
@@ -33,7 +37,12 @@ export class MediaOutbox {
       const item: DurableMediaOutboxMessage = { ...base(sequence), taskId: job.taskId!, kind: file.kind, text: "", stagedPath: file.stagedPath, fileName: file.fileName, mediaType: file.mediaType, size: file.size, sha256: file.sha256 };
       candidates.push(item);
     };
-    if (text !== undefined) pushText(input.textKind ?? "text", text);
+    for (const entry of textEntries) {
+      if ((entry.kind !== "text" && entry.kind !== "markdown") || !entry.text.trim()) {
+        throw new Error("Media outbox text entry is invalid.");
+      }
+      pushText(entry.kind, entry.text);
+    }
     for (const file of stagedFiles) pushMedia(file);
     for (const item of candidates) {
       if (state.outbox[item.id]) throw new Error("Stable media outbox delivery ID already exists.");
