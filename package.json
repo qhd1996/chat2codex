@@ -62,6 +62,7 @@
     "quality:evidence": "node scripts/verify-quality-evidence.mjs quality/evidence/phase3-preinstall.json",
     "quality:distribution": "node scripts/verify-distribution-package.mjs",
     "quality:clean-windows": "node scripts/verify-clean-windows-evidence.mjs quality/evidence/clean-windows-template.json",
+    "quality:novice": "bun scripts/verify-novice-evidence.mjs quality/evidence/novice-acceptance-template.json",
     "quality:windows": "bun test tests/windows-security.test.ts tests/process-identity.test.ts tests/shard-wrapper.test.ts tests/windows-workflow.test.ts",
     "quality:check": "bun run openspec:validate && bun run quality:authority && bun run quality:evidence && bun run quality:distribution && bun run quality:clean-windows",
     "start": "node dist/index.js",
@@ -69,6 +70,8 @@
     "test": "bun test",
     "test:stable": "bun test --max-concurrency=1",
     "test:properties": "bun test tests/properties --max-concurrency=1",
+    "test:novice": "bun test tests/novice-scenarios.test.ts tests/novice-simulator.test.ts tests/novice-redaction.test.ts tests/novice-fresh-journey.test.ts tests/novice-upgrade-journey.test.ts tests/novice-daily-use.test.ts tests/novice-recovery.test.ts tests/novice-evidence.test.ts tests/properties/novice-actions.property.test.ts tests/properties/novice-lifecycle.property.test.ts tests/novice-restart.test.ts --max-concurrency=1",
+    "test:novice:30": "bun scripts/run-novice-matrix.mjs --repetitions 30 --report .tmp/novice-repository-30.json",
     "check:stable": "bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.contracts.json"

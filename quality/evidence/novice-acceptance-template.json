@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "authorityCommit": "01e827bbdc6584136627d9f1f137e8051f0a8c97",
+  "repositoryCommit": "0000000000000000000000000000000000000000",
+  "generatedAt": "2026-08-02T00:00:00.000Z",
+  "evidenceLevel": "repository",
+  "verdict": "unproven",
+  "environment": { "kind": "unproven", "os": "win32", "arch": "x64", "freshProfile": false, "repositoryAbsent": false, "priorPackageAbsent": false, "realUserCodexHomeUntouched": true, "productionUntouched": true },
+  "archive": { "version": "0.8.0-windows.1", "size": 0, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
+  "versions": { "windows": "0.0.0", "node": "0.0.0", "npm": "0.0.0", "bun": "0.0.0", "package": "0.8.0-windows.1", "codexCli": "0.0.0" },
+  "scenarioIds": [],
+  "repetitions": [],
+  "failureHistory": []
+}
