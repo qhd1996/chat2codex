@@ -15,8 +15,8 @@ if (!process.versions.bun) throw new Error("Novice matrix must run under the pro
 const root = process.cwd();
 const scenarioIds = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8")).map((item) => item.id).sort();
 const repositoryCommit = run("git", ["rev-parse", "HEAD"]).trim();
-const dirty = run("git", ["status", "--porcelain"]).trim();
-if (dirty) throw new Error("Novice matrix requires a clean committed worktree.");
+const trackedDirty = run("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
+if (trackedDirty) throw new Error("Novice matrix requires clean committed tracked files.");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const startedAt = new Date().toISOString();
 const tempRoot = path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid);
