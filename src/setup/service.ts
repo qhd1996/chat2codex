@@ -190,7 +190,7 @@ async function installService(options: ServiceOptions): Promise<void> {
       home, envFile: options.envFile, launcherPath: options.windowsLauncherPath,
       taskXmlPath: path.join(serviceRoot, "task.xml"), manifestPath: path.join(serviceRoot, "installation.json"),
       nodeBin: options.nodeBin, entrypoint: options.entrypoint, logFile: options.stderrPath,
-      pathEnv: options.pathEnv, taskName: options.windowsTaskName,
+      pathEnv: options.pathEnv, taskName: options.windowsTaskName, statePath: path.join(home, ".data", "state.json"),
     }, windowsServiceIo(home));
     console.log(`Installed Windows user task: ${result.taskPath}`);
     console.log(`Manifest: ${path.join(serviceRoot, "installation.json")}`);
@@ -292,7 +292,7 @@ function printService(options: ServiceOptions): void {
   if (options.target === "windows-task") {
     console.log(`# target: ${options.target}`);
     console.log(`# task: ${windowsTaskPath(options.windowsTaskName)}`);
-    console.log(renderWindowsLauncher({ nodeBin: options.nodeBin, entrypoint: options.entrypoint, envFile: options.envFile, logFile: options.stderrPath, pathEnv: options.pathEnv }));
+    console.log(renderWindowsLauncher({ nodeBin: options.nodeBin, entrypoint: options.entrypoint, envFile: options.envFile, logFile: options.stderrPath, pathEnv: options.pathEnv, workingDirectory: options.projectDir }));
     console.log(renderWindowsTaskXml({ taskName: options.windowsTaskName, userSid: "S-1-0-0", launcherPath: options.windowsLauncherPath }));
     return;
   }

@@ -8,6 +8,7 @@ const input = {
   taskXmlPath: `${home}\\.service\\windows\\task.xml`, manifestPath: `${home}\\.service\\windows\\installation.json`,
   nodeBin: "C:\\Program Files\\nodejs\\node.exe", entrypoint: "C:\\Users\\Example\\AppData\\Roaming\\npm\\node_modules\\chat2codex\\dist\\index.js",
   logFile: `${home}\\.data\\logs\\service.log`, pathEnv: "C:\\Program Files\\nodejs;C:\\Windows\\System32", taskName: "Chat2Codex",
+  statePath: `${home}\\.data\\state.json`,
 };
 
 describe("Windows service lifecycle executor", () => {
@@ -23,6 +24,9 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.events.slice(0, firstRun).filter((event) => event[0] === "write").map((event) => event[1])).toContainAllValues([input.envFile, input.launcherPath, input.taskXmlPath, input.manifestPath]);
     expect(fixture.files.get(input.envFile)).toContain("USER_SETTING=yes");
     expect(fixture.files.get(input.envFile)).toContain("CHAT2CODEX_DESKTOP_GATEWAY_ENABLED=true");
+    expect(fixture.files.get(input.envFile)).toContain(`CHAT2CODEX_HOME=${JSON.stringify(home)}`);
+    expect(fixture.files.get(input.envFile)).toContain(`BRIDGE_STATE_PATH=${JSON.stringify(input.statePath)}`);
+    expect(fixture.files.get(input.envFile)).toContain(`ATTACHMENT_DOWNLOAD_DIR=${JSON.stringify(`${home}\\.data\\attachments`)}`);
     expect(JSON.stringify(result)).not.toContain("secret-material");
   });
 

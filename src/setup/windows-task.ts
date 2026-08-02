@@ -12,6 +12,7 @@ export interface WindowsLauncherDefinition {
   envFile: string;
   logFile: string;
   pathEnv: string;
+  workingDirectory: string;
 }
 
 const sidPattern = /^S-[0-9]+(?:-[0-9]+)+$/u;
@@ -51,6 +52,7 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
   const entrypoint = windowsAbsolute(input.entrypoint, "Chat2Codex entrypoint");
   const envFile = windowsAbsolute(input.envFile, "Chat2Codex env file");
   const logFile = windowsAbsolute(input.logFile, "Chat2Codex log file");
+  const workingDirectory = windowsAbsolute(input.workingDirectory, "Chat2Codex working directory");
   boundedText(input.pathEnv, "Windows service PATH", 32_768);
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -59,6 +61,7 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
     "$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'",
     "$env:NODE_ENV = 'production'",
     `$env:PATH = ${psQuote(input.pathEnv)}`,
+    `Set-Location -LiteralPath ${psQuote(workingDirectory)}`,
     `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} *>> ${psQuote(logFile)}`,
     "exit $LASTEXITCODE",
     "",

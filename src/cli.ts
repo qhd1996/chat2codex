@@ -21,6 +21,8 @@ import {
   type BridgeRuntime,
 } from "./runtime/bridge-runtime.js";
 import { createPlatformAdapterBundle } from "./runtime/platform.js";
+import { diagnoseWindowsDistribution } from "./setup/distribution-doctor.js";
+import { inspectInstalledWindowsDistribution } from "./setup/windows-distribution-inspector.js";
 
 type CliCommand =
   | "doctor"
@@ -475,6 +477,14 @@ Options:
         detail:
           "Weixin v1 requires direct messages, disabled groups, and a user/chat allowlist",
       });
+    }
+    if (process.platform === "win32") {
+      try {
+        const snapshot = await inspectInstalledWindowsDistribution(config.chat2codexHome);
+        if (snapshot) checks.push(...diagnoseWindowsDistribution(snapshot).map((check) => ({ label: `${check.label} [${check.code}]`, status: check.status, detail: check.recovery ? `${check.detail} Recovery: ${check.recovery}` : check.detail })));
+      } catch (error) {
+        checks.push({ label: "Windows distribution", status: "error", detail: `DIST_INSPECTION_FAILED: ${formatError(error)}` });
+      }
     }
   }
 

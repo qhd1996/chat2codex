@@ -11,6 +11,7 @@ const home = "C:\\Users\\Example\\.chat2codex";
 const manifest = {
   schemaVersion: 1 as const, packageVersion: "0.8.0-desktop.2", taskName: "Chat2Codex",
   userSid: "S-1-5-21-1-2-3-1001", launcherPath: `${home}\\.service\\windows\\launcher.ps1`,
+  nodeBin: "C:\\Program Files\\nodejs\\node.exe", entrypoint: "C:\\Users\\Example\\AppData\\Roaming\\npm\\node_modules\\chat2codex\\dist\\index.js", statePath: `${home}\\.data\\state.json`,
   envFile: `${home}\\.env`, keyFiles: ["prompt-hook.key", "stop-hook.key", "desktop-mcp.key"].map((name) => `${home}\\.secrets\\desktop-gateway\\${name}`),
   ownedFiles: [`${home}\\.service\\windows\\launcher.ps1`, `${home}\\.service\\windows\\task.xml`],
   hashes: { "launcher.ps1": "a".repeat(64) }, installedAt: "2026-08-02T14:00:00.000Z",

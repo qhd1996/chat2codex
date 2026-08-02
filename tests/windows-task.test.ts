@@ -41,16 +41,18 @@ describe("Windows launcher rendering", () => {
       envFile: "C:\\Users\\O'Brien\\.chat2codex\\.env",
       logFile: "C:\\Users\\O'Brien\\.chat2codex\\.data\\logs\\service.log",
       pathEnv: "C:\\Program Files\\nodejs;C:\\Windows\\System32",
+      workingDirectory: "C:\\Users\\O'Brien\\.chat2codex",
     });
     expect(source).toContain("$env:CHAT2CODEX_ENV = 'C:\\Users\\O''Brien\\.chat2codex\\.env'");
     expect(source).toContain("$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'");
+    expect(source).toContain("Set-Location -LiteralPath 'C:\\Users\\O''Brien\\.chat2codex'");
     expect(source).toContain("& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\O''Brien\\AppData");
     expect(source).toContain("*>> 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.log'");
     expect(source).not.toContain("Invoke-Expression");
   });
 
   test("rejects relative paths and control characters", () => {
-    const valid = { nodeBin: "C:\\node\\node.exe", entrypoint: "C:\\pkg\\dist\\index.js", envFile: "C:\\home\\.env", logFile: "C:\\home\\service.log", pathEnv: "C:\\node" };
+    const valid = { nodeBin: "C:\\node\\node.exe", entrypoint: "C:\\pkg\\dist\\index.js", envFile: "C:\\home\\.env", logFile: "C:\\home\\service.log", pathEnv: "C:\\node", workingDirectory: "C:\\home" };
     expect(() => renderWindowsLauncher({ ...valid, entrypoint: "dist/index.js" })).toThrow(/absolute/i);
     expect(() => renderWindowsLauncher({ ...valid, pathEnv: "C:\\node\nC:\\evil" })).toThrow(/control/i);
   });

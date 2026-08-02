@@ -11,6 +11,7 @@ import type { GatewayKeyRole } from "./windows-private-files.js";
 export interface WindowsServiceInstallInput {
   home: string; envFile: string; launcherPath: string; taskXmlPath: string; manifestPath: string;
   nodeBin: string; entrypoint: string; logFile: string; pathEnv: string; taskName: string;
+  statePath: string;
 }
 
 export interface WindowsServiceIo {
@@ -38,18 +39,22 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   try {
     const keys = await io.ensureGatewayKeys();
     createdKeys = [...keys.created];
-    const launcher = renderWindowsLauncher({ nodeBin: input.nodeBin, entrypoint: input.entrypoint, envFile: input.envFile, logFile: input.logFile, pathEnv: input.pathEnv });
+    const launcher = renderWindowsLauncher({ nodeBin: input.nodeBin, entrypoint: input.entrypoint, envFile: input.envFile, logFile: input.logFile, pathEnv: input.pathEnv, workingDirectory: home });
     const taskXml = renderWindowsTaskXml({ taskName: input.taskName, userSid: sid, launcherPath: input.launcherPath });
     const managed = {
+      ATTACHMENT_DOWNLOAD_DIR: path.win32.join(home, ".data", "attachments"),
+      BRIDGE_STATE_PATH: input.statePath,
       CHAT2CODEX_DESKTOP_GATEWAY_ENABLED: "true",
       CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE: keys.paths["desktop-mcp"],
       CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: keys.paths["prompt-hook"],
       CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: keys.paths["stop-hook"],
+      CHAT2CODEX_HOME: home,
     };
     const env = replaceManagedEnvBlock(snapshots.get(input.envFile) ?? "", managed);
     const manifest: WindowsInstallationManifestV1 = {
       schemaVersion: 1, packageVersion: await io.packageVersion(), taskName: input.taskName, userSid: sid,
-      launcherPath: input.launcherPath, envFile: input.envFile, keyFiles: Object.values(keys.paths),
+      launcherPath: input.launcherPath, nodeBin: input.nodeBin, entrypoint: input.entrypoint, statePath: input.statePath,
+      envFile: input.envFile, keyFiles: Object.values(keys.paths),
       ownedFiles: [input.launcherPath, input.taskXmlPath, input.manifestPath],
       hashes: { "launcher.ps1": sha256(launcher), "task.xml": sha256(taskXml) }, installedAt: io.now().toISOString(),
     };

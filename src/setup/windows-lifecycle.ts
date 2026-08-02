@@ -6,6 +6,9 @@ export interface WindowsInstallationManifestV1 {
   taskName: string;
   userSid: string;
   launcherPath: string;
+  nodeBin: string;
+  entrypoint: string;
+  statePath: string;
   envFile: string;
   keyFiles: string[];
   ownedFiles: string[];
@@ -28,7 +31,7 @@ export type WindowsLifecycleOperation =
 
 const begin = "# BEGIN CHAT2CODEX WINDOWS MANAGED";
 const end = "# END CHAT2CODEX WINDOWS MANAGED";
-const manifestKeys = ["envFile", "hashes", "installedAt", "keyFiles", "launcherPath", "ownedFiles", "packageVersion", "schemaVersion", "taskName", "userSid"];
+const manifestKeys = ["entrypoint", "envFile", "hashes", "installedAt", "keyFiles", "launcherPath", "nodeBin", "ownedFiles", "packageVersion", "schemaVersion", "statePath", "taskName", "userSid"];
 
 export function replaceManagedEnvBlock(source: string, values: Record<string, string>): string {
   if (typeof source !== "string") throw new Error("Env source must be text.");
@@ -70,7 +73,7 @@ export function parseWindowsInstallationManifest(value: unknown, home: string): 
   exactKeys(value, manifestKeys);
   const input = value as Record<string, unknown>;
   if (input.schemaVersion !== 1) throw new Error("Windows installation manifest schema is unsupported.");
-  for (const key of ["packageVersion", "taskName", "userSid", "launcherPath", "envFile", "installedAt"] as const) {
+  for (const key of ["packageVersion", "taskName", "userSid", "launcherPath", "nodeBin", "entrypoint", "statePath", "envFile", "installedAt"] as const) {
     if (typeof input[key] !== "string" || !input[key]) throw new Error(`Windows installation manifest ${key} is invalid.`);
   }
   if (!/^S-[0-9]+(?:-[0-9]+)+$/u.test(input.userSid as string)) throw new Error("Windows installation manifest user SID is invalid.");
@@ -79,6 +82,9 @@ export function parseWindowsInstallationManifest(value: unknown, home: string): 
   const keyFiles = pathsInside(input.keyFiles, root, "key files");
   const ownedFiles = pathsInside(input.ownedFiles, root, "owned files");
   const launcherPath = insidePath(input.launcherPath as string, root, "launcher");
+  const nodeBin = absoluteWindows(input.nodeBin as string, "Node executable");
+  const entrypoint = absoluteWindows(input.entrypoint as string, "entrypoint");
+  const statePath = insidePath(input.statePath as string, root, "state path");
   const envFile = absoluteWindows(input.envFile as string, "env file");
   object(input.hashes, "Windows installation hashes");
   const hashes: Record<string, string> = {};
@@ -88,7 +94,7 @@ export function parseWindowsInstallationManifest(value: unknown, home: string): 
   }
   return {
     schemaVersion: 1, packageVersion: input.packageVersion as string, taskName: input.taskName as string,
-    userSid: input.userSid as string, launcherPath, envFile, keyFiles, ownedFiles, hashes, installedAt: input.installedAt as string,
+    userSid: input.userSid as string, launcherPath, nodeBin, entrypoint, statePath, envFile, keyFiles, ownedFiles, hashes, installedAt: input.installedAt as string,
   };
 }
 
