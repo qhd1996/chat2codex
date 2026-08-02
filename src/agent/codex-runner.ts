@@ -43,6 +43,9 @@ const maxServerRequestTombstones = 256;
 const serverRequestTombstoneTtlMs = 5 * 60 * 1000;
 const maxChangedFiles = 200;
 const maxChangedFilePathChars = 4_096;
+const maxAuthoritativeTurns = 10_000;
+const maxAuthoritativeItems = 100_000;
+const maxAuthoritativeTextBytes = 8 * 1_024 * 1_024;
 const minAppServerJsonLineBytes = 256 * 1_024;
 const maxAppServerJsonLineBytes = 8 * 1_024 * 1_024;
 const truncationMarker = "\n... [truncated]";
@@ -464,6 +467,40 @@ export interface CodexThreadItem {
   files?: string[];
 }
 
+export type AuthoritativeCodexTurnStatus = "completed" | "interrupted" | "failed" | "inProgress";
+
+export interface AuthoritativeCodexThreadItem {
+  id: string;
+  type: string;
+  text?: string;
+  phase?: "commentary" | "final_answer" | null;
+  status?: string;
+  command?: string;
+  cwd?: string;
+  exitCode?: number | null;
+  durationMs?: number | null;
+  files?: string[];
+  /** Complete validated protocol item retained only for canonical integrity hashing. */
+  canonicalPayload?: Readonly<Record<string, unknown>>;
+}
+
+export interface AuthoritativeCodexTurn {
+  id: string;
+  status: AuthoritativeCodexTurnStatus;
+  startedAt?: number | null;
+  completedAt?: number | null;
+  durationMs?: number | null;
+  items: AuthoritativeCodexThreadItem[];
+}
+
+export interface AuthoritativeCodexThread {
+  id: string;
+  sessionId: string;
+  cwd: string;
+  cliVersion?: string;
+  turns: AuthoritativeCodexTurn[];
+}
+
 export interface CodexForkThreadInput {
   threadId: string;
   cwd?: string;
@@ -591,6 +628,14 @@ export class CodexRunner {
     });
     const thread = parseCodexThread(asRecord(result)?.thread);
     return thread ? markThreadResumability(thread, this.appServerCliVersion) : null;
+  }
+
+  async readThreadWithTurns(threadId: string): Promise<AuthoritativeCodexThread> {
+    const result = await this.requestAppServer("thread/read", {
+      threadId,
+      includeTurns: true,
+    });
+    return parseAuthoritativeCodexThread(asRecord(result)?.thread, threadId);
   }
 
   async searchThreads(input: CodexThreadSearchInput): Promise<CodexThreadSearchResult> {
@@ -5029,6 +5074,219 @@ function parseCodexThread(value: unknown): CodexThread | null {
     path: getNullableString(record, "path"),
     cliVersion: getString(record, "cliVersion"),
   };
+}
+
+export function parseAuthoritativeCodexThread(
+  value: unknown,
+  expectedRootThreadId: string,
+): AuthoritativeCodexThread {
+  const record = asRecord(value);
+  const id = getString(record, "id");
+  if (!record || !id || id !== expectedRootThreadId) {
+    throw new Error("Authoritative thread/read returned the wrong concrete root thread.");
+  }
+  const sessionId = getString(record, "sessionId");
+  if (!sessionId || sessionId !== id) {
+    throw new Error("Authoritative thread/read did not return a concrete root session.");
+  }
+  const cwd = getString(record, "cwd");
+  if (!cwd) {
+    throw new Error("Authoritative thread/read omitted the root cwd.");
+  }
+  if (!Array.isArray(record.turns)) {
+    throw new Error("Authoritative thread/read omitted the complete turns array.");
+  }
+  if (record.turns.length > maxAuthoritativeTurns) {
+    throw new Error("Authoritative thread/read returned an oversized turns snapshot.");
+  }
+  const serializedBytes = Buffer.byteLength(JSON.stringify(value), "utf8");
+  if (serializedBytes > maxAuthoritativeTextBytes) {
+    throw new Error("Authoritative thread/read returned an oversized snapshot.");
+  }
+
+  const turnIds = new Set<string>();
+  const itemIds = new Set<string>();
+  let itemCount = 0;
+  const turns = record.turns.map((entry, turnIndex) => {
+    const turnRecord = asRecord(entry);
+    const turnId = getString(turnRecord, "id");
+    if (!turnRecord || !turnId) {
+      throw new Error(`Authoritative turn at index ${turnIndex} omitted its ID.`);
+    }
+    if (turnIds.has(turnId)) {
+      throw new Error(`Authoritative snapshot contains duplicate turn ID ${turnId}.`);
+    }
+    turnIds.add(turnId);
+    const status = getString(turnRecord, "status");
+    if (!isAuthoritativeTurnStatus(status)) {
+      throw new Error(`Authoritative turn ${turnId} has an invalid status.`);
+    }
+    if (
+      (turnRecord.itemsView !== undefined && turnRecord.itemsView !== "full") ||
+      !Array.isArray(turnRecord.items)
+    ) {
+      throw new Error(`Authoritative turn ${turnId} does not contain a complete full item snapshot.`);
+    }
+    itemCount += turnRecord.items.length;
+    if (itemCount > maxAuthoritativeItems) {
+      throw new Error("Authoritative thread/read returned an oversized item snapshot.");
+    }
+    const items = turnRecord.items.map((item, itemIndex) => {
+      const parsed = parseAuthoritativeThreadItem(item, turnId, itemIndex);
+      if (itemIds.has(parsed.id)) {
+        throw new Error(`Authoritative snapshot contains duplicate item ID ${parsed.id}.`);
+      }
+      itemIds.add(parsed.id);
+      return parsed;
+    });
+    return {
+      id: turnId,
+      status,
+      startedAt: getNullableNumber(turnRecord, "startedAt"),
+      completedAt: getNullableNumber(turnRecord, "completedAt"),
+      durationMs: getNullableNumber(turnRecord, "durationMs"),
+      items,
+    };
+  });
+
+  return {
+    id,
+    sessionId,
+    cwd,
+    cliVersion: getString(record, "cliVersion"),
+    turns,
+  };
+}
+
+function isAuthoritativeTurnStatus(value: string | undefined): value is AuthoritativeCodexTurnStatus {
+  return value === "completed" || value === "interrupted" || value === "failed" || value === "inProgress";
+}
+
+function parseAuthoritativeThreadItem(
+  value: unknown,
+  turnId: string,
+  itemIndex: number,
+): AuthoritativeCodexThreadItem {
+  const record = asRecord(value);
+  const id = getString(record, "id");
+  const type = getString(record, "type");
+  if (!record || !id || !type) {
+    throw new Error(`Authoritative turn ${turnId} item ${itemIndex} omitted its ID or type.`);
+  }
+  validateAuthoritativeItemShape(record, type, turnId);
+  const phase = record.phase;
+  return {
+    id,
+    type,
+    text: threadItemText(record, type),
+    ...(phase === null || phase === "commentary" || phase === "final_answer" ? { phase } : {}),
+    command: getString(record, "command"),
+    cwd: getString(record, "cwd"),
+    status: getString(record, "status"),
+    exitCode: getNullableNumber(record, "exitCode"),
+    durationMs: getNullableNumber(record, "durationMs"),
+    files: threadItemFiles(record),
+    canonicalPayload: canonicalProtocolValue(record) as Readonly<Record<string, unknown>>,
+  };
+}
+
+function canonicalProtocolValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => canonicalProtocolValue(entry));
+  }
+  const record = asRecord(value);
+  if (!record) {
+    return value;
+  }
+  return Object.fromEntries(
+    Object.entries(record).map(([key, entry]) => [key, canonicalProtocolValue(entry)]),
+  );
+}
+
+function validateAuthoritativeItemShape(
+  record: Record<string, unknown>,
+  type: string,
+  turnId: string,
+): void {
+  const malformed = (field: string): never => {
+    throw new Error(`Authoritative ${type} item in turn ${turnId} has a malformed ${field}.`);
+  };
+  const requireString = (field: string): void => {
+    if (typeof record[field] !== "string") malformed(field);
+  };
+  const requireArray = (field: string): void => {
+    if (!Array.isArray(record[field])) malformed(field);
+  };
+
+  switch (type) {
+    case "userMessage":
+      requireArray("content");
+      for (const content of record.content as unknown[]) {
+        const input = asRecord(content);
+        const inputType = getString(input, "type");
+        if (!input || !inputType) malformed("content");
+        const inputRecord = input as Record<string, unknown>;
+        if (inputType === "text") requireRecordString(inputRecord, "text", malformed);
+        else if (inputType === "image") requireRecordString(inputRecord, "url", malformed);
+        else if (inputType === "localImage") requireRecordString(inputRecord, "path", malformed);
+        else if (inputType === "skill" || inputType === "mention") {
+          requireRecordString(inputRecord, "name", malformed);
+          requireRecordString(inputRecord, "path", malformed);
+        } else malformed("content type");
+      }
+      return;
+    case "hookPrompt": requireArray("fragments"); return;
+    case "agentMessage":
+      requireString("text");
+      if (record.phase !== undefined && record.phase !== null && record.phase !== "commentary" && record.phase !== "final_answer") malformed("phase");
+      return;
+    case "plan": requireString("text"); return;
+    case "reasoning":
+      if (record.content !== undefined) requireStringArray(record.content, malformed, "content");
+      if (record.summary !== undefined) requireStringArray(record.summary, malformed, "summary");
+      return;
+    case "commandExecution":
+      requireString("command"); requireArray("commandActions"); requireString("cwd"); requireString("status"); return;
+    case "fileChange": requireArray("changes"); requireString("status"); return;
+    case "mcpToolCall":
+      if (!("arguments" in record)) malformed("arguments");
+      requireString("server"); requireString("status"); requireString("tool"); return;
+    case "dynamicToolCall":
+      if (!("arguments" in record)) malformed("arguments");
+      requireString("status"); requireString("tool"); return;
+    case "collabAgentToolCall":
+      if (!asRecord(record.agentsStates)) malformed("agentsStates");
+      requireArray("receiverThreadIds"); requireString("senderThreadId"); requireString("status"); requireString("tool"); return;
+    case "subAgentActivity": requireString("agentPath"); requireString("agentThreadId"); requireString("kind"); return;
+    case "webSearch": requireString("query"); return;
+    case "imageView": requireString("path"); return;
+    case "sleep":
+      if (typeof record.durationMs !== "number" || !Number.isFinite(record.durationMs)) malformed("durationMs");
+      return;
+    case "imageGeneration":
+      if (!("result" in record)) malformed("result");
+      requireString("status"); return;
+    case "enteredReviewMode":
+    case "exitedReviewMode": requireString("review"); return;
+    case "contextCompaction": return;
+    default: throw new Error(`Authoritative turn ${turnId} contains unsupported item type ${type}.`);
+  }
+}
+
+function requireRecordString(
+  record: Record<string, unknown>,
+  field: string,
+  malformed: (field: string) => never,
+): void {
+  if (typeof record[field] !== "string") malformed(field);
+}
+
+function requireStringArray(
+  value: unknown,
+  malformed: (field: string) => never,
+  field: string,
+): void {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string")) malformed(field);
 }
 
 function parseThreadTokenUsage(value: unknown): CodexThreadTokenUsage | null {
