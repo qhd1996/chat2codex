@@ -29,6 +29,10 @@ const changelog = `# Changelog
 `;
 
 describe("release notes rendering", () => {
+  test("uses a distinct Phase 3 pre-install package identity", async () => {
+    const packageJson = JSON.parse(await readFile(path.resolve(import.meta.dir, "..", "package.json"), "utf8"));
+    expect(packageJson.version).toBe("0.8.0-desktop.1");
+  });
   test("extracts one version and promotes changelog headings", () => {
     expect(extractReleaseNotes(changelog, "v0.4.0")).toBe(
       "## Added\n\n- Added feature.\n\n## Fixed\n\n- Fixed bug.",
