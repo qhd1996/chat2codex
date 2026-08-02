@@ -28,6 +28,16 @@ describe("distribution package contract", () => {
       await expect(validateDistributionTree(root)).rejects.toThrow(/Hook hash/i);
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+
+  test("does not mistake task-target text or its own rules for secrets while retaining boundary detection", async () => {
+    const root = await fixture();
+    try {
+      await writeFile(path.join(root, "README.md"), "task-target-clarification\n");
+      await expect(validateDistributionTree(root)).resolves.toMatchObject({ forbiddenHits: 0 });
+      await writeFile(path.join(root, "README.md"), "token sk-abcdefghijklmnopqrstuvwx\n");
+      await expect(validateDistributionTree(root)).rejects.toThrow(/secret/i);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });
 
 async function fixture(): Promise<string> {

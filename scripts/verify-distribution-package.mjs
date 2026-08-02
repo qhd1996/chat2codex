@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const manifestKeys = ["codexCli", "desktop", "hooks", "node", "packageRoots", "packageVersion", "provenance", "requiredDocs", "schemaVersion", "stateSchemas", "windows"];
 const forbiddenPath = /(?:C:[\/]Users[\/]dada|F:[\/](?:workspace|Chat2Codex|codex)|\bdada\b)/iu;
-const secret = /(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|Bearer[ \t]+[A-Za-z0-9._~+/-]{20,})/u;
+const secret = /(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|Bearer[ \t]+[A-Za-z0-9._~+/-]{20,})/u;
 
 export async function validateDistributionTree(rootInput) {
   const root = path.resolve(rootInput);
@@ -43,7 +43,10 @@ export async function validateDistributionTree(rootInput) {
   const hits = [];
   for (const filePath of files) {
     if (/\.(?:tgz|gz|png|jpg|jpeg|pdf)$/iu.test(filePath)) continue;
-    const content = await readFile(filePath, "utf8");
+    let content = await readFile(filePath, "utf8");
+    if (path.relative(root, filePath).replace(/\\/gu, "/") === "scripts/verify-distribution-package.mjs") {
+      content = content.replace(/^const (?:forbiddenPath|secret) = .*?;\r?$/gmu, "");
+    }
     if (forbiddenPath.test(content)) hits.push(`${path.relative(root, filePath)}: machine path`);
     if (secret.test(content)) hits.push(`${path.relative(root, filePath)}: secret pattern`);
   }
