@@ -1,0 +1,313 @@
+{
+  "schemaVersion": 5,
+  "adapters": {
+    "weixin:phase3-fixture": {
+      "tasks": {
+        "task-complete": {
+          "taskId": "task-complete",
+          "conversationId": "conversation-complete",
+          "chatType": "direct",
+          "senderKey": "fixture-sender",
+          "title": "Complete fixture task",
+          "aliases": ["fixture"],
+          "workspaceKind": "work",
+          "workspaceRoot": "__REHEARSAL_ROOT__",
+          "executionCwd": "__REHEARSAL_ROOT__",
+          "isolationMode": "canonical_fifo",
+          "sessionEpoch": "fixture-session-epoch",
+          "threadId": "root-thread-v5-fixture",
+          "status": "completed",
+          "objectiveSummary": "Exercise every schema-v5 partition.",
+          "recentRequests": ["preserve order", "preserve hashes"],
+          "createdAt": "2026-08-02T00:00:00.000Z",
+          "updatedAt": "2026-08-02T00:10:00.000Z",
+          "lastActiveAt": "2026-08-02T00:10:00.000Z"
+        },
+        "tsk_f79ed3c5d802115931ea1fa8": {
+          "taskId": "tsk_f79ed3c5d802115931ea1fa8",
+          "conversationId": "conversation-complete",
+          "chatType": "direct",
+          "senderKey": "legacy:conversation-complete",
+          "title": "Fixture thread",
+          "aliases": [],
+          "workspaceKind": "explicit",
+          "workspaceRoot": "__REHEARSAL_ROOT__",
+          "executionCwd": "__REHEARSAL_ROOT__",
+          "isolationMode": "canonical_fifo",
+          "sessionEpoch": "fixture-session-epoch",
+          "status": "completed",
+          "objectiveSummary": "fixture preview",
+          "recentRequests": [],
+          "createdAt": "2026-08-02T00:10:00.000Z",
+          "updatedAt": "2026-08-02T00:10:00.000Z",
+          "lastActiveAt": "2026-08-02T00:10:00.000Z"
+        }
+      },
+      "conversations": {
+        "conversation-complete": {
+          "taskIds": ["task-complete", "tsk_f79ed3c5d802115931ea1fa8"],
+          "lastTaskId": "task-complete",
+          "lastThreads": [
+            {
+              "threadId": "root-thread-v5-fixture",
+              "cwd": "__REHEARSAL_ROOT__",
+              "title": "Fixture thread",
+              "preview": "fixture preview",
+              "updatedAt": "2026-08-02T00:10:00.000Z",
+              "resumable": true
+            }
+          ],
+          "lastTurns": [
+            {
+              "threadId": "root-thread-v5-fixture",
+              "turnId": "turn-fixture-complete",
+              "status": "completed",
+              "startedAt": "2026-08-02T00:08:00.000Z",
+              "completedAt": "2026-08-02T00:09:00.000Z",
+              "durationMs": 60000,
+              "summary": "fixture complete"
+            }
+          ]
+        }
+      },
+      "chats": {
+        "conversation-complete": {
+          "sessionEpoch": "fixture-session-epoch",
+          "threadId": "root-thread-v5-fixture",
+          "cwd": "__REHEARSAL_ROOT__",
+          "chatType": "direct",
+          "updatedAt": "2026-08-02T00:10:00.000Z",
+          "lastThreads": [
+            {
+              "threadId": "root-thread-v5-fixture",
+              "cwd": "__REHEARSAL_ROOT__",
+              "title": "Fixture thread",
+              "preview": "fixture preview",
+              "updatedAt": "2026-08-02T00:10:00.000Z",
+              "resumable": true
+            }
+          ],
+          "lastTurns": [
+            {
+              "threadId": "root-thread-v5-fixture",
+              "turnId": "turn-fixture-complete",
+              "status": "completed",
+              "startedAt": "2026-08-02T00:08:00.000Z",
+              "completedAt": "2026-08-02T00:09:00.000Z",
+              "durationMs": 60000,
+              "summary": "fixture complete"
+            }
+          ]
+        }
+      },
+      "jobs": {
+        "job-text": {
+          "id": "job-text",
+          "kind": "codex_run",
+          "messageId": "message-text",
+          "chatId": "conversation-complete",
+          "chatType": "direct",
+          "cwd": "__REHEARSAL_ROOT__",
+          "prompt": "fixture text prompt",
+          "threadId": "root-thread-v5-fixture",
+          "status": "completed",
+          "createdAt": "2026-08-02T00:01:00.000Z",
+          "updatedAt": "2026-08-02T00:02:00.000Z",
+          "startedAt": "2026-08-02T00:01:10.000Z",
+          "completedAt": "2026-08-02T00:02:00.000Z",
+          "deliveryIds": ["out-text"],
+          "taskId": "task-complete",
+          "workspaceRoot": "__REHEARSAL_ROOT__",
+          "executionCwd": "__REHEARSAL_ROOT__",
+          "isolationMode": "canonical_fifo"
+        },
+        "job-media": {
+          "id": "job-media",
+          "kind": "codex_run",
+          "messageId": "message-media",
+          "chatId": "conversation-complete",
+          "chatType": "direct",
+          "cwd": "__REHEARSAL_ROOT__",
+          "prompt": "fixture media prompt",
+          "threadId": "root-thread-v5-fixture",
+          "status": "completed",
+          "createdAt": "2026-08-02T00:03:00.000Z",
+          "updatedAt": "2026-08-02T00:04:00.000Z",
+          "startedAt": "2026-08-02T00:03:10.000Z",
+          "completedAt": "2026-08-02T00:04:00.000Z",
+          "deliveryIds": ["out-image", "out-file"],
+          "taskId": "task-complete",
+          "workspaceRoot": "__REHEARSAL_ROOT__",
+          "executionCwd": "__REHEARSAL_ROOT__",
+          "isolationMode": "canonical_fifo"
+        }
+      },
+      "outbox": {
+        "out-text": {
+          "id": "out-text",
+          "jobId": "job-text",
+          "taskId": "task-complete",
+          "chatId": "conversation-complete",
+          "kind": "text",
+          "text": "fixture text delivery",
+          "sequence": 0,
+          "status": "delivered",
+          "idempotencyKey": "fixture-text-idempotency",
+          "attempts": 1,
+          "createdAt": "2026-08-02T00:02:00.000Z",
+          "updatedAt": "2026-08-02T00:02:10.000Z",
+          "deliveredAt": "2026-08-02T00:02:10.000Z"
+        },
+        "out-image": {
+          "id": "out-image",
+          "jobId": "job-media",
+          "taskId": "task-complete",
+          "chatId": "conversation-complete",
+          "kind": "image",
+          "text": "",
+          "sequence": 0,
+          "stagedPath": "__REHEARSAL_ROOT__/outbound/task-complete/job-media/00-image.png",
+          "fileName": "image.png",
+          "mediaType": "image/png",
+          "size": 24,
+          "sha256": "61cc78472cd7fb1abf6540dfed6f796e45b8db8790f85d98c32bd3b6d4638670",
+          "status": "delivered",
+          "idempotencyKey": "fixture-image-idempotency",
+          "attempts": 1,
+          "createdAt": "2026-08-02T00:04:00.000Z",
+          "updatedAt": "2026-08-02T00:04:10.000Z",
+          "deliveredAt": "2026-08-02T00:04:10.000Z"
+        },
+        "out-file": {
+          "id": "out-file",
+          "jobId": "job-media",
+          "taskId": "task-complete",
+          "chatId": "conversation-complete",
+          "kind": "file",
+          "text": "",
+          "sequence": 1,
+          "stagedPath": "__REHEARSAL_ROOT__/outbound/task-complete/job-media/01-evidence.txt",
+          "fileName": "evidence.txt",
+          "mediaType": "text/plain",
+          "size": 24,
+          "sha256": "61cc78472cd7fb1abf6540dfed6f796e45b8db8790f85d98c32bd3b6d4638670",
+          "status": "delivered",
+          "idempotencyKey": "fixture-file-idempotency",
+          "attempts": 1,
+          "createdAt": "2026-08-02T00:04:01.000Z",
+          "updatedAt": "2026-08-02T00:04:11.000Z",
+          "deliveredAt": "2026-08-02T00:04:11.000Z"
+        }
+      },
+      "pendingMessages": {
+        "pending-fixture": {
+          "messageId": "pending-fixture",
+          "chatId": "conversation-complete",
+          "chatType": "direct",
+          "sender": { "openId": "fixture-open-id" },
+          "text": "pending fixture message",
+          "acceptedAt": "2026-08-02T00:05:00.000Z",
+          "attempts": 0,
+          "route": "codex"
+        }
+      },
+      "processedMessageIds": ["message-text", "message-media"],
+      "diagnostics": {
+        "lastEvent": {
+          "at": "2026-08-02T00:06:00.000Z",
+          "outcome": "routed",
+          "messageId": "message-media",
+          "chatId": "conversation-complete",
+          "chatType": "direct",
+          "messageType": "text",
+          "mentionCount": 0,
+          "startsWithMention": false,
+          "attachmentCount": 2,
+          "textLength": 20,
+          "botIdentityResolved": true
+        },
+        "recentFailures": [
+          {
+            "at": "2026-08-02T00:06:30.000Z",
+            "category": "unknown",
+            "detail": "bounded fixture diagnostic"
+          }
+        ]
+      },
+      "imageDrafts": {
+        "conversation-complete:fixture-sender": {
+          "chatId": "conversation-complete",
+          "senderKey": "fixture-sender",
+          "createdAt": "2026-08-02T00:07:00.000Z",
+          "updatedAt": "2026-08-02T00:07:01.000Z",
+          "expiresAt": "2026-08-02T00:37:00.000Z",
+          "images": [
+            {
+              "sourceMessageId": "draft-source",
+              "path": "__REHEARSAL_ROOT__/inbound/draft-image.png",
+              "sha256": "14dc34d360081a1d18c97367028faa2cd60e6e3ddc125c2f75fada80142a4e61",
+              "mediaType": "image/png",
+              "bytes": 24
+            }
+          ],
+          "totalBytes": 24
+        }
+      },
+      "clarifications": {
+        "conversation-complete:fixture-sender": {
+          "chatId": "conversation-complete",
+          "senderKey": "fixture-sender",
+          "question": "Which fixture task?",
+          "originalText": "continue fixture",
+          "draftKey": "conversation-complete:fixture-sender",
+          "candidateTaskIds": ["task-complete"],
+          "choices": ["task-complete"],
+          "createdAt": "2026-08-02T00:07:10.000Z",
+          "expiresAt": "2026-08-02T00:37:10.000Z"
+        }
+      },
+      "usageAdvisor": {
+        "aggregates": {
+          "delivery_retry": {
+            "code": "delivery_retry",
+            "count": 3,
+            "firstSeenAt": "2026-08-02T00:01:00.000Z",
+            "lastSeenAt": "2026-08-02T00:03:00.000Z",
+            "recentAt": [
+              "2026-08-02T00:01:00.000Z",
+              "2026-08-02T00:02:00.000Z",
+              "2026-08-02T00:03:00.000Z"
+            ]
+          }
+        },
+        "proposals": {
+          "usage-delivery-retry": {
+            "id": "usage-delivery-retry",
+            "signalCode": "delivery_retry",
+            "status": "pending_review",
+            "createdAt": "2026-08-02T00:03:00.000Z",
+            "evidence": {
+              "code": "delivery_retry",
+              "count": 3,
+              "firstSeenAt": "2026-08-02T00:01:00.000Z",
+              "lastSeenAt": "2026-08-02T00:03:00.000Z",
+              "recentAt": [
+                "2026-08-02T00:01:00.000Z",
+                "2026-08-02T00:02:00.000Z",
+                "2026-08-02T00:03:00.000Z"
+              ]
+            },
+            "sections": {
+              "observation": "Durable outbound delivery repeatedly required retry.",
+              "benefit": "Reduce delivery delay without rerunning Codex or duplicating acknowledged messages.",
+              "risks": "Retry changes can increase load or weaken exactly-once delivery.",
+              "scope": "Review retry timing and transport diagnostics only.",
+              "rollback": "Restore the current retry policy while preserving the durable outbox.",
+              "verification": "Exercise partial failure, restart, acknowledged-prefix, and no-Codex-rerun cases."
+            }
+          }
+        }
+      }
+    }
+  }
+}
