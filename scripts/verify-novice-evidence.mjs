@@ -13,13 +13,13 @@ const repetitionKeys = ["commands", "completedAt", "counts", "index", "processPr
 const countKeys = ["fail", "pass", "residualProcesses", "skip", "timeout"];
 const historyKeys = ["code", "fixedByCommit", "repetition"];
 const processProofKeys = ["createdAt", "pid", "residualProcesses", "stopped"];
-const attestationKeys = ["anotherInteractiveUserDenied", "archiveSha256", "attestationHash", "commands", "doctorExitCode", "environmentKind", "firstProcess", "freshProfile", "githubActions", "installAttempts", "installedFiles", "lockHealthy", "newKeysAfterReinstall", "ownedEnvironmentHash", "ownedRootRemoved", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent", "repositoryCommit", "runIdentityHash", "runnerEnvironment", "secondProcess", "singleWriter", "startAttempts", "stopAttempts", "taskNameHash", "taskRemoved", "uninstallAttempts", "userDataPreserved", "zeroResidualProcesses"];
+const attestationKeys = ["anotherInteractiveUserDenied", "archiveSha256", "attestationHash", "commands", "doctorExitCode", "environmentKind", "firstProcess", "freshProfile", "githubActions", "installAttempts", "installedFiles", "lockHealthy", "newKeysAfterReinstall", "oldArchiveSha256", "oldRepositoryCommit", "ownedEnvironmentHash", "ownedRootRemoved", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent", "repositoryCommit", "runIdentityHash", "runnerEnvironment", "secondProcess", "singleWriter", "startAttempts", "stopAttempts", "taskNameHash", "taskRemoved", "uninstallAttempts", "userDataPreserved", "zeroResidualProcesses"];
 const attestationProcessKeys = ["commandHash", "createdAt", "pid", "stateSha256"];
 const installedFileKeys = ["path", "sha256"];
 
 export function validateNoviceEvidence(value, options) {
   const manifest = object(value, "manifest"); exactKeys(manifest, manifestKeys, "manifest");
-  if (manifest.schemaVersion !== 3) throw new Error("Novice evidence schema version is unsupported.");
+  if (manifest.schemaVersion !== 4) throw new Error("Novice evidence schema version is unsupported.");
   if (manifest.authorityCommit !== authorityCommit) throw new Error("Novice evidence authority commit is invalid.");
   commit(manifest.repositoryCommit, "repository commit"); timestamp(manifest.generatedAt, "generatedAt");
   if (manifest.evidenceLevel !== "repository" && manifest.evidenceLevel !== "isolated_package") throw new Error("Novice evidence level is invalid.");
@@ -45,9 +45,9 @@ export function validateNoviceEvidence(value, options) {
   validateFailureHistory(manifest.failureHistory);
   if (qualifying) {
     const binding = object(manifest.attestation, "attestation");
-    if (binding.archiveSha256 !== manifest.archive.sha256 || binding.repositoryCommit !== manifest.repositoryCommit) throw new Error("Novice attestation binding differs from the archive or repository commit.");
+    if (binding.archiveSha256 !== manifest.archive.sha256 || binding.repositoryCommit !== manifest.repositoryCommit || binding.oldArchiveSha256 !== manifest.realUpgrade?.oldArchiveSha256 || binding.oldRepositoryCommit !== manifest.realUpgrade?.oldRepositoryCommit) throw new Error("Novice attestation binding differs from the candidate or old archive/commit.");
     hash(binding.runIdentityHash, "attestation run identity"); hash(binding.ownedEnvironmentHash, "attestation owned environment");
-    validateRealUpgradeEvidence(manifest.realUpgrade, { oldArchiveSha256: manifest.realUpgrade?.oldArchiveSha256, oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb", candidateArchiveSha256: manifest.archive.sha256, oldVersion: "0.8.0-orchestrator.4", candidateVersion: manifest.archive.version, ownedEnvironmentHash: binding.ownedEnvironmentHash, runIdentityHash: binding.runIdentityHash });
+    validateRealUpgradeEvidence(manifest.realUpgrade, { oldArchiveSha256: binding.oldArchiveSha256, oldRepositoryCommit: binding.oldRepositoryCommit, candidateArchiveSha256: manifest.archive.sha256, oldVersion: "0.8.0-orchestrator.4", candidateVersion: manifest.archive.version, ownedEnvironmentHash: binding.ownedEnvironmentHash, runIdentityHash: binding.runIdentityHash });
   }
   if (qualifying) { const identities=new Set(manifest.repetitions.map((item)=>item.processProof.pid+"|"+item.processProof.createdAt)); if(identities.size!==30) throw new Error("Qualifying novice process proofs must be unique for all repetitions."); if(!manifest.failureHistory.length||manifest.failureHistory.some((item)=>item.fixedByCommit===null)) throw new Error("Qualifying novice evidence must retain fixed failure history."); validateAttestation(manifest.attestation, manifest); } else if (manifest.attestation !== null || manifest.realUpgrade !== null) throw new Error("Repository novice evidence cannot contain qualifying Windows or real-upgrade evidence.");
   assertNoviceOutputSafe(manifest);

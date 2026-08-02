@@ -44,6 +44,9 @@ describe("novice acceptance evidence", () => {
     const missingHash = validComplete();
     missingHash.attestation.installedFiles = [];
     expect(() => validateNoviceEvidence(missingHash, validationOptions)).toThrow(/installed.*hash|attestation/i);
+    const splicedOldArchive = validComplete();
+    splicedOldArchive.realUpgrade.oldArchiveSha256 = "e".repeat(64);
+    expect(() => validateNoviceEvidence(splicedOldArchive, validationOptions)).toThrow(/old.*archive|attestation|binding/i);
   });
 
   test("resolves an explicit external evidence file without treating it as repository input", async () => {
@@ -99,7 +102,7 @@ function validComplete() {
     processProof: { pid: 200 + offset, createdAt: "2026-08-03T01:00:30.000Z", stopped: true, residualProcesses: 0 },
   }));
   return {
-    schemaVersion: 3, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
+    schemaVersion: 4, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
     generatedAt: "2026-08-03T01:02:00.000Z", evidenceLevel: "isolated_package", verdict: "pass",
     environment: { kind: "clean_windows_vm", os: "win32", arch: "x64", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: "0.8.0-novice.1", size: 1234, sha256: "c".repeat(64) },
@@ -114,7 +117,7 @@ function validAttestation() {
   const value = {
     environmentKind: "equivalent_isolated_windows", githubActions: true, runnerEnvironment: "github-hosted",
     freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true,
-    archiveSha256: "c".repeat(64), repositoryCommit: "a".repeat(40), runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
+    archiveSha256: "c".repeat(64), repositoryCommit: "a".repeat(40), oldArchiveSha256: "d".repeat(64), oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb", runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
     taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3,
     doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true,
     firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) },

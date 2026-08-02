@@ -61,7 +61,7 @@ export async function runNoviceArchiveAcceptance(input) {
     const taskName = "Chat2Codex-Novice-" + input.repositoryCommit.slice(0, 8);
     const attestationRoot = path.join(plan.ownedRoot, "native-lifecycle");
     const script = path.join(installedRoot, "scripts", "novice-clean-windows-attestation.mjs");
-    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--run-identity", runIdentity], { cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true, env: { ...process.env, CHAT2CODEX_NOVICE_ISOLATION: "1" } });
+    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--old-archive-sha256", input.oldArchiveSha256, "--old-repository-commit", input.oldRepositoryCommit, "--run-identity", runIdentity], { cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true, env: { ...process.env, CHAT2CODEX_NOVICE_ISOLATION: "1" } });
     const marker = result.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_CLEAN_WINDOWS_ATTESTATION "));
     if (result.status !== 0 || !marker) throw new Error("Integrated clean Windows lifecycle attestation failed: " + redactedTail(result.stderr));
     attestation = JSON.parse(marker.slice("NOVICE_CLEAN_WINDOWS_ATTESTATION ".length));
@@ -145,10 +145,10 @@ export function buildQualifyingNoviceEvidence(input) {
   if (input.environmentKind !== "clean_windows_vm" && input.environmentKind !== "equivalent_isolated_windows") throw new Error("Qualifying novice environment kind is invalid.");
   validateNoviceWorkerEvidence(input.worker, { installedRoot: path.resolve(input.worker.packageRoot), packageVersion: input.archive.version, archiveSha256: input.archive.sha256, expectedRepetitions: 30, expectedScenarioIds: input.expectedScenarioIds ?? input.worker.scenarioIds });
   if (!input.attestation) throw new Error("Qualifying novice evidence requires an independent Windows lifecycle attestation.");
-  if (input.attestation.archiveSha256 !== input.archive.sha256 || input.attestation.repositoryCommit !== input.repositoryCommit || input.attestation.runIdentityHash !== input.worker.runIdentityHash || input.attestation.ownedEnvironmentHash !== input.worker.ownedEnvironmentHash) throw new Error("Qualifying novice attestation binding differs from the package journey.");
+  if (input.attestation.archiveSha256 !== input.archive.sha256 || input.attestation.repositoryCommit !== input.repositoryCommit || input.attestation.oldArchiveSha256 !== input.realUpgrade.oldArchiveSha256 || input.attestation.oldRepositoryCommit !== input.realUpgrade.oldRepositoryCommit || input.attestation.runIdentityHash !== input.worker.runIdentityHash || input.attestation.ownedEnvironmentHash !== input.worker.ownedEnvironmentHash) throw new Error("Qualifying novice attestation binding differs from the package journey.");
   const repetitions = input.worker.repetitions.map((item) => ({ ...item }));
   const manifest = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     authorityCommit: input.authorityCommit,
     repositoryCommit: input.repositoryCommit,
     generatedAt: new Date().toISOString(),

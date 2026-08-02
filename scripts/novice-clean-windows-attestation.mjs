@@ -14,12 +14,14 @@ const productionRoot = path.resolve(read("--production-root") ?? "");
 const taskName = read("--task-name") ?? "";
 const archiveSha256 = read("--archive-sha256") ?? "";
 const repositoryCommit = read("--repository-commit") ?? "";
+const oldArchiveSha256 = read("--old-archive-sha256") ?? "";
+const oldRepositoryCommit = read("--old-repository-commit") ?? "";
 const runIdentity = read("--run-identity") ?? "";
 const environmentRoot = path.resolve(read("--environment-root") ?? "");
 const rehearsal = args.includes("--rehearsal");
 if (!process.env.CHAT2CODEX_NOVICE_ISOLATION || !path.isAbsolute(ownedRoot) || !path.isAbsolute(packageRoot) || !path.isAbsolute(codexBin) || !path.isAbsolute(productionRoot)) throw new Error("Clean Windows attestation requires owned absolute inputs.");
 if (!/^Chat2Codex-Novice-[a-f0-9]{8}$/u.test(taskName)) throw new Error("Clean Windows attestation scope is invalid.");
-if (!/^[a-f0-9]{64}$/u.test(archiveSha256) || !/^[a-f0-9]{40}$/u.test(repositoryCommit) || !/^[A-Za-z0-9._-]{8,200}$/u.test(runIdentity)) throw new Error("Clean Windows attestation binding is invalid.");
+if (!/^[a-f0-9]{64}$/u.test(archiveSha256) || !/^[a-f0-9]{40}$/u.test(repositoryCommit) || !/^[a-f0-9]{64}$/u.test(oldArchiveSha256) || !/^[a-f0-9]{40}$/u.test(oldRepositoryCommit) || !/^[A-Za-z0-9._-]{8,200}$/u.test(runIdentity)) throw new Error("Clean Windows attestation binding is invalid.");
 if (!path.isAbsolute(environmentRoot) || !inside(environmentRoot, ownedRoot) || !inside(environmentRoot, packageRoot) || overlaps(environmentRoot, productionRoot)) throw new Error("Clean Windows owned environment is invalid.");
 const actualScript = path.resolve(fileURLToPath(import.meta.url));
 if (path.resolve(packageRoot, "scripts", "novice-clean-windows-attestation.mjs").toLocaleLowerCase() !== actualScript.toLocaleLowerCase()) throw new Error("Clean Windows attestation must run from the reviewed package.");
@@ -90,7 +92,7 @@ try {
   const ownedRootRemoved = !(await lstat(ownedRoot).catch(() => null));
   if (!ownedRootRemoved) throw new Error("Attestation owned root remained after cleanup.");
   const attestation = {
-    environmentKind: rehearsal ? "local_rehearsal" : "equivalent_isolated_windows", archiveSha256, repositoryCommit, runIdentityHash: sha256(runIdentity), ownedEnvironmentHash: sha256(environmentRoot.toLocaleLowerCase()),
+    environmentKind: rehearsal ? "local_rehearsal" : "equivalent_isolated_windows", archiveSha256, repositoryCommit, oldArchiveSha256, oldRepositoryCommit, runIdentityHash: sha256(runIdentity), ownedEnvironmentHash: sha256(environmentRoot.toLocaleLowerCase()),
     githubActions, runnerEnvironment,
     freshProfile: !rehearsal && realCodexHomeAbsentBefore,
     repositoryAbsent: true,
