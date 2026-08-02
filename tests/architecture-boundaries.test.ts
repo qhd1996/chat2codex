@@ -71,6 +71,13 @@ describe("architecture boundaries", () => {
     expect(source).not.toContain("apply");
     expect(source).toContain('export type UsageAdvisorReviewDecision = "approve_for_planning" | "reject"');
   });
+
+  test("Desktop Gateway contracts stay platform-neutral and side-effect free", async () => {
+    const source = await readFile(path.join(workspaceRoot, "src/desktop-gateway/contracts.ts"), "utf8");
+    const imports = [...source.matchAll(/from\s+["']([^"']+)["']/gu)].map((match) => match[1]);
+    expect(imports).toEqual(["zod"]);
+    expect(source).not.toMatch(/(?:node:http|state\/store|adapters|bridge-runner|fetch\s*\(|writeFile\s*\(|process\.env)/u);
+  });
 });
 
 async function typescriptFiles(directory: string): Promise<string[]> {
