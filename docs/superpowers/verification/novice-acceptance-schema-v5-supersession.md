@@ -52,6 +52,16 @@ historical evidence only. They must not be used for approval or installation.
   `c8f18db4a3c76679d9e8832dd5e7c6b157044f8d5ccc74649745eb4a26a626f6`.
 - The report intentionally has `attestation=null` and `realUpgrade=null`, so it
   is repository evidence only and cannot promote clean-Windows acceptance.
+- The final `.5` extracted package generated and strict-parsed a new temporary
+  Codex Home using signed Codex CLI `0.146.0` (`bc343b...1fddb`): exactly two
+  untrusted Hooks, zero Hook errors/warnings, one disabled/unstarted MCP
+  definition, and no `plugin/list`. The temporary config SHA-256 is
+  `31bc30b14f8f267bcfe19509e65bcbd7e21be06fcda70b06a4d0ed7a209093b9`.
+- Seven primitives passed 8/8 once and 160/160 over 20 fresh reruns with zero
+  failure and no residual test process. Report SHA-256 is
+  `2cb845e5a0ccf6c26aa27d5d3f438f3ab7db50c41fc23844da42607f41947b26`.
+  Two earlier PowerShell wrapper attempts failed to parse Bun output and remain
+  negative tool evidence; the route changed to direct Bun `spawnSync`.
 
 ## Windows lifecycle hardening
 
@@ -72,4 +82,3 @@ remain `PARTIAL`; `DIST-003` and installed `DESKTOP-001..003` remain `MISSING`.
 Task 12, production writes/restarts, real `~/.codex`, Hook trust, Desktop restart,
 Computer Use, real Weixin login/outbound, and the terminal success notice remain
 unexecuted and separately gated.
-
