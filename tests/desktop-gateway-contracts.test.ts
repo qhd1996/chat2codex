@@ -39,6 +39,19 @@ describe("Desktop Gateway contracts", () => {
     ]) expect(() => parseGatewayRequest(invalid)).toThrow();
   });
 
+  test("accepts only the two code-owned control prompt kinds", () => {
+    for (const controlKind of ["takeover", "release_request"] as const) {
+      expect(parseGatewayRequest({
+        kind: "user_prompt_submit", requestId, sessionId, turnId: "turn-control",
+        promptCommitment: "b".repeat(64), observedAt: "2026-08-02T10:00:00.000Z", controlKind,
+      })).toMatchObject({ kind: "user_prompt_submit", controlKind });
+    }
+    expect(() => parseGatewayRequest({
+      kind: "user_prompt_submit", requestId, sessionId, turnId: "turn-control",
+      promptCommitment: "b".repeat(64), observedAt: "2026-08-02T10:00:00.000Z", controlKind: "apply",
+    })).toThrow();
+  });
+
   test("accepts only identifier metadata for Stop wake-up", () => {
     expect(parseGatewayRequest({
       kind: "stop_wake", eventId: requestId, sessionId, turnId: "turn-1",

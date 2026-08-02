@@ -47,6 +47,7 @@ const releaseRequestSchema = z.object({
 const userPromptSubmitRequestSchema = z.object({
   kind: z.literal("user_prompt_submit"), requestId: uuid, sessionId: opaqueId,
   turnId: opaqueId, promptCommitment: commitment, observedAt: timestamp,
+  controlKind: z.enum(["takeover", "release_request"]).optional(),
 }).strict();
 const stopWakeRequestSchema = z.object({
   kind: z.literal("stop_wake"), eventId: uuid, sessionId: opaqueId,
