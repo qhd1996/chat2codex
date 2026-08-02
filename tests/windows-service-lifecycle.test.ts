@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "../src/setup/windows-service.js";
+import { assertCanonicalWindowsOwnedPath, installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "../src/setup/windows-service.js";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 
 const home = "C:\\Users\\Example\\.chat2codex";
 const gatewayKeyFiles = ["prompt-hook.key", "stop-hook.key", "desktop-mcp.key"].map((name) => `${home}\\.secrets\\desktop-gateway\\${name}`);
@@ -34,12 +37,73 @@ describe("Windows service lifecycle executor", () => {
   });
 
   test("restores prior owned files and unregisters after task verification failure", async () => {
-    const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.manifestPath]: JSON.stringify(priorManifest()) };
-    const fixture = ioFixture(prior, (args) => args[0] === "/Query" ? new Error("query failed") : undefined);
+    const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>", [input.manifestPath]: JSON.stringify(priorManifest()) };
+    let queryCount = 0;
+    const fixture = ioFixture(prior, (args) => args[0] === "/Query" && ++queryCount === 2 ? new Error("query failed") : undefined);
     await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/query failed/i);
     expect(fixture.events).toContainEqual(["run", "schtasks.exe", ["/Delete", "/TN", "\\Chat2Codex\\Chat2Codex", "/F"]]);
     for (const [file, content] of Object.entries(prior)) expect(fixture.files.get(file)).toBe(content);
-    expect(fixture.files.has(input.taskXmlPath)).toBe(false);
+    expect(fixture.files.get(input.taskXmlPath)).toBe(prior[input.taskXmlPath]);
+  });
+
+  test("restores the prior registered task after an upgrade verification failure", async () => {
+    const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>", [input.manifestPath]: JSON.stringify(priorManifest()) };
+    let queried = 0;
+    const fixture = ioFixture(prior, (args) => { if (args[0] === "/Query" && ++queried === 2) return new Error("query failed"); return undefined; });
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/query failed/i);
+    const creates = fixture.events.filter((event) => event[0] === "run" && (event[2] as string[])[0] === "/Create");
+    expect(creates).toHaveLength(2);
+    expect(creates.at(-1)).toEqual(["run", "schtasks.exe", ["/Create", "/TN", "\\Chat2Codex\\Chat2Codex", "/XML", input.taskXmlPath, "/F"]]);
+  });
+
+  test("cleans a task whose create result is uncertain", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => args[0] === "/Create" ? new Error("create result uncertain") : undefined);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/uncertain/i);
+    expect(fixture.events).toContainEqual(["run", "schtasks.exe", ["/Delete", "/TN", "\\Chat2Codex\\Chat2Codex", "/F"]]);
+  });
+
+  test("reports cleanup failure instead of hiding an uncertain task registration", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => args[0] === "/Create" ? new Error("create result uncertain") : args[0] === "/Delete" ? new Error("delete rollback failed") : undefined);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/rollback.*incomplete|delete rollback failed/i);
+  });
+
+  test("rejects a task-name change before creating a second writer", async () => {
+    const changed = { ...input, taskName: "Chat2Codex-New" };
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.manifestPath]: JSON.stringify(priorManifest()) });
+    await expect(installWindowsUserTask(changed, fixture.io)).rejects.toThrow(/task name|prior.*task|writer/i);
+    expect(fixture.events.some((event) => event[0] === "run" && (event[2] as string[])[0] === "/Create")).toBe(false);
+  });
+
+  test("rejects an upgrade before mutation when prior task rollback material is incomplete", async () => {
+    for (const missing of [input.launcherPath, input.taskXmlPath]) {
+      const prior: Record<string, string> = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "old task", [input.manifestPath]: JSON.stringify(priorManifest()) };
+      delete prior[missing];
+      const fixture = ioFixture(prior);
+      await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/rollback material|prior.*missing/i);
+      expect(fixture.events.some((event) => event[0] === "write" || event[0] === "run")).toBe(false);
+    }
+  });
+
+  test("refuses an unmanaged same-name task and a drifted managed task before mutation", async () => {
+    const unmanaged = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+    unmanaged.setTaskExists(true);
+    await expect(installWindowsUserTask(input, unmanaged.io)).rejects.toThrow(/unmanaged|ownership|manifest/i);
+    expect(unmanaged.events.some((event) => event[0] === "write" || event[0] === "run")).toBe(false);
+
+    const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "old task", [input.manifestPath]: JSON.stringify(priorManifest()) };
+    const drifted = ioFixture(prior);
+    drifted.setQueryXml("<Task><Actions><Exec><Arguments>-File &apos;C:\\other\\launcher.ps1&apos;</Arguments></Exec></Actions></Task>");
+    await expect(installWindowsUserTask(input, drifted.io)).rejects.toThrow(/prior.*task|launcher.*differs|ownership/i);
+    expect(drifted.events.some((event) => event[0] === "write" || (event[0] === "run" && (event[2] as string[])[0] === "/Create"))).toBe(false);
+  });
+
+  test("does not create a prior task during rollback when it was absent before upgrade", async () => {
+    const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "old task", [input.manifestPath]: JSON.stringify(priorManifest()) };
+    let createCount = 0;
+    const fixture = ioFixture(prior, (args) => args[0] === "/Create" && ++createCount === 1 ? new Error("create failed") : undefined);
+    fixture.setTaskExists(false);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/create failed/i);
+    expect(fixture.events.filter((event) => event[0] === "run" && (event[2] as string[])[0] === "/Create")).toHaveLength(1);
   });
 
   test("rejects a queried task whose launcher action differs", async () => {
@@ -62,6 +126,16 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.events.filter((event) => event[0] === "run" && (event[2] as string[])[0] === "/Delete")).toHaveLength(1);
   });
 
+  test("keeps the manifest until every uninstall step succeeds so cleanup is retryable", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+    await installWindowsUserTask(input, fixture.io);
+    fixture.failRemoveOnce(gatewayKeyFiles[0]!);
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).rejects.toThrow(/remove failed/i);
+    expect(fixture.files.has(input.manifestPath)).toBe(true);
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).resolves.toEqual({ removed: true });
+    expect(fixture.files.has(input.manifestPath)).toBe(false);
+  });
+
   test("preserves preexisting non-owned keys across install and uninstall", async () => {
     const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, () => undefined, "preserved");
     await installWindowsUserTask(input, fixture.io);
@@ -80,7 +154,7 @@ describe("Windows service lifecycle executor", () => {
 
   test("writes a hash-recorded rollback snapshot before an upgrade", async () => {
     const oldManifest = priorManifest();
-    const fixture = ioFixture({ [input.envFile]: "CUSTOM_STATE=yes\r\nBRIDGE_STATE_PATH=C:\\Custom\\state.json\r\n", [input.manifestPath]: JSON.stringify(oldManifest), [input.statePath]: "{\"schemaVersion\":6}" });
+    const fixture = ioFixture({ [input.envFile]: "CUSTOM_STATE=yes\r\nBRIDGE_STATE_PATH=C:\\Custom\\state.json\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>", [input.manifestPath]: JSON.stringify(oldManifest), [input.statePath]: "{\"schemaVersion\":6}" });
     await installWindowsUserTask(input, fixture.io);
     const rollbackWrites = fixture.events.filter((event) => event[0] === "write" && String(event[1]).includes("\\rollback\\"));
     expect(rollbackWrites.length).toBeGreaterThanOrEqual(3);
@@ -89,7 +163,53 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.files.get(recordPath!)).toContain("sha256");
     expect(fixture.files.get(input.envFile)).toContain("BRIDGE_STATE_PATH=C:\\Custom\\state.json");
     expect(fixture.files.get(input.envFile)?.match(/BRIDGE_STATE_PATH=/gu)).toHaveLength(1);
+    for (const event of rollbackWrites) expect(fixture.events).toContainEqual(["protect", event[1]]);
   });
+
+  test("stops exact writers and treats an already absent task as a retryable uninstall", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+    await installWindowsUserTask(input, fixture.io);
+    fixture.setWriters(1);
+    fixture.setTaskExists(false);
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).resolves.toEqual({ removed: true });
+    expect(fixture.events).toContainEqual(["stop-writers", input.entrypoint]);
+    expect(fixture.events).not.toContainEqual(["run", "schtasks.exe", ["/Delete", "/TN", "\\Chat2Codex\\Chat2Codex", "/F"]]);
+  });
+
+  test("fails without deleting owned files when task deletion remains visible", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+    await installWindowsUserTask(input, fixture.io);
+    fixture.keepTaskAfterDelete();
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).rejects.toThrow(/task remained/i);
+    expect(fixture.files.has(input.manifestPath)).toBe(true);
+    expect(fixture.files.has(input.launcherPath)).toBe(true);
+  });
+
+  test("fails closed when writers remain, task deletion is uncertain, or an owned path traverses a reparse point", async () => {
+    for (const configure of [
+      (fixture: ReturnType<typeof ioFixture>) => fixture.failStopWriters(),
+      (fixture: ReturnType<typeof ioFixture>) => fixture.failTaskQuery(),
+      (fixture: ReturnType<typeof ioFixture>) => fixture.rejectOwnedPath(input.launcherPath),
+    ]) {
+      const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+      await installWindowsUserTask(input, fixture.io);
+      configure(fixture);
+      await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).rejects.toThrow(/writer|task.*uncertain|canonical|reparse|owned path/i);
+      expect(fixture.files.has(input.manifestPath)).toBe(true);
+    }
+  });
+});
+
+test("canonical Windows owned path refuses an existing junction component", async () => {
+  if (process.platform !== "win32") return;
+  const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-windows-owned-"));
+  const outside = await mkdtemp(path.join(os.tmpdir(), "chat2codex-windows-outside-"));
+  try {
+    await mkdir(path.join(root, "home"), { recursive: true });
+    await writeFile(path.join(outside, "sentinel.txt"), "outside");
+    await symlink(outside, path.join(root, "home", "linked"), "junction");
+    await expect(assertCanonicalWindowsOwnedPath(path.join(root, "home"), path.join(root, "home", "linked", "owned.txt"))).rejects.toThrow(/reparse|canonical/i);
+  } finally { await rm(root, { recursive: true, force: true }); await rm(outside, { recursive: true, force: true }); }
 });
 
 function ioFixture(initial: Record<string, string>, failRun: (args: string[]) => Error | undefined = () => undefined, initialKeyMode: "created" | "preserved" = "created") {
@@ -102,19 +222,30 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
   };
   let keyMode = initialKeyMode;
   let queryXml: string | undefined;
+  const removeFailures = new Set<string>();
+  const rejectedOwnedPaths = new Set<string>();
+  let writers = 0;
+  let stopWritersFails = false;
+  let taskExists = files.has(input.manifestPath);
+  let taskQueryFails = false;
+  let keepDeletedTask = false;
   if (keyMode === "preserved") for (const file of Object.values(keyPaths)) files.set(file, "preexisting-key");
   const io: WindowsServiceIo = {
     currentUserSid: async () => "S-1-5-21-1-2-3-1001", now: () => new Date("2026-08-02T14:00:00.000Z"), packageVersion: async () => "0.8.0-desktop.2",
     readText: async (file) => { events.push(["read", file]); return files.get(file) ?? null; },
     writeTextAtomic: async (file, content) => { events.push(["write", file]); files.set(file, content); },
-    removeFile: async (file) => { events.push(["remove", file]); files.delete(file); },
+    removeFile: async (file) => { events.push(["remove", file]); if (removeFailures.delete(file)) throw new Error("remove failed"); files.delete(file); },
+    assertOwnedPath: async (file) => { events.push(["assert-owned", file]); if (rejectedOwnedPaths.has(file)) throw new Error("owned path traverses a reparse point"); },
+    protectPrivateFile: async (file) => { events.push(["protect", file]); },
+    stopWriters: async (entrypoint) => { events.push(["stop-writers", entrypoint]); if (stopWritersFails) throw new Error("writer stop failed"); const stopped = writers; writers = 0; return stopped; },
+    taskExists: async (taskPath) => { events.push(["task-exists", taskPath]); if (taskQueryFails) throw new Error("task state uncertain"); return taskExists; },
     ensureGatewayKeys: async () => {
       if (keyMode === "created") for (const file of Object.values(keyPaths)) files.set(file, "generated-key");
       return { created: keyMode === "created" ? Object.values(keyPaths) : [], preserved: keyMode === "preserved" ? Object.values(keyPaths) : [], paths: keyPaths };
     },
-    runFile: async (command, args) => { events.push(["run", command, args]); const error = failRun(args); if (error) throw error; return args[0] === "/Query" ? queryXml ?? files.get(input.taskXmlPath) ?? "" : ""; },
+    runFile: async (command, args) => { events.push(["run", command, args]); const error = failRun(args); if (error) throw error; if (args[0] === "/Create") taskExists = true; if (args[0] === "/Delete" && !keepDeletedTask) taskExists = false; return args[0] === "/Query" ? queryXml ?? files.get(input.taskXmlPath) ?? "" : ""; },
   };
-  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; } };
+  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; }, failRemoveOnce(file: string) { removeFailures.add(file); }, setWriters(value: number) { writers = value; }, failStopWriters() { stopWritersFails = true; }, setTaskExists(value: boolean) { taskExists = value; }, failTaskQuery() { taskQueryFails = true; }, keepTaskAfterDelete() { keepDeletedTask = true; }, rejectOwnedPath(file: string) { rejectedOwnedPaths.add(file); } };
 }
 
 function priorManifest() {

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { lstat, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import {
@@ -21,6 +22,10 @@ export interface WindowsServiceIo {
   readText(filePath: string): Promise<string | null>;
   writeTextAtomic(filePath: string, content: string): Promise<void>;
   removeFile(filePath: string): Promise<void>;
+  assertOwnedPath(filePath: string): Promise<void>;
+  protectPrivateFile(filePath: string): Promise<void>;
+  stopWriters(entrypoint: string): Promise<number>;
+  taskExists(taskPath: string): Promise<boolean>;
   ensureGatewayKeys(): Promise<{ created: string[]; preserved: string[]; paths: Record<GatewayKeyRole, string> }>;
   runFile(command: string, args: string[]): Promise<string>;
 }
@@ -35,9 +40,24 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   const sid = await io.currentUserSid();
   const taskPath = windowsTaskPath(input.taskName);
   const priorManifest = parsePriorManifest(snapshots.get(input.manifestPath), home);
+  if (priorManifest && priorManifest.taskName.toLocaleLowerCase() !== input.taskName.toLocaleLowerCase()) {
+    throw new Error("Prior Windows task name differs from the requested task name; uninstall the prior service before changing task identity.");
+  }
+  if (priorManifest && [input.launcherPath, input.taskXmlPath].some((filePath) => snapshots.get(filePath) === null)) {
+    throw new Error("Prior Windows task rollback material is missing. Repair or uninstall the prior service before upgrading.");
+  }
+  const priorTaskExisted = await io.taskExists(taskPath);
+  if (!priorManifest && priorTaskExisted) throw new Error("An unmanaged same-name Windows task exists; refusing to overwrite task ownership.");
+  if (priorManifest && priorTaskExisted) {
+    const priorTask = await io.runFile("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]);
+    if (!priorTask.trim() || taskLauncherPath(priorTask).toLocaleLowerCase() !== priorManifest.launcherPath.toLocaleLowerCase()) {
+      throw new Error("Prior Windows task launcher differs from the installation manifest; ownership is uncertain.");
+    }
+  }
   let createdKeys: string[] = [];
-  let registered = false;
+  let registrationAttempted = false;
   try {
+    for (const filePath of [...owned, input.statePath]) await io.assertOwnedPath(filePath);
     const keys = await io.ensureGatewayKeys();
     createdKeys = [...keys.created];
     const launcher = renderWindowsLauncher({ nodeBin: input.nodeBin, entrypoint: input.entrypoint, envFile: input.envFile, logFile: input.logFile, pathEnv: input.pathEnv, workingDirectory: home });
@@ -78,25 +98,36 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
       const observed = await io.readText(filePath);
       if (observed !== expected) throw new Error(`Windows lifecycle write verification failed: ${path.win32.basename(filePath)}`);
     }
+    registrationAttempted = true;
     await io.runFile("schtasks.exe", ["/Create", "/TN", taskPath, "/XML", input.taskXmlPath, "/F"]);
-    registered = true;
     const queried = await io.runFile("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]);
     if (!queried.trim()) throw new Error("Windows task query returned no definition.");
     const queriedLauncher = taskLauncherPath(queried);
     if (queriedLauncher.toLocaleLowerCase() !== input.launcherPath.toLocaleLowerCase()) throw new Error("Windows task query launcher differs from the installation manifest.");
     return { taskPath, manifest, createdKeys: createdKeys.length };
   } catch (error) {
-    if (registered) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch(() => undefined);
+    const rollbackFailures: string[] = [];
+    if (registrationAttempted) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch((failure) => rollbackFailures.push(message(failure)));
     for (const [filePath, prior] of [...snapshots].reverse()) {
-      if (prior === null) await io.removeFile(filePath).catch(() => undefined);
-      else await io.writeTextAtomic(filePath, prior).catch(() => undefined);
+      if (prior === null) await io.removeFile(filePath).catch((failure) => rollbackFailures.push(message(failure)));
+      else await io.writeTextAtomic(filePath, prior).catch((failure) => rollbackFailures.push(message(failure)));
     }
-    await Promise.all(createdKeys.map((filePath) => io.removeFile(filePath).catch(() => undefined)));
+    for (const filePath of createdKeys) await io.removeFile(filePath).catch((failure) => rollbackFailures.push(message(failure)));
+    if (registrationAttempted && priorManifest && priorTaskExisted && snapshots.get(input.taskXmlPath)) {
+      await io.runFile("schtasks.exe", ["/Create", "/TN", taskPath, "/XML", input.taskXmlPath, "/F"]).catch((failure) => rollbackFailures.push(message(failure)));
+      if (rollbackFailures.length === 0) {
+        await io.runFile("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]).then((source) => {
+          if (!source.trim() || taskLauncherPath(source).toLocaleLowerCase() !== priorManifest.launcherPath.toLocaleLowerCase()) throw new Error("restored task verification failed");
+        }).catch((failure) => rollbackFailures.push(message(failure)));
+      }
+    }
+    if (rollbackFailures.length > 0) throw new Error(`Windows installation failed and rollback is incomplete: ${rollbackFailures.join("; ")}`, { cause: error });
     throw error;
   }
 }
 
 export async function uninstallWindowsUserTask(manifestPath: string, io: WindowsServiceIo): Promise<{ removed: boolean }> {
+  await io.assertOwnedPath(manifestPath);
   const source = await io.readText(manifestPath);
   if (source === null) return { removed: false };
   let value: unknown;
@@ -104,10 +135,17 @@ export async function uninstallWindowsUserTask(manifestPath: string, io: Windows
   const home = path.win32.dirname(path.win32.dirname(path.win32.dirname(manifestPath)));
   const manifest = parseWindowsInstallationManifest(value, home);
   const taskPath = windowsTaskPath(manifest.taskName);
-  await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]);
-  for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles]) await io.removeFile(filePath);
+  for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles, manifest.envFile]) await io.assertOwnedPath(filePath);
+  await io.stopWriters(manifest.entrypoint);
+  if (await io.taskExists(taskPath)) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]);
+  if (await io.taskExists(taskPath)) throw new Error("Windows task remained after deletion.");
+  const manifestKey = path.win32.normalize(manifestPath).toLocaleLowerCase();
+  for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles]) {
+    if (path.win32.normalize(filePath).toLocaleLowerCase() !== manifestKey) await io.removeFile(filePath);
+  }
   const env = await io.readText(manifest.envFile);
   if (env !== null) await io.writeTextAtomic(manifest.envFile, removeManagedEnvBlock(env));
+  await io.removeFile(manifestPath);
   return { removed: true };
 }
 
@@ -116,6 +154,7 @@ function absolute(value: string, label: string): string {
   return path.win32.normalize(value);
 }
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function parsePriorManifest(source: string | null | undefined, home: string): WindowsInstallationManifestV1 | undefined {
   if (!source) return undefined;
   try { return parseWindowsInstallationManifest(JSON.parse(source), home); }
@@ -149,8 +188,32 @@ async function writeRollbackSnapshot(input: WindowsServiceInstallInput, snapshot
     const content = snapshots.has(source) ? snapshots.get(source) : await io.readText(source);
     if (content === null || content === undefined) continue;
     const backup = path.win32.join(root, `${records.length.toString().padStart(2, "0")}-${path.win32.basename(source)}`);
+    await io.assertOwnedPath(backup);
     await io.writeTextAtomic(backup, content);
+    await io.protectPrivateFile(backup);
     records.push({ source, backup, sha256: sha256(content) });
   }
-  await io.writeTextAtomic(path.win32.join(root, "backup.json"), JSON.stringify({ schemaVersion: 1, createdAt: io.now().toISOString(), records }, null, 2) + "\n");
+  const recordPath = path.win32.join(root, "backup.json");
+  await io.assertOwnedPath(recordPath);
+  await io.writeTextAtomic(recordPath, JSON.stringify({ schemaVersion: 1, createdAt: io.now().toISOString(), records }, null, 2) + "\n");
+  await io.protectPrivateFile(recordPath);
+}
+
+export async function assertCanonicalWindowsOwnedPath(homeInput: string, candidateInput: string): Promise<void> {
+  const home = path.resolve(homeInput);
+  const candidate = path.resolve(candidateInput);
+  const relative = path.relative(home, candidate);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new Error("Windows owned path is outside the installation home.");
+  const root = path.parse(home).root;
+  const homeRelative = path.relative(root, home);
+  const components = [...(homeRelative ? homeRelative.split(path.sep) : []), ...(relative ? relative.split(path.sep) : [])];
+  let current = root;
+  for (const component of components) {
+    if (component) current = path.join(current, component);
+    const info = await lstat(current).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+    if (!info) break;
+    if (info.isSymbolicLink()) throw new Error("Windows owned path traverses a reparse point.");
+    const canonical = await realpath(current);
+    if (canonical.toLocaleLowerCase() !== path.resolve(current).toLocaleLowerCase()) throw new Error("Windows owned path is not canonical.");
+  }
 }

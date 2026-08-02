@@ -26,6 +26,10 @@ numbers once releases are published.
   hashes instead of accepting inventory echo as execution proof. Clean-Windows
   evidence uses closed stage-specific hash types, rejects late approvals and
   unredacted user paths, and records exact owned cleanup on failure.
+- Windows lifecycle transactions now restore a prior task after failed upgrade
+  verification, clean uncertain registrations, reject task-identity drift, retain
+  the manifest until uninstall completes, stop exact PID/creation-time writers,
+  protect rollback copies with owner-only ACLs, and reject reparse traversal.
 
 ## 0.8.0 - 2026-07-29
 

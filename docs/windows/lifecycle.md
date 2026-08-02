@@ -17,6 +17,8 @@ approval in environments covered by the project approval boundary.
 Install generates three distinct local Gateway keys, applies current-user/SYSTEM/
 Administrators-only ACLs, writes a managed env block and lifecycle manifest, and
 registers the task last. It never writes the real `~/.codex` or trusts Hooks.
+Re-running install requires the same task identity; changing the name requires an
+explicit uninstall first. Rollback copies are owner-only and canonical-path checked.
 
 ## Upgrade and rollback
 
@@ -33,3 +35,6 @@ and run the old doctor. Schema downgrade is refused while obligations remain.
 installer-owned launcher/manifest/task XML and installer-owned Gateway keys, and
 the managed env block. It preserves user-authored env lines, durable state, logs,
 credentials, deliverables, and backups. No purge mode exists.
+Uninstall stops only writers matching the exact installed entrypoint and verifies
+their PID/creation identity, task absence, and owned-path containment before
+deleting files. The manifest is removed last so an interrupted cleanup is retryable.

@@ -7,10 +7,10 @@ action-time confirmation. Approval of one packet never authorizes another.
 
 ## Immutable candidate inputs
 
-- Source: `01cf6019b8d47cedcf412374e5c76119a0305002`.
-- Package: `chat2codex-0.8.0-novice.4.tgz`.
-- Size: 387,404 bytes; files: 131.
-- SHA-256: `7ac689a3058ae7d64c785630a34768341ad8934e70c70ac755cc1b7054d97ac8`.
+- Candidate version: `0.8.0-novice.5`.
+- Source, archive size, and SHA-256: pending the post-commit two-clean-checkout
+  reproduction gate. Do not use the superseded `.3` source/hash for `.5`.
+- Expected package file count: 131; this is not an archive identity claim.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements ledger: `3c2af05`.
 - Task 11 handoff: `3b0698c`.

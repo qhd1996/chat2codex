@@ -10,7 +10,8 @@ import { defaultChat2CodexHome, defaultEnvPath } from "../config/paths.js";
 import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../desktop-gateway/server.js";
 import { readPackageVersion } from "../package-info.js";
 import { applyOwnerOnlyWindowsAcl, ensureWindowsGatewayKeys } from "./windows-private-files.js";
-import { installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "./windows-service.js";
+import { assertCanonicalWindowsOwnedPath, installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "./windows-service.js";
+import { isWindowsChat2CodexWriter } from "./windows-distribution-inspector.js";
 import { renderWindowsLauncher, renderWindowsTaskXml, windowsTaskPath } from "./windows-task.js";
 
 export type ServiceTarget = "launchd" | "systemd" | "windows-task";
@@ -463,6 +464,27 @@ function windowsServiceIo(home: string): WindowsServiceIo {
       } finally { await fs.rm(temporary, { force: true }); }
     },
     removeFile: (filePath) => fs.rm(filePath, { force: true }),
+    assertOwnedPath: (filePath) => assertCanonicalWindowsOwnedPath(home, filePath),
+    protectPrivateFile: async (filePath) => { await applyOwnerOnlyWindowsAcl(filePath); const report = await inspectWindowsTokenAcl(filePath); requireOwnerOnlyWindowsTokenAcl(report); },
+    stopWriters: async (entrypoint) => {
+      const script = "Get-CimInstance Win32_Process | ForEach-Object {[pscustomobject]@{ProcessId=[int]$_.ProcessId;CreationDate=$_.CreationDate.ToUniversalTime().ToString('o');CommandLine=[string]$_.CommandLine}} | ConvertTo-Json -Compress";
+      const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+      const raw = JSON.parse(stdout || "[]"); const rows = Array.isArray(raw) ? raw : [raw];
+      const writers = rows.filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid));
+      for (const writer of writers) {
+        const stopScript = "$p=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $env:C2C_PID); if(!$p){exit 0}; if($p.CreationDate.ToUniversalTime().ToString('o') -ne $env:C2C_CREATED){throw 'writer identity changed'}; Stop-Process -Id ([int]$env:C2C_PID) -Force -ErrorAction Stop";
+        await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", stopScript], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true, env: { ...process.env, C2C_PID: String(writer.ProcessId), C2C_CREATED: String(writer.CreationDate) } });
+      }
+      const { stdout: remainingSource } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+      const remainingRaw = JSON.parse(remainingSource || "[]"); const remaining = (Array.isArray(remainingRaw) ? remainingRaw : [remainingRaw]).filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid));
+      if (remaining.length > 0) throw new Error("Windows writer remained after stop.");
+      return writers.length;
+    },
+    taskExists: async (taskPath) => {
+      const script = "$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$p=$env:C2C_TASK_PATH;$i=$p.LastIndexOf('\');$folder=if($i -le 0){'\'}else{$p.Substring(0,$i)};$name=$p.Substring($i+1);try{$null=$s.GetFolder($folder).GetTask($name);'true'}catch [Runtime.InteropServices.COMException]{$h=[uint32]$_.Exception.HResult;if($h -in @(0x80070002,0x80070003,0x8004130F)){'false'}else{throw}}";
+      try { const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024, windowsHide: true, env: { ...process.env, C2C_TASK_PATH: taskPath } }); const value=stdout.trim(); if(value!=="true"&&value!=="false")throw new Error("invalid task state"); return value==="true"; }
+      catch (error) { throw new Error("Windows task state is uncertain.", { cause: error }); }
+    },
     ensureGatewayKeys: () => ensureWindowsGatewayKeys({
       root: path.join(home, ".secrets", "desktop-gateway"),
       applyAcl: applyOwnerOnlyWindowsAcl,
