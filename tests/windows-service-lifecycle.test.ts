@@ -52,12 +52,14 @@ describe("Windows service lifecycle executor", () => {
     const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n# BEGIN CHAT2CODEX WINDOWS MANAGED\r\nA=b\r\n# END CHAT2CODEX WINDOWS MANAGED\r\n" });
     await installWindowsUserTask(input, fixture.io);
     fixture.files.set(`${home}\\.data\\state.json`, "durable");
-    await uninstallWindowsUserTask(input.manifestPath, fixture.io);
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).resolves.toEqual({ removed: true });
+    await expect(uninstallWindowsUserTask(input.manifestPath, fixture.io)).resolves.toEqual({ removed: false });
     expect(fixture.events).toContainEqual(["run", "schtasks.exe", ["/Delete", "/TN", "\\Chat2Codex\\Chat2Codex", "/F"]]);
     expect(fixture.files.get(input.envFile)).toBe("USER_SETTING=yes\r\n");
     expect(fixture.files.get(`${home}\\.data\\state.json`)).toBe("durable");
     expect(fixture.files.has(input.launcherPath)).toBe(false);
     expect(fixture.files.has(input.manifestPath)).toBe(false);
+    expect(fixture.events.filter((event) => event[0] === "run" && (event[2] as string[])[0] === "/Delete")).toHaveLength(1);
   });
 
   test("preserves preexisting non-owned keys across install and uninstall", async () => {

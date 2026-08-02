@@ -96,9 +96,9 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   }
 }
 
-export async function uninstallWindowsUserTask(manifestPath: string, io: WindowsServiceIo): Promise<void> {
+export async function uninstallWindowsUserTask(manifestPath: string, io: WindowsServiceIo): Promise<{ removed: boolean }> {
   const source = await io.readText(manifestPath);
-  if (source === null) throw new Error("Windows installation manifest is missing.");
+  if (source === null) return { removed: false };
   let value: unknown;
   try { value = JSON.parse(source); } catch { throw new Error("Windows installation manifest is malformed."); }
   const home = path.win32.dirname(path.win32.dirname(path.win32.dirname(manifestPath)));
@@ -108,6 +108,7 @@ export async function uninstallWindowsUserTask(manifestPath: string, io: Windows
   for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles]) await io.removeFile(filePath);
   const env = await io.readText(manifest.envFile);
   if (env !== null) await io.writeTextAtomic(manifest.envFile, removeManagedEnvBlock(env));
+  return { removed: true };
 }
 
 function absolute(value: string, label: string): string {
