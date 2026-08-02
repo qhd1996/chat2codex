@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import {
   extractReleaseNotes,
   findPreviousTag,
@@ -59,5 +61,29 @@ describe("release notes rendering", () => {
     expect(
       findPreviousTag(["v0.4.0", "v0.3.0", "v0.2.0"], "v0.4.0"),
     ).toBe("v0.3.0");
+  });
+
+  test("documents the bounded review-only UsageAdvisor contract in both READMEs and architecture", async () => {
+    const root = path.resolve(import.meta.dir, "..");
+    const [english, chinese, architecture] = await Promise.all([
+      readFile(path.join(root, "README.md"), "utf8"),
+      readFile(path.join(root, "README.zh-CN.md"), "utf8"),
+      readFile(path.join(root, "docs/architecture.md"), "utf8"),
+    ]);
+    for (const source of [english, chinese, architecture]) {
+      expect(source).toContain("/advisor approve");
+      expect(source).toContain("approve_for_planning");
+      expect(source).toContain("task_target_clarification");
+      expect(source).toContain("delivery_retry");
+      expect(source).toContain("proposal threshold: 3");
+      expect(source).toContain("aggregate cap: 6");
+      expect(source).toContain("proposal cap: 6");
+      expect(source).toContain("recent timestamp cap: 8");
+      expect(source).toContain("rollback");
+    }
+    expect(english).toContain("never applies, executes, or deploys a change");
+    expect(chinese).toContain("不会应用、执行或部署变更");
+    expect(architecture).toContain("best-effort");
+    expect(architecture).toContain("schema v5");
   });
 });

@@ -18,8 +18,10 @@ flowchart LR
   Runner <--> Drafts["ImageDraftService"]
   Runner --> Natural["NaturalTaskRouter + target/workspace resolution"]
   Natural <--> Registry["TaskRegistry"]
-  Registry <--> State["Schema v4 durable state"]
+  Registry <--> State["Schema v5 durable state"]
   Runner <--> State
+  Runner --> Advisor["UsageAdvisor"]
+  Advisor <--> State
   Runner --> Workspace["ExecutionWorkspaceService"]
   Workspace --> Scheduler["TaskScheduler"]
   Scheduler --> Sessions["Task-keyed Codex sessions"]
@@ -39,7 +41,8 @@ The boundaries are intentionally small:
 | BridgeRunner | access control, durable work, approvals, Codex lifecycle | platform SDKs and wire payloads |
 | Task orchestration | bounded natural decisions, deterministic target/workspace resolution, task lifecycle | platform payloads or SDK calls |
 | Execution workspace / scheduler | worktree or output isolation, task FIFO, canonical-root FIFO, global capacity | automatic merges or unsafe optimistic writes |
-| State store | schema-v4 envelope, task/job/outbox identity, isolated adapter partitions | adapter-specific objects or runtime permission grants |
+| State store | schema-v5 envelope, task/job/outbox/advisor identity, isolated adapter partitions | adapter-specific objects or runtime permission grants |
+| UsageAdvisor | closed enum signals, bounded redacted aggregates, code-owned proposal templates, review status | prompts, sender/task/path data, execution, deployment, configuration, or permission changes |
 
 ## Adapter contract
 
@@ -96,9 +99,10 @@ discards them, clarification resolves, or TTL cleanup deletes them. A fifth imag
 does not consume the earlier four. Durable clarification stores only bounded task
 IDs and the draft key, never image bytes or descriptors.
 
-Schema v5 adds task-qualified ordered text/image/file deliveries, immutable
-staging metadata, and stable delivery identities. The earlier task registry and
-interaction references remain intact. A v3/v4 envelope is backed up before
+Schema v5 preserves the task/conversation registries and task-qualified execution
+while adding ordered text/image/file deliveries, immutable staging metadata,
+stable delivery identities, and the optional UsageAdvisor partition. A v3/v4
+envelope is backed up before
 migration; one previous chat/thread becomes one imported compatibility task.
 Queued jobs recover against their exact task, running jobs become interrupted,
 and orphan or future-schema references fail closed.
@@ -114,8 +118,28 @@ recovery resumes the lowest undelivered sequence without rerunning Codex. Recent
 complete media groups retain their backing job and staging directory for the
 configured time window before count-based pruning may delete the whole group.
 
-Codex desktop visibility and same-thread handoff remain Phase 3; UsageAdvisor
-remains Phase 4.
+## UsageAdvisor boundary
+
+UsageAdvisor accepts only `task_target_clarification`,
+`abandoned_image_draft`, `routing_correction`, `delivery_retry`,
+`ownership_conflict`, and `recovery_action`. The retention contract is proposal threshold: 3,
+aggregate cap: 6, proposal cap: 6, and recent timestamp cap: 8.
+Only enum code and timestamp enter the advisor; chat text, sender, task, prompt,
+path, and credential data do not. Proposal sections are fixed code templates for
+observation, evidence, benefit, risks, scope, rollback, and verification.
+
+Bridge friction recording is best-effort and happens after the original
+clarification or durable retry transition. Persistence and notification failures
+are logged but cannot block that original state machine. `/advisor` lists at most
+six proposals. `/advisor approve <proposal-id>` records
+`approve_for_planning`; `/advisor reject <proposal-id>` is terminal. Approval
+never applies, executes, or deploys a change and never edits configuration or
+permissions. The core intentionally exposes no apply interface or external I/O.
+The advisor partition is optional in schema v5, so an older package ignores it
+during rollback; reloading a legacy state yields an empty advisor.
+
+Ordered outbound Weixin media and the review-only UsageAdvisor foundation coexist
+in schema v5. Codex desktop visibility and same-thread handoff remain Phase 3.
 
 Run `bun run typecheck:contracts` to compile the reference adapter and
 `bun test tests/architecture-boundaries.test.ts` to verify the isolation rule.

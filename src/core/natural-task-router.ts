@@ -12,13 +12,13 @@ const envelope = z.object({ action: z.record(z.string(), z.unknown()), imageDisp
 const fallback = (candidates: string[] = []): NaturalTaskDecision => ({ action: { kind: "clarify", question: "请说明要操作哪个任务。", candidateTaskIds: candidates }, imageDisposition: "clarify", confidence: 0 });
 const highRisk = new Set(["stop_task", "archive_task", "approve", "deny", "grant_turn", "grant_session", "answer_user_input", "answer_mcp_field", "decide_mcp_url"]);
 const actionKeys: Record<string, ReadonlySet<string>> = Object.fromEntries([
-  ...["show_help","list_tasks","list_projects","list_threads","list_archived","show_status","show_host","show_usage","show_summary","show_files","show_diff","show_logs","show_identity","service_status","service_logs","service_restart"].map((kind) => [kind, new Set(["kind"])]),
+  ...["show_help","list_tasks","list_projects","list_threads","list_archived","show_status","show_host","show_usage","show_summary","show_files","show_diff","show_logs","show_identity","service_status","service_logs","service_restart","list_advisor_proposals"].map((kind) => [kind, new Set(["kind"])]),
   ...["stop_task","inspect_task","retry_task","archive_task","compact_task","reset_task"].map((kind) => [kind, new Set(["kind","taskId"])]),
   ...["continue_task","steer_task"].map((kind) => [kind, new Set(["kind","taskId","instruction"])]),
   ...["resume_task","fork_task"].map((kind) => [kind, new Set(["kind","taskId","selector","threadId","turnId"])]),
   ...["approve","deny","grant_turn","grant_session"].map((kind) => [kind, new Set(["kind","taskId","requestId","replyCode","option"])]),
   ...["answer_user_input","answer_mcp_field","decide_mcp_url"].map((kind) => [kind, new Set(["kind","taskId","requestId","replyCode","value"])]),
-  ["create_task", new Set(["kind","instruction","workspaceKind","explicitPath","collaborationMode","executionIntent"])], ["discard_images", new Set(["kind","conversationId","senderKey"])], ["submit_images", new Set(["kind","taskId","instruction"])], ["show_history", new Set(["kind","selector"])], ["select_project", new Set(["kind","selector"])], ["search_threads", new Set(["kind","query"])], ["unarchive_thread", new Set(["kind","selector"])], ["clarify", new Set(["kind","question","candidateTaskIds"])],
+  ["create_task", new Set(["kind","instruction","workspaceKind","explicitPath","collaborationMode","executionIntent"])], ["discard_images", new Set(["kind","conversationId","senderKey"])], ["submit_images", new Set(["kind","taskId","instruction"])], ["review_advisor_proposal", new Set(["kind","proposalId","decision"])], ["show_history", new Set(["kind","selector"])], ["select_project", new Set(["kind","selector"])], ["search_threads", new Set(["kind","query"])], ["unarchive_thread", new Set(["kind","selector"])], ["clarify", new Set(["kind","question","candidateTaskIds"])],
 ]);
 
 export async function resolveNaturalTaskDecision(input: NaturalTaskRoutingInput, classifier: NaturalTaskClassifier, minimumConfidence: number, signal?: AbortSignal): Promise<NaturalTaskDecision> {
@@ -37,7 +37,7 @@ export async function resolveNaturalTaskDecision(input: NaturalTaskRoutingInput,
 
 function validateAction(value: Record<string, unknown>, input: NaturalTaskRoutingInput): CommandAction | null {
   if (typeof value.kind !== "string") return null; const kind = value.kind; const allowed = actionKeys[kind]; if (!allowed || Object.keys(value).some((key) => !allowed.has(key))) return null; const taskId = typeof value.taskId === "string" ? value.taskId : undefined; const requestId = typeof value.requestId === "string" ? value.requestId : undefined;
-  for (const key of ["taskId","requestId","instruction","selector","query","replyCode","option","value","conversationId","senderKey","explicitPath","threadId","turnId","question"]) if (value[key] !== undefined && typeof value[key] !== "string") return null;
+  for (const key of ["taskId","requestId","instruction","selector","query","replyCode","option","value","conversationId","senderKey","explicitPath","threadId","turnId","question","proposalId","decision"]) if (value[key] !== undefined && typeof value[key] !== "string") return null;
   if (value.workspaceKind !== undefined && typeof value.workspaceKind !== "string") return null; if (value.collaborationMode !== undefined && value.collaborationMode !== "default" && value.collaborationMode !== "plan") return null;
   if (value.executionIntent !== undefined && value.executionIntent !== "general" && value.executionIntent !== "output_only") return null;
   if (taskId && !input.candidates.some((item) => item.taskId === taskId)) return null;
@@ -47,6 +47,10 @@ function validateAction(value: Record<string, unknown>, input: NaturalTaskRoutin
   if (["create_task","continue_task","steer_task","submit_images"].includes(kind) && !instruction?.trim()) return null;
   if (["select_project","unarchive_thread"].includes(kind) && !selector?.trim()) return null;
   if (kind === "search_threads" && !query?.trim()) return null;
+  if (kind === "review_advisor_proposal") {
+    if (typeof value.proposalId !== "string" || !value.proposalId.trim() || value.proposalId.length > 160) return null;
+    if (value.decision !== "approve_for_planning" && value.decision !== "reject") return null;
+  }
   if (["answer_user_input","answer_mcp_field","decide_mcp_url"].includes(kind) && typeof value.value !== "string") return null;
   if (kind === "clarify" && (typeof value.question !== "string" || !Array.isArray(value.candidateTaskIds) || !value.candidateTaskIds.every((id) => typeof id === "string" && input.candidates.some((candidate) => candidate.taskId === id)))) return null;
   return value as unknown as CommandAction;

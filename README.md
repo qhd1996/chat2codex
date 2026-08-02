@@ -18,6 +18,8 @@ workspace and can return explicitly declared text, image, and file results.
   See [Architecture](docs/architecture.md).
 - Direct-message routing is enabled by default, but every sender or direct chat
   must be explicitly allowlisted except for `/whoami` discovery.
+- UsageAdvisor is a bounded review surface: operational friction produces redacted
+  code-owned proposals, while approval permits planning only; it never applies, executes, or deploys a change.
 - Group chats are disabled by default and require both chat and sender
   allowlists. They can be constrained to `CODEX_GROUP_ALLOWED_ROOTS`.
 - The Codex app-server protocol is experimental. Run `chat2codex doctor` and
@@ -139,11 +141,20 @@ when you need a separate bot instance.
   task boundary.
 - `/help`, `/status`, `/host`, `/projects`, `/project <index|path>`, `/threads`,
   `/history`, `/search`, `/resume`, `/fork`, `/archive`, `/archived`, `/unarchive`,
-  `/retry`, `/usage`, `/service status|logs|restart`, `/compact`, `/plan <task>`, `/new`,
+  `/retry`, `/usage`, `/advisor`, `/advisor approve <proposal-id>`,
+  `/advisor reject <proposal-id>`, `/service status|logs|restart`, `/compact`, `/plan <task>`, `/new`,
   `/cd <path>`,
   `/stop`, `/steer`, `/answer`, `/mcp-answer`, `/approve`, `/permit`,
   `/mcp-decide`, `/summary`, `/files`, `/diff`, `/logs`, and `/whoami` commands.
 - Local state in JSON.
+- UsageAdvisor accepts only the closed signal set
+  `task_target_clarification`, `abandoned_image_draft`, `routing_correction`,
+  `delivery_retry`, `ownership_conflict`, and `recovery_action`. Current limits
+  are proposal threshold: 3, aggregate cap: 6, proposal cap: 6, and recent timestamp cap: 8.
+  Proposal text is rebuilt from code templates and includes
+  observation, evidence, benefit, risks, scope, rollback, and verification.
+  `/advisor approve` records `approve_for_planning`; `/advisor reject` is
+  terminal. Neither action runs Codex or changes configuration or permissions.
 - Codex app-server JSON-RPC for machine-readable progress, final output, and
   approval callbacks.
 - A processing reaction on the original message, throttled plain-text progress,
@@ -246,7 +257,7 @@ prompts, reply codes, secrets, or file contents. Existing slash commands in
 [Chat Commands](#chat-commands) are still supported; natural language is the
 primary Weixin interface, especially when naming one of several active tasks.
 
-State schema v3 is migrated deterministically to task-aware schema v4. Before
+Legacy state is migrated deterministically into the current task-aware schema v5. Before
 the first migrated save, the original state file is retained as
 `<BRIDGE_STATE_PATH>.v3.bak`; the prior chat/thread becomes one imported task.
 Queued task jobs retain their execution metadata, while work that was already
@@ -254,9 +265,9 @@ running is marked interrupted and is never replayed automatically. Future,
 unknown schema versions fail closed.
 
 Phase 1 includes inbound images and natural multi-task control. Phase 2 adds the
-explicit outbound image/file pipeline below. Codex desktop live status and
-same-thread handoff, controlled Weixin groups, and UsageAdvisor/self-improvement
-remain later work.
+explicit outbound image/file pipeline below. The bounded, redacted, review-only
+UsageAdvisor foundation is implemented. Codex desktop live status/same-thread
+handoff and controlled Weixin groups keep their separate acceptance gates.
 
 ## Weixin Phase 2 Outbound Results
 
@@ -487,6 +498,9 @@ bun src/index.ts service install --env .env --project-dir . \
 | `/fork --turn <history-index\|turn_id>` | Fork the current conversation through a selected non-running turn. Use an index from `/history` or pass a turn id directly; the source thread stays unchanged and local files are not restored. |
 | `/retry` | Retry the latest task remembered in this bridge process for the same chat and original sender. Restarting the bridge clears this exact-prompt retry context. |
 | `/usage` | Show the latest turn and cumulative thread token usage plus context-window occupancy when Codex provides it. |
+| `/advisor` | List at most six bounded, redacted UsageAdvisor proposals. |
+| `/advisor approve <proposal-id>` | Record `approve_for_planning`; this permits planning only and applies no change. |
+| `/advisor reject <proposal-id>` | Reject the proposal terminally; this applies no change. |
 | `/archive` | Archive the currently selected Codex thread and clear it from the chat without changing local files. |
 | `/archived` | List archived threads for the current project. |
 | `/unarchive <archived-index\|thread_id>` | Restore an archived thread. Use `/threads` and `/resume` afterward to continue it. |
@@ -632,6 +646,6 @@ chat or reporting a security issue.
 
 1. Complete production and real-client acceptance for ordered Weixin outbound media.
 2. Add Codex desktop live status and one-writer same-thread handoff.
-3. Add review-gated UsageAdvisor proposals without autonomous self-modification.
+3. Expand UsageAdvisor signal coverage only through reviewed, bounded changes.
 4. Optionally move adapters behind an external gateway when deployments need
    process-level credential and SDK isolation.

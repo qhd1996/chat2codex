@@ -56,4 +56,21 @@ describe("natural task routing", () => {
       expect((await resolveNaturalTaskDecision(input, classifier(decision), 0.78)).action.kind).toBe("clarify");
     }
   });
+  test("accepts only bounded review-only UsageAdvisor actions", async () => {
+    expect(await resolveNaturalTaskDecision(input, classifier({
+      action: { kind: "list_advisor_proposals" }, imageDisposition: "none", confidence: 1,
+    }), 0.78)).toMatchObject({ action: { kind: "list_advisor_proposals" } });
+    expect(await resolveNaturalTaskDecision(input, classifier({
+      action: { kind: "review_advisor_proposal", proposalId: "usage-delivery-retry", decision: "approve_for_planning" },
+      imageDisposition: "none", confidence: 1,
+    }), 0.78)).toMatchObject({ action: { kind: "review_advisor_proposal", decision: "approve_for_planning" } });
+    for (const action of [
+      { kind: "review_advisor_proposal", proposalId: "usage-delivery-retry", decision: "apply" },
+      { kind: "review_advisor_proposal", proposalId: "", decision: "reject" },
+      { kind: "review_advisor_proposal", decision: "reject" },
+      { kind: "list_advisor_proposals", proposalId: "unexpected" },
+    ]) {
+      expect((await resolveNaturalTaskDecision(input, classifier({ action, imageDisposition: "none", confidence: 1 }), 0.78)).action.kind).toBe("clarify");
+    }
+  });
 });

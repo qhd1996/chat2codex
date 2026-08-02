@@ -318,6 +318,56 @@ export interface PendingClarification {
   expiresAt: string;
 }
 
+export type UsageAdvisorSignalCode =
+  | "task_target_clarification"
+  | "abandoned_image_draft"
+  | "routing_correction"
+  | "delivery_retry"
+  | "ownership_conflict"
+  | "recovery_action";
+
+export interface UsageAdvisorAggregate {
+  code: UsageAdvisorSignalCode;
+  count: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  recentAt: string[];
+}
+
+export type UsageAdvisorProposalStatus =
+  | "pending_review"
+  | "approved_for_planning"
+  | "rejected";
+
+export interface UsageAdvisorProposalSections {
+  observation: string;
+  benefit: string;
+  risks: string;
+  scope: string;
+  rollback: string;
+  verification: string;
+}
+
+export interface UsageAdvisorProposal {
+  id: string;
+  signalCode: UsageAdvisorSignalCode;
+  status: UsageAdvisorProposalStatus;
+  createdAt: string;
+  reviewedAt?: string;
+  evidence: UsageAdvisorAggregate;
+  sections: UsageAdvisorProposalSections;
+}
+
+export interface UsageAdvisorState {
+  aggregates: Partial<Record<UsageAdvisorSignalCode, UsageAdvisorAggregate>>;
+  proposals: Record<string, UsageAdvisorProposal>;
+}
+
+export const emptyUsageAdvisorState = (): UsageAdvisorState => ({
+  aggregates: {},
+  proposals: {},
+});
+
 export interface BridgeState {
   tasks: Record<string, RegisteredTask>;
   conversations: Record<string, ConversationTaskState>;
@@ -329,6 +379,7 @@ export interface BridgeState {
   diagnostics: BridgeDiagnostics;
   imageDrafts?: Record<string, ImageDraft>;
   clarifications?: Record<string, PendingClarification>;
+  usageAdvisor?: UsageAdvisorState;
 }
 
 export const bridgeStateSchemaVersion = 5 as const;
@@ -350,4 +401,5 @@ export const emptyState = (): BridgeState => ({
   diagnostics: {},
   imageDrafts: {},
   clarifications: {},
+  usageAdvisor: emptyUsageAdvisorState(),
 });
