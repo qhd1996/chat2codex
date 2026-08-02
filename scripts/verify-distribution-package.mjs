@@ -3,7 +3,7 @@ import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const manifestKeys = ["codexCli", "desktop", "hooks", "node", "packageVersion", "requiredDocs", "schemaVersion", "stateSchemas", "windows"];
+const manifestKeys = ["codexCli", "desktop", "hooks", "node", "packageRoots", "packageVersion", "provenance", "requiredDocs", "schemaVersion", "stateSchemas", "windows"];
 const forbiddenPath = /(?:C:[\/]Users[\/]dada|F:[\/](?:workspace|Chat2Codex|codex)|\bdada\b)/iu;
 const secret = /(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|Bearer[ \t]+[A-Za-z0-9._~+/-]{20,})/u;
 
@@ -17,6 +17,11 @@ export async function validateDistributionTree(rootInput) {
   if (manifest.schemaVersion !== 1 || manifest.packageVersion !== packageJson.version) throw new Error("Distribution release manifest package version is invalid.");
   if (manifest.node !== packageJson.engines?.node && packageJson.engines?.node !== undefined) throw new Error("Distribution Node range differs from package engines.");
   validateMatrix(manifest);
+  const packageRoots = manifest.packageRoots;
+  if (!Array.isArray(packageRoots) || packageRoots.length < 8 || packageRoots.length > 32 || !packageRoots.every((item) => typeof item === "string" && /^[A-Za-z0-9._-]+$/u.test(item)) || new Set(packageRoots).size !== packageRoots.length) throw new Error("Distribution package roots are invalid.");
+  const provenance = manifest.provenance;
+  if (!Array.isArray(provenance) || JSON.stringify(provenance) !== JSON.stringify(["LICENSE", "THIRD_PARTY_NOTICES.md", "package.json"])) throw new Error("Distribution provenance files are invalid.");
+  for (const relative of provenance) await regular(root, relative);
   const requiredDocs = manifest.requiredDocs;
   if (!Array.isArray(requiredDocs) || requiredDocs.length !== 4) throw new Error("Distribution required docs list is invalid.");
   for (const relative of requiredDocs) await regular(root, relative).catch(() => { throw new Error(`Missing distribution docs: ${String(relative)}`); });
@@ -30,6 +35,11 @@ export async function validateDistributionTree(rootInput) {
   const roots = ["package.json", ".env.example", "README.md", "README.zh-CN.md", "THIRD_PARTY_NOTICES.md", "distribution", "docs/architecture.md", "docs/codex-app-server-protocol", "docs/phase3", "docs/windows", "docs/quality/clean-windows-e2e-runbook.md", "scripts/codex-hooks"];
   const files = [];
   for (const relative of roots) await collect(root, relative, files);
+  if (path.basename(root) === "package") {
+    const actualRoots = (await readdir(root, { withFileTypes: true })).map((entry) => entry.name).sort();
+    const expectedRoots = [...packageRoots].sort();
+    if (JSON.stringify(actualRoots) !== JSON.stringify(expectedRoots)) throw new Error(`Undeclared packaged top-level content: expected ${expectedRoots.join(",")}; observed ${actualRoots.join(",")}`);
+  }
   const hits = [];
   for (const filePath of files) {
     if (/\.(?:tgz|gz|png|jpg|jpeg|pdf)$/iu.test(filePath)) continue;
