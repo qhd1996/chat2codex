@@ -76,6 +76,12 @@ import { TaskScheduler } from "./task-scheduler.js";
 import { TaskTargetResolver } from "./task-target-resolver.js";
 import { UsageAdvisor } from "./usage-advisor.js";
 import { WorkspaceRouter } from "./workspace-router.js";
+import {
+  DurableGatewayRequestReplay,
+  Phase3GatewayController,
+  claimBoundBridgeStart,
+} from "./phase3-gateway-controller.js";
+import { DesktopOwnershipCoordinator } from "./desktop-ownership.js";
 import type {
   ApprovalCardInput,
   HostHealthCardInput,
@@ -454,6 +460,8 @@ export class BridgeRunner {
   private readonly orchestratedRunTasks = new Set<Promise<void>>();
   private activeGlobalRuns = 0;
   private readonly codex: CodexClient;
+  readonly desktopGatewayController: Phase3GatewayController;
+  readonly desktopGatewayReplay: DurableGatewayRequestReplay;
   private disposed = false;
   private disposePromise: Promise<void> | null = null;
 
@@ -468,6 +476,15 @@ export class BridgeRunner {
     private readonly naturalConversation?: NaturalConversationDependencies,
   ) {
     this.codex = codex;
+    const stateAccess = {
+      readState: <T>(read: (state: BridgeState) => T | Promise<T>) => this.readState(read),
+      mutateState: <T>(mutation: (state: BridgeState) => T | Promise<T>) => this.mutateState(mutation),
+    };
+    this.desktopGatewayController = new Phase3GatewayController({
+      ownership: new DesktopOwnershipCoordinator({ leaseDurationMs: config.desktopGateway.leaseMs }),
+      ...stateAccess,
+    });
+    this.desktopGatewayReplay = new DurableGatewayRequestReplay(stateAccess);
     this.deliverableStager = new DeliverableStager({
       chat2codexHome: config.chat2codexHome,
       maxCount: config.outboundMediaMaxCount,
@@ -2068,10 +2085,14 @@ export class BridgeRunner {
         if (!job || isTerminalJobStatus(job.status)) {
           return;
         }
-        job.status = "running";
+        if (task && Object.values(currentState.desktopGateway?.bindings ?? {}).some((binding) => binding.taskId === task.taskId)) {
+          claimBoundBridgeStart(currentState, { taskId: task.taskId, jobId: job.id, observedAt: startedAt });
+        } else {
+          job.status = "running";
+          job.startedAt = startedAt;
+          job.updatedAt = startedAt;
+        }
         job.prompt = truncateInline(job.prompt, 180);
-        job.startedAt = startedAt;
-        job.updatedAt = startedAt;
       });
     }
     const runState: ActiveRunState = {
@@ -2870,6 +2891,8 @@ export class BridgeRunner {
         durableJob.result = input.lastRun;
         durableJob.completedAt = input.lastRun.completedAt;
         durableJob.updatedAt = input.lastRun.completedAt;
+        delete durableJob.desktopBindingId;
+        delete durableJob.desktopGeneration;
         state.jobs[input.messageId] = durableJob;
         if (input.stagedFiles) {
           this.mediaOutbox.appendResult(state, durableJob, {
@@ -6773,6 +6796,10 @@ export class BridgeRunner {
     return operation;
   }
 
+  private readState<T>(read: (state: BridgeState) => T | Promise<T>): Promise<T> {
+    return this.stateMutationTail.catch(() => undefined).then(() => read(this.requireState()));
+  }
+
   private requireState(): BridgeState {
     if (!this.state) {
       throw new Error("MessageRouter.start() must be called before handling messages.");
@@ -6782,6 +6809,8 @@ export class BridgeRunner {
 }
 
 function restoreBridgeState(target: BridgeState, source: BridgeState): void {
+  target.tasks = source.tasks;
+  target.conversations = source.conversations;
   target.chats = source.chats;
   target.jobs = source.jobs;
   target.outbox = source.outbox;
@@ -6790,6 +6819,7 @@ function restoreBridgeState(target: BridgeState, source: BridgeState): void {
   target.imageDrafts = source.imageDrafts;
   target.clarifications = source.clarifications;
   target.usageAdvisor = source.usageAdvisor;
+  target.desktopGateway = source.desktopGateway;
   target.diagnostics = source.diagnostics;
 }
 
@@ -8040,6 +8070,8 @@ function interruptDurableJob(
   job.updatedAt = at;
   job.completedAt = at;
   job.interruptionReason = reason;
+  delete job.desktopBindingId;
+  delete job.desktopGeneration;
   appendOutboxDeliveries(
     state,
     job,

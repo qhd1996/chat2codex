@@ -247,6 +247,46 @@ describe("loadConfig", () => {
     expect(config.codexAppServerIdleTtlMs).toBe(0);
   });
 
+  test("keeps the Desktop Gateway disabled by default and validates inert file-based configuration", () => {
+    const defaults = loadConfig({ CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex" });
+    expect(defaults.desktopGateway).toMatchObject({ enabled: false, port: 43127, expectedHost: "127.0.0.1:43127" });
+
+    const configured = loadConfig({
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex",
+      CHAT2CODEX_DESKTOP_GATEWAY_ENABLED: "true",
+      CHAT2CODEX_DESKTOP_GATEWAY_PORT: "43128",
+      CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: "/tokens/prompt.key",
+      CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: "/tokens/stop.key",
+      CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE: "/tokens/mcp.key",
+      CHAT2CODEX_DESKTOP_GATEWAY_MAX_BODY_BYTES: "4096",
+      CHAT2CODEX_DESKTOP_GATEWAY_MAX_CONCURRENCY: "4",
+      CHAT2CODEX_DESKTOP_GATEWAY_DEADLINE_MS: "1500",
+      CHAT2CODEX_DESKTOP_HEARTBEAT_MS: "5000",
+      CHAT2CODEX_DESKTOP_LEASE_MS: "20000",
+      CHAT2CODEX_DESKTOP_RECONCILE_MS: "10000",
+    });
+    expect(configured.desktopGateway).toMatchObject({
+      enabled: true, port: 43128, expectedHost: "127.0.0.1:43128",
+      maxBodyBytes: 4096, maxConcurrency: 4, deadlineMs: 1500,
+      heartbeatMs: 5000, leaseMs: 20000, reconcileMs: 10000,
+    });
+    expect(new Set(Object.values(configured.desktopGateway.tokenFiles)).size).toBe(3);
+  });
+
+  test("rejects enabled Desktop Gateway raw tokens, relative or duplicate token paths, and unsafe timing", () => {
+    const base = {
+      CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: "/tmp/chat2codex",
+      CHAT2CODEX_DESKTOP_GATEWAY_ENABLED: "true",
+      CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: "/tokens/prompt.key",
+      CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: "/tokens/stop.key",
+      CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE: "/tokens/mcp.key",
+    };
+    expect(() => loadConfig({ ...base, CHAT2CODEX_DESKTOP_PROMPT_TOKEN: "forbidden" })).toThrow(/raw.*token/i);
+    expect(() => loadConfig({ ...base, CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: "relative.key" })).toThrow(/absolute/i);
+    expect(() => loadConfig({ ...base, CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: "/tokens/prompt.key" })).toThrow(/distinct/i);
+    expect(() => loadConfig({ ...base, CHAT2CODEX_DESKTOP_HEARTBEAT_MS: "30000", CHAT2CODEX_DESKTOP_LEASE_MS: "20000" })).toThrow(/heartbeat/i);
+  });
+
   test("rejects invalid timeout values", () => {
     expect(() =>
       loadConfig({

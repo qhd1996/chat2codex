@@ -35,7 +35,8 @@ const mcpCapability: GatewayCapability = {
 
 class MemoryReplay implements DurableMutationReplay {
   private readonly seen = new Map<string, string>();
-  async checkAndRecord(id: string, bodySha256: string) {
+  async checkAndRecord(id: string, bodySha256: string, request?: unknown) {
+    void request;
     const prior = this.seen.get(id);
     if (prior === undefined) { this.seen.set(id, bodySha256); return "new" as const; }
     return prior === bodySha256 ? "idempotent" as const : "conflict" as const;
