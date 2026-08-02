@@ -79,7 +79,7 @@
     "test": "bun test",
     "test:stable": "bun test --max-concurrency=1",
     "test:properties": "bun test tests/properties --max-concurrency=1",
-    "test:novice": "bun test tests/novice-scenarios.test.ts tests/novice-simulator.test.ts tests/novice-redaction.test.ts tests/novice-fresh-journey.test.ts tests/novice-upgrade-journey.test.ts tests/novice-daily-use.test.ts tests/novice-recovery.test.ts tests/novice-evidence.test.ts tests/properties/novice-actions.property.test.ts tests/properties/novice-lifecycle.property.test.ts tests/novice-restart.test.ts --max-concurrency=1",
+    "test:novice": "bun test tests/novice-scenarios.test.ts tests/novice-simulator.test.ts tests/novice-redaction.test.ts tests/novice-fresh-journey.test.ts tests/novice-upgrade-journey.test.ts tests/novice-daily-use.test.ts tests/novice-recovery.test.ts tests/novice-evidence.test.ts tests/outbox-retry-scheduler.test.ts tests/properties/novice-actions.property.test.ts tests/properties/novice-lifecycle.property.test.ts tests/novice-restart.test.ts --max-concurrency=1",
     "test:novice:30": "bun scripts/run-novice-matrix.mjs --repetitions 30 --report .tmp/novice-repository-30.json",
     "check:stable": "bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",

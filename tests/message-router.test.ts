@@ -112,19 +112,6 @@ class DesktopFenceStateStore extends JsonStateStore {
   }
 }
 
-class FailUsageAdvisorStateStore extends JsonStateStore {
-  advisorSaveAttempts = 0;
-  failAdvisorSaves = false;
-
-  override async save(state: Parameters<JsonStateStore["save"]>[0]): Promise<void> {
-    if (this.failAdvisorSaves && Object.keys(state.usageAdvisor?.aggregates ?? {}).length > 0) {
-      this.advisorSaveAttempts += 1;
-      throw new Error("simulated UsageAdvisor state save failure");
-    }
-    await super.save(state);
-  }
-}
-
 class CollectingSender implements ChatSender {
   readonly messages: Array<{ chatId: string; text: string; kind: "text" | "markdown" }> = [];
   readonly reactions: Array<{
@@ -7612,28 +7599,6 @@ describe("MessageRouter access control", () => {
         }
       },
     });
-  });
-
-  test("UsageAdvisor persistence failure does not block durable delivery retry", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-advisor-save-failure-"));
-    let router: MessageRouter | undefined;
-    try {
-      const config = loadConfig({ FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir, BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"), ALLOWED_USER_IDS: "ou_user" });
-      const store = new FailUsageAdvisorStateStore(config.bridgeStatePath);
-      const sender = new PersistentDurableDeliveryFailingSender();
-      const codex = new FakeCodex();
-      router = new MessageRouter(config, store, sender, silentLogger, codex);
-      await router.start();
-      store.failAdvisorSaves = true;
-      await router.accept({ messageId: "advisor-save-failure", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "finish despite advisor persistence failure" });
-      await waitForState(store, (state) => Object.values(state.outbox).some((item) => item.jobId === "advisor-save-failure" && item.status === "pending" && item.attempts >= 2));
-
-      const state = await store.load();
-      expect(store.advisorSaveAttempts).toBeGreaterThanOrEqual(1);
-      expect(state.usageAdvisor?.aggregates.delivery_retry).toBeUndefined();
-      expect(Object.values(state.outbox).find((item) => item.jobId === "advisor-save-failure")?.status).toBe("pending");
-      expect(codex.runs).toHaveLength(1);
-    } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
 
   test("UsageAdvisor notification failure does not stop the ordinary outbox retry state machine", async () => {

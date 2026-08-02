@@ -259,6 +259,7 @@ export interface CodexClient {
 
 export interface MessageRouterRuntimeControl {
   requestRestart?: () => void;
+  scheduleOutboxRetry?: (delayMs: number, callback: () => void) => () => void;
 }
 
 export interface NaturalConversationDependencies {
@@ -418,7 +419,7 @@ export class BridgeRunner {
   private readonly workspaceQueues = new Map<string, Promise<void>>();
   private readonly messageTasks = new Map<string, Promise<void>>();
   private readonly outboxTasks = new Map<string, Promise<void>>();
-  private readonly outboxRetryTimers = new Map<string, NodeJS.Timeout>();
+  private readonly outboxRetryTimers = new Map<string, { cancel(): void }>();
   private readonly queueDepths = new Map<string, number>();
   private readonly queuedRuns = new Map<string, QueuedRunState>();
   private readonly activeRuns = new Map<string, ActiveRunState>();
@@ -513,9 +514,7 @@ export class BridgeRunner {
       return this.disposePromise;
     }
     this.disposed = true;
-    for (const timer of this.outboxRetryTimers.values()) {
-      clearTimeout(timer);
-    }
+    for (const timer of this.outboxRetryTimers.values()) timer.cancel();
     this.outboxRetryTimers.clear();
     if (this.desktopReconcileTimer) clearInterval(this.desktopReconcileTimer);
     for (const pending of this.pendingRunSteers.values()) {
@@ -3006,15 +3005,22 @@ export class BridgeRunner {
       Math.max(0, attempts - 1),
       outboxRetryDelaysMs.length - 1,
     );
-    const timer = setTimeout(() => {
-      if (this.outboxRetryTimers.get(jobId) !== timer) {
+    const token = { cancel: () => {} };
+    this.outboxRetryTimers.set(jobId, token);
+    const fire = () => {
+      if (this.outboxRetryTimers.get(jobId) !== token) {
         return;
       }
       this.outboxRetryTimers.delete(jobId);
       this.scheduleOutboxDrain(jobId);
-    }, outboxRetryDelaysMs[delayIndex]);
+    };
+    if (this.runtimeControl.scheduleOutboxRetry) {
+      token.cancel = this.runtimeControl.scheduleOutboxRetry(outboxRetryDelaysMs[delayIndex], fire);
+      return;
+    }
+    const timer = setTimeout(fire, outboxRetryDelaysMs[delayIndex]);
     timer.unref?.();
-    this.outboxRetryTimers.set(jobId, timer);
+    token.cancel = () => clearTimeout(timer);
   }
 
   private clearOutboxRetry(jobId: string): void {
@@ -3022,7 +3028,7 @@ export class BridgeRunner {
     if (!timer) {
       return;
     }
-    clearTimeout(timer);
+    timer.cancel();
     this.outboxRetryTimers.delete(jobId);
   }
 
