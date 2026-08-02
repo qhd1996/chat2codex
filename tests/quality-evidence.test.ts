@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -127,5 +127,29 @@ describe("quality evidence manifest", () => {
       const both = async (value: string) => value === commit || value === authorityCommit;
       await expect(validateEvidenceManifest(manifest, { repositoryRoot: root, commitExists: both })).resolves.toMatchObject({ passedTargets: 1 });
     });
+  });
+});
+
+describe("real Weixin and Desktop evidence runbook", () => {
+  test("separates evidence levels and every external approval stop", async () => {
+    const root = path.resolve(import.meta.dir, "..");
+    const source = await readFile(path.join(root, "docs", "quality", "weixin-e2e-runbook.md"), "utf8");
+    for (const required of [
+      "repository automation", "production read-only health", "production write or restart",
+      "~/.codex, Hook, or MCP", "Desktop restart or Computer Use", "each real Weixin outbound action",
+      "fresh handle", "UTC timestamp", "Asia/Shanghai", "redacted screenshot", "redacted transcript",
+      "state SHA-256", "PID + CreationDate", "ordering", "deduplication", "rollback hash",
+      "CI does not prove real E2E", "static inspection does not prove real E2E", "schema presence does not prove real E2E",
+    ]) expect(source).toContain(required);
+    expect((source.match(/APPROVAL STOP/gu) ?? []).length).toBeGreaterThanOrEqual(4);
+  });
+
+  test("contains evidence templates and no pre-authorized production mutation", async () => {
+    const root = path.resolve(import.meta.dir, "..");
+    const source = await readFile(path.join(root, "docs", "quality", "weixin-e2e-runbook.md"), "utf8");
+    for (const field of ["Requirement ID", "Evidence level", "Observed at", "Repository commit", "Artifact SHA-256", "Abort condition", "Outcome"]) expect(source).toContain(field);
+    expect(source).not.toMatch(/(?:schtasks|Start-ScheduledTask|Stop-Process|taskkill|Set-Acl|icacls|npm install -g|openspec init)\b/iu);
+    expect(source).not.toContain("productionAuthorized: true");
+    expect(source).not.toContain("realExternalActionsAuthorized: true");
   });
 });
