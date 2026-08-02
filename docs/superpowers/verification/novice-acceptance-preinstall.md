@@ -2,7 +2,7 @@
 
 Date: 2026-08-03 Asia/Shanghai
 
-Repository candidate SHA: `d3c214f9fdda44f7e06f8fe1170e6076f4506f1e`
+Repository candidate SHA: `8d7f04a3da6b614ae8575975268f0ec4188e8b93`
 
 Requirements authority: `01e827bbdc6584136627d9f1f137e8051f0a8c97`
 
@@ -38,17 +38,17 @@ and a Node 24 build.
 
 | Property | Candidate A | Reproduction B |
 | --- | --- | --- |
-| Commit | `d3c214f9fdda44f7e06f8fe1170e6076f4506f1e` | same |
+| Commit | `8d7f04a3da6b614ae8575975268f0ec4188e8b93` | same |
 | Version | `0.8.0-novice.1` | same |
-| Size | 368,266 bytes | 368,266 bytes |
-| SHA-256 | `ce0f8e8099d7f06b0c716c6bc588a80082ca0f771e2a03335baae1cc214fce94` | same |
+| Size | 381,978 bytes | 381,978 bytes |
+| SHA-256 | `286395eb33abd020301f567197261092b0c768bc65f2e30891206996e3e73cb8` | same |
 | Byte comparison | equal | equal |
-| Files | 124 | 124 |
+| Files | 129 | 129 |
 
 Candidate A:
-`F:/workspace/chat2codex-custom/.worktrees/novice-candidate-d3c214f/.tmp/pack/chat2codex-0.8.0-novice.1.tgz`
+`F:/workspace/chat2codex-custom/.worktrees/novice-candidate-8d7f04a/.tmp/pack/chat2codex-0.8.0-novice.1.tgz`
 
-The extracted-package verifier passed on Candidate A: 124 files scanned, three
+The extracted-package verifier passed on Candidate A: 129 files scanned, three
 Hook hashes matched, the closed top-level set matched, and machine-path/secret
 hits were zero. Package provenance, Windows/Node/Codex/Desktop support fields,
 state-schema read range `4..6`, and write schema `6` are present.
@@ -91,15 +91,15 @@ rollback state
 
 | Gate | Result |
 | --- | --- |
-| Full stable gate | 871 pass, 8 platform-conditional skip, 0 fail; typecheck, contracts, and build pass |
+| Full stable gate | 877 pass, 8 platform-conditional skip, 0 fail; typecheck, contracts, and build pass |
 | Router closed set | 184 tests across eight exact-name shards |
 | Router result | 183 pass, 1 Windows symlink skip, 0 fail/timeout/residual; 2.390-3.861 seconds per shard |
 | Novice matrix | 30 complete repetitions x 19 scenarios |
-| Novice result | 1,740 pass, 0 fail/skip/timeout/residual |
-| Repository binding | `repositoryCommit=d3c214f9fdda44f7e06f8fe1170e6076f4506f1e` |
+| Novice result | 1,800 test passes, 30 x 19 scenario coverage, 0 fail/skip/timeout/residual |
+| Repository binding | `repositoryCommit=8d7f04a3da6b614ae8575975268f0ec4188e8b93` |
 | Evidence level / verdict | `repository` / `repository_pass` |
-| Matrix report | `.tmp/novice-repository-30-d3c214f.json` |
-| Matrix report SHA-256 | `b094257d65f1fc38ce595d6a66299823cdabcebc7898de0efb6df2b566b9d11f` |
+| Matrix report | `.tmp/novice-repository-30-8d7f04a.json` |
+| Matrix report SHA-256 | `db4136749cc6b90b4c563169c2dbb815fc85d37e59f2446a7cc5634a59eeefbd` |
 | Matrix residual processes after completion | 0 |
 | Property runs | fixed seeds, at least 100 runs per declared property |
 
@@ -126,8 +126,8 @@ bun run quality:check
 bun audit
 bun pm pack --destination '<candidate-output>'
 node '<extracted-package>/scripts/verify-distribution-package.mjs' '<extracted-package>'
-node '<extracted-package>/scripts/run-novice-acceptance.mjs' --archive '<candidate.tgz>' --sha256 'ce0f8e8099d7f06b0c716c6bc588a80082ca0f771e2a03335baae1cc214fce94' --owned-root '<owned-root>' --production-root '<excluded-production-root>' --cleanup
-bun scripts/run-novice-matrix.mjs --repetitions 30 --report '.tmp/novice-repository-30-d3c214f.json'
+node '<extracted-package>/scripts/run-novice-acceptance.mjs' --archive '<candidate.tgz>' --sha256 '286395eb33abd020301f567197261092b0c768bc65f2e30891206996e3e73cb8' --owned-root '<owned-root>' --production-root '<excluded-production-root>' --cleanup
+bun scripts/run-novice-matrix.mjs --repetitions 30 --report '.tmp/novice-repository-30-8d7f04a.json'
 bun scripts/make-router-shards.mjs tests/message-router.test.ts 8
 node scripts/run-test-shard.mjs --name '<router-shard>' --timeout-ms 90000 --report '<report>' -- bun test tests/message-router.test.ts --test-name-pattern '<exact-suffix-pattern>'
 ```
@@ -176,6 +176,21 @@ Failures remain evidence and are not counted as passes.
    recursive cleanup. Each was checked for zero matching process. They are not
    counted in Candidate A's zero-owned-residual result and must be removed only by
    a separately validated cleanup action.
+6. The first package-level clean-Windows design allowed caller freshness flags and
+   simulated lifecycle results to create a qualifying `pass`. Independent review
+   rejected that evidence. Commit `8d7f04a` replaces it with schema-v2 evidence
+   requiring a hash-bound GitHub-hosted no-checkout attestation, real current-user
+   Scheduled Task install/start/graceful stop/restart/double-uninstall/reinstall,
+   exact PID+CreationDate single-writer/lock proof, another-interactive-user ACL
+   denial, eight installed-file hashes, thirty unique stopped-process proofs, and
+   fixed failure history. The remote job has not run; this is implementation
+   readiness, not direct clean-Windows evidence.
+7. Two full/isolated Router runs exceeded the durable-capacity test's five-second
+   test budget. Exact diagnosis showed two sequential convergence waits sharing
+   one budget. The test now waits for the sender durable-failure event and verifies
+   the capacity notice persisted; the independent retry-scheduler test retains
+   retry behavior. The exact test moved from 6.53 seconds/fail to 1.84 seconds/pass
+   without extending a timeout, and the fresh full gate passed.
 
 ## Clean Windows qualification audit
 
@@ -187,6 +202,13 @@ has no created profile. No current evidence proves all required fresh-profile,
 repository-absent, prior-package-absent, service/state/secret-absent flags. Neither
 account is therefore claimed as a qualifying environment. No account, password,
 profile, ACL, VM, or process was changed.
+
+The package now ships a no-checkout `windows-latest` job and strict schema-v2
+validator. The clean job downloads only the reviewed archive, privately installs
+it, creates and removes a unique non-production Scheduled Task and temporary ACL
+test user, runs thirty package repetitions, and emits redacted attestation,
+evidence, and zero-residual artifacts. It remains pending until an actual remote
+run supplies those artifacts and cannot satisfy real Weixin/Desktop `DIST-003`.
 
 ## Routing and escalation
 
@@ -211,7 +233,7 @@ profile, ACL, VM, or process was changed.
 | `DIST-001` | PASS candidate evidence | release handoff remains coupled to final acceptance, but archive/version/manifest/hash/provenance/reproduction are direct |
 | `DIST-002` | PARTIAL | clean/disposable Windows installed task, another-user ACL denial, doctor, upgrade, rollback, uninstall, reinstall direct run |
 | `DIST-003` | MISSING | same reviewed archive on a qualifying clean Windows environment through install, real login, Codex/Desktop, E2E, upgrade, rollback, uninstall |
-| `NOVICE-001..003` | PARTIAL | qualifying clean Windows from-zero package-to-mock-E2E report |
+| `NOVICE-001..003` | PARTIAL | no-checkout clean Windows job is implemented with schema-v2 attestation but has not produced direct remote artifacts |
 | Task 12 / `DESKTOP-001..003` | MISSING/PARTIAL | separately approved real backup, install, Hook trust, Desktop restart, and seven installed primitives |
 | Real Weixin / production rows | PARTIAL/MISSING | separately approved production single-writer recovery/deploy and real inbound/outbound evidence |
 
