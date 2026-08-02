@@ -697,11 +697,11 @@ async function checkRuntimeDirectory(dirPath: string, label: string): Promise<Do
 
 function checkNodeVersion(version: string): DoctorCheck {
   const [major = 0, minor = 0] = version.split(".").map((part) => Number.parseInt(part, 10));
-  const ok = major > 20 || (major === 20 && minor >= 12);
+  const ok = major > 20 || (major === 20 && minor >= 19);
   return {
     label: "Node.js",
     status: ok ? "ok" : "error",
-    detail: `v${version}${ok ? "" : " is below the required >=20.12.0"}`,
+    detail: `v${version}${ok ? "" : " is below the required >=20.19.0"}`,
   };
 }
 

@@ -23,7 +23,7 @@ export async function validateDistributionTree(rootInput) {
   if (!Array.isArray(provenance) || JSON.stringify(provenance) !== JSON.stringify(["LICENSE", "THIRD_PARTY_NOTICES.md", "package.json"])) throw new Error("Distribution provenance files are invalid.");
   for (const relative of provenance) await regular(root, relative);
   const requiredDocs = manifest.requiredDocs;
-  if (!Array.isArray(requiredDocs) || requiredDocs.length !== 4) throw new Error("Distribution required docs list is invalid.");
+  if (!Array.isArray(requiredDocs) || requiredDocs.length !== 6) throw new Error("Distribution required docs list is invalid.");
   for (const relative of requiredDocs) await regular(root, relative).catch(() => { throw new Error(`Missing distribution docs: ${String(relative)}`); });
   const hooks = object(manifest.hooks, "Hook hashes");
   if (Object.keys(hooks).length !== 3) throw new Error("Distribution must declare exactly three Hook hashes.");
@@ -78,5 +78,5 @@ function object(value, label) { if (!value || typeof value !== "object" || Array
 function exactKeys(value, allowed, label) { const unknown=Object.keys(value).filter((key)=>!allowed.includes(key)); const missing=allowed.filter((key)=>!Object.hasOwn(value,key)); if(unknown.length) throw new Error(`Unknown ${label} field.`); if(missing.length) throw new Error(`Missing ${label} field.`); }
 function same(left, right) { return process.platform === "win32" ? left.toLocaleLowerCase() === right.toLocaleLowerCase() : left === right; }
 
-async function main() { const root=path.resolve(fileURLToPath(new URL("..", import.meta.url))); const result=await validateDistributionTree(root); process.stdout.write(`Distribution package valid: ${result.packageVersion}; hooks=${result.hookCount}; scanned=${result.scannedFiles}\n`); }
+async function main() { const selfRoot=path.resolve(fileURLToPath(new URL("..", import.meta.url))); const root=process.argv[2] ? path.resolve(process.argv[2]) : selfRoot; const result=await validateDistributionTree(root); process.stdout.write(`Distribution package valid: ${result.packageVersion}; hooks=${result.hookCount}; scanned=${result.scannedFiles}\n`); }
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) main().catch((error)=>{process.stderr.write(`distribution-package: ${error instanceof Error ? error.message : String(error)}\n`);process.exitCode=1;});

@@ -1,6 +1,6 @@
 {
   "name": "chat2codex",
-  "version": "0.8.0-windows.1",
+  "version": "0.8.0-novice.1",
   "description": "Run local Codex from Feishu/Lark or Weixin chat.",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,12 +20,21 @@
     "docs/windows",
     "docs/quality/clean-windows-e2e-runbook.md",
     "quality/evidence/clean-windows-template.json",
+    "quality/evidence/novice-acceptance-template.json",
+    "quality/scenarios/novice-daily-use.json",
     "scripts/codex-hooks",
     "scripts/generate-phase3-temp-codex-home.mjs",
     "scripts/stage-phase3-codex-home.mjs",
     "scripts/verify-phase3-temp-codex-home.mjs",
     "scripts/verify-distribution-package.mjs",
-    "scripts/verify-clean-windows-evidence.mjs"
+    "scripts/verify-clean-windows-evidence.mjs",
+    "scripts/verify-novice-evidence.mjs",
+    "scripts/run-novice-acceptance.mjs",
+    "scripts/novice-windows-worker.mjs",
+    "scripts/novice-native-lifecycle-probe.mjs",
+    "scripts/process-identity.mjs",
+    "docs/quality/novice-acceptance-runbook.md",
+    "docs/windows/novice-troubleshooting.md"
   ],
   "keywords": [
     "codex",
@@ -96,7 +105,7 @@
     "typescript": "^7.0.2"
   },
   "engines": {
-    "node": ">=20.12.0"
+    "node": ">=20.19.0"
   },
   "license": "MIT"
 }

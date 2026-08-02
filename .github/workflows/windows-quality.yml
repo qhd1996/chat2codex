@@ -1,0 +1,43 @@
+name: Windows quality
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  novice-acceptance:
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.9
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Run novice fast gate
+        run: bun run test:novice
+      - name: Run native temporary lifecycle gate
+        run: bun scripts/run-test-shard.mjs --name novice-native-ci --timeout-ms 90000 --report .tmp/novice-native-ci.json -- bun scripts/novice-native-lifecycle-probe.mjs
+      - name: Run thirty repetitions
+        run: bun run test:novice:30
+      - name: Audit dependencies
+        run: bun audit
+      - name: Pack reviewed candidate
+        run: bun pm pack --destination .tmp/package
+      - name: Verify extracted package and residual evidence
+        shell: pwsh
+        run: |
+          $archive = Get-ChildItem .tmp/package/*.tgz | Select-Object -Single
+          tar -xf $archive.FullName -C .tmp/package
+          node scripts/verify-distribution-package.mjs .tmp/package/package
+          $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
+          if (($report.repetitions | Where-Object { $_.counts.residualProcesses -ne 0 }).Count -ne 0) { throw 'residual process evidence' }

@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "packageVersion": "0.8.0-windows.1",
+  "packageVersion": "0.8.0-novice.1",
   "windows": { "supported": ["win32-x64"], "unverified": ["win32-arm64"] },
-  "node": ">=20.12.0",
+  "node": ">=20.19.0",
   "codexCli": "0.146.0",
   "desktop": "Task 12 installed behavior required",
   "packageRoots": [
@@ -21,6 +21,8 @@
     "docs/windows/lifecycle.md",
     "docs/windows/compatibility.md",
     "docs/windows/troubleshooting.md",
-    "docs/quality/clean-windows-e2e-runbook.md"
+    "docs/quality/clean-windows-e2e-runbook.md",
+    "docs/quality/novice-acceptance-runbook.md",
+    "docs/windows/novice-troubleshooting.md"
   ]
 }
