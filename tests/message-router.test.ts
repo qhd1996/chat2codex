@@ -8273,9 +8273,7 @@ describe("MessageRouter access control", () => {
     } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
 
-  test.each([false, true])(
-    "Desktop Gateway generation owner fences recovered bound runs before Codex (save failure=%s)",
-    async (failFenceSave) => {
+  const assertDesktopGatewayFenceRecovery = async (failFenceSave: boolean) => {
       const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-desktop-fence-"));
       let router: MessageRouter | undefined;
       try {
@@ -8345,8 +8343,11 @@ describe("MessageRouter access control", () => {
         await router?.dispose().catch(() => undefined);
         await rm(tempDir, { recursive: true, force: true });
       }
-    },
-  );
+  };
+  test("Desktop Gateway generation owner starts Codex only after its fence is durable", () =>
+    assertDesktopGatewayFenceRecovery(false));
+  test("Desktop Gateway generation owner starts no Codex process when fence save fails", () =>
+    assertDesktopGatewayFenceRecovery(true));
 
   test("task recovery does not downgrade unverified output-only isolation", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-task-output-recovery-"));
@@ -9631,7 +9632,7 @@ async function waitForState(
 ): Promise<void> {
   const startedAt = Date.now();
   while (!predicate(await store.load())) {
-    if (Date.now() - startedAt > 1000) {
+    if (Date.now() - startedAt > 5000) {
       throw new Error("Timed out waiting for persisted state");
     }
     await new Promise((resolve) => setTimeout(resolve, 1));

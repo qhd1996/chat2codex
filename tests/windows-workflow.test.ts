@@ -29,6 +29,12 @@ describe("Windows quality workflow", () => {
     expect(packageJson.scripts["check:stable"]).toBe("bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build");
   });
 
+  test("anchors every generated Router shard to one exact test-name suffix", async () => {
+    const source = await readFile(path.join(root, "scripts", "make-router-shards.mjs"), "utf8");
+    expect(source).toContain('pattern: `(?:${items.map(escape).join("|")})$`');
+    expect(source).toContain("candidate.endsWith(name)");
+  });
+
   test("cannot operate production, user Codex, Desktop, or Weixin", async () => {
     const source = await readFile(path.join(root, ".github", "workflows", "windows-ci.yml"), "utf8");
     expect(source).not.toMatch(/F:[\\/]Chat2Codex|\.codex|Set-Acl|icacls|schtasks|Start-ScheduledTask|Stop-Process|taskkill.*Chat2Codex|Computer Use|send.*Weixin|微信.*发送|hook.*install/iu);
