@@ -54,6 +54,8 @@
     "start": "node dist/index.js",
     "start:bun": "bun src/index.ts",
     "test": "bun test",
+    "test:stable": "bun test --max-concurrency=1",
+    "check:stable": "bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.contracts.json"
   },

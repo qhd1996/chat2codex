@@ -41,7 +41,7 @@ jobs:
         run: >-
           node scripts/run-test-shard.mjs --name windows-full-check --timeout-ms 180000
           --report .tmp/quality-evidence/windows-full-check.json
-          -- bun run check
+          -- bun run check:stable
 
       - name: Generate deterministic router shards
         shell: pwsh

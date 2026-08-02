@@ -12,13 +12,21 @@ describe("Windows quality workflow", () => {
       "windows-latest", "actions/checkout@v7", "actions/setup-node@v7", 'node-version: "24"',
       "fetch-depth: 0",
       "oven-sh/setup-bun@v2", "bun-version: 1.3.9", "bun install --frozen-lockfile",
-      "bun run quality:check", "scripts/run-test-shard.mjs", "bun run check",
+      "bun run quality:check", "scripts/run-test-shard.mjs", "bun run check:stable",
       "scripts/make-router-shards.mjs", "tests/message-router.test.ts", "quality:windows",
       "actions/upload-artifact@v4", "if: always()", "retention-days:",
     ]) expect(source).toContain(required);
     expect((source.match(/run-test-shard\.mjs/gu) ?? []).length).toBeGreaterThanOrEqual(2);
     expect(source).toMatch(/timeout-minutes:\s*[1-9][0-9]?/u);
     expect(source).toMatch(/permissions:\s*[\r\n]+\s+contents:\s+read/u);
+  });
+
+  test("defines a deterministic complete repository gate without replacing the fast diagnostic", async () => {
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+    expect(packageJson.scripts.test).toBe("bun test");
+    expect(packageJson.scripts.check).toContain("bun test");
+    expect(packageJson.scripts["test:stable"]).toBe("bun test --max-concurrency=1");
+    expect(packageJson.scripts["check:stable"]).toBe("bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build");
   });
 
   test("cannot operate production, user Codex, Desktop, or Weixin", async () => {
