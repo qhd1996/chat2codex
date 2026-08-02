@@ -379,6 +379,7 @@ export interface BridgeState {
   diagnostics: BridgeDiagnostics;
   imageDrafts?: Record<string, ImageDraft>;
   clarifications?: Record<string, PendingClarification>;
+  usageAdvisor?: UsageAdvisorState;
 }
 
 export const bridgeStateSchemaVersion = 5 as const;
@@ -400,4 +401,5 @@ export const emptyState = (): BridgeState => ({
   diagnostics: {},
   imageDrafts: {},
   clarifications: {},
+  usageAdvisor: emptyUsageAdvisorState(),
 });

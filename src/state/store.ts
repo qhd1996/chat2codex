@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import {
+  USAGE_ADVISOR_LIMITS,
+  USAGE_ADVISOR_SIGNAL_CODES,
+  UsageAdvisor,
+} from "../core/usage-advisor.js";
+import {
   type BridgeState,
   type BridgeStateEnvelopeV5,
   type DurableCodexJob,
@@ -10,9 +15,15 @@ import {
   type ImageDraft,
   type PendingClarification,
   type RegisteredTask,
+  type UsageAdvisorAggregate,
+  type UsageAdvisorProposal,
+  type UsageAdvisorProposalStatus,
+  type UsageAdvisorSignalCode,
+  type UsageAdvisorState,
   bridgeStateSchemaVersion,
   createSessionEpoch,
   emptyState,
+  emptyUsageAdvisorState,
 } from "./types.js";
 
 const maxProcessedMessageIds = 500;
@@ -88,6 +99,7 @@ export class JsonStateStore {
   async save(state: BridgeState): Promise<void> {
     state.tasks ??= {};
     state.conversations ??= {};
+    state.usageAdvisor = coerceUsageAdvisorState(state.usageAdvisor);
     normalizeChatSessionEpochs(state);
     importLegacyChatTasks(state, this.adapterId);
     normalizeTaskReferences(state);
@@ -208,7 +220,100 @@ function coerceBridgeState(value: unknown): BridgeState {
     diagnostics: parsed.diagnostics ?? {},
     imageDrafts: coerceImageDrafts(parsed.imageDrafts),
     clarifications: coerceClarifications(parsed.clarifications),
+    usageAdvisor: coerceUsageAdvisorState(parsed.usageAdvisor),
   };
+}
+
+function coerceUsageAdvisorState(value: unknown): UsageAdvisorState {
+  if (!isRecord(value)) return emptyUsageAdvisorState();
+  const rawAggregates = isRecord(value.aggregates) ? value.aggregates : {};
+  const aggregates: UsageAdvisorState["aggregates"] = {};
+  for (const code of USAGE_ADVISOR_SIGNAL_CODES) {
+    const aggregate = coerceUsageAdvisorAggregate(rawAggregates[code], code);
+    if (aggregate) aggregates[code] = aggregate;
+  }
+
+  const rawProposals = isRecord(value.proposals) ? value.proposals : {};
+  const proposals: Record<string, UsageAdvisorProposal> = {};
+  for (const code of USAGE_ADVISOR_SIGNAL_CODES) {
+    const aggregate = aggregates[code];
+    if (!aggregate || aggregate.count < USAGE_ADVISOR_LIMITS.proposalThreshold) continue;
+    const canonical = canonicalUsageAdvisorProposal(code, aggregate);
+    const raw = rawProposals[canonical.id];
+    if (!isRecord(raw) || raw.id !== canonical.id || raw.signalCode !== code) continue;
+    if (!isUsageAdvisorProposalStatus(raw.status)) continue;
+    const createdAt = normalizedIsoTimestamp(raw.createdAt);
+    if (!createdAt) continue;
+
+    canonical.createdAt = createdAt;
+    canonical.evidence = { ...aggregate, recentAt: [...aggregate.recentAt] };
+    if (raw.status === "pending_review") {
+      proposals[canonical.id] = canonical;
+      continue;
+    }
+    const reviewedAt = normalizedIsoTimestamp(raw.reviewedAt);
+    if (!reviewedAt || reviewedAt.localeCompare(createdAt) < 0) continue;
+    const advisor = new UsageAdvisor({ aggregates: { [code]: aggregate }, proposals: { [canonical.id]: canonical } });
+    proposals[canonical.id] = advisor.review(
+      canonical.id,
+      raw.status === "approved_for_planning" ? "approve_for_planning" : "reject",
+      reviewedAt,
+    );
+  }
+  return { aggregates, proposals };
+}
+
+function coerceUsageAdvisorAggregate(
+  value: unknown,
+  code: UsageAdvisorSignalCode,
+): UsageAdvisorAggregate | undefined {
+  if (!isRecord(value) || value.code !== code) return undefined;
+  if (!Number.isSafeInteger(value.count) || (value.count as number) < 1) return undefined;
+  const first = normalizedIsoTimestamp(value.firstSeenAt);
+  const last = normalizedIsoTimestamp(value.lastSeenAt);
+  if (!first || !last) return undefined;
+  const validRecent = Array.isArray(value.recentAt)
+    ? value.recentAt.map(normalizedIsoTimestamp).filter((item): item is string => Boolean(item))
+    : [];
+  const ordered = [...validRecent, first, last].sort((left, right) => left.localeCompare(right));
+  const recentAt = validRecent.length
+    ? validRecent.sort((left, right) => left.localeCompare(right)).slice(-USAGE_ADVISOR_LIMITS.recentTimestamps)
+    : first === last
+      ? [first]
+      : [first, last];
+  return {
+    code,
+    count: value.count as number,
+    firstSeenAt: ordered[0]!,
+    lastSeenAt: ordered.at(-1)!,
+    recentAt,
+  };
+}
+
+function canonicalUsageAdvisorProposal(
+  code: UsageAdvisorSignalCode,
+  aggregate: UsageAdvisorAggregate,
+): UsageAdvisorProposal {
+  const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+  let proposal: UsageAdvisorProposal | undefined;
+  for (let index = 0; index < USAGE_ADVISOR_LIMITS.proposalThreshold; index += 1) {
+    proposal = advisor.record({ code, at: aggregate.lastSeenAt }) ?? proposal;
+  }
+  if (!proposal) throw new Error("UsageAdvisor proposal template is unavailable.");
+  return proposal;
+}
+
+function isUsageAdvisorProposalStatus(value: unknown): value is UsageAdvisorProposalStatus {
+  return value === "pending_review" || value === "approved_for_planning" || value === "rejected";
+}
+
+function normalizedIsoTimestamp(value: unknown): string | undefined {
+  if (typeof value !== "string" || !Number.isFinite(Date.parse(value))) return undefined;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return undefined;
+  }
 }
 
 function isBridgeStateEnvelope(value: unknown): value is BridgeStateEnvelopeV5 {

@@ -5,6 +5,11 @@ import path from "node:path";
 import { describe, expect, test } from "bun:test";
 
 import { JsonStateStore } from "../src/state/store.js";
+import {
+  USAGE_ADVISOR_LIMITS,
+  USAGE_ADVISOR_SIGNAL_CODES,
+  UsageAdvisor,
+} from "../src/core/usage-advisor.js";
 import type {
   BridgeState,
   DurableCodexJob,
@@ -13,7 +18,7 @@ import type {
   DurableOutboxStatus,
   RegisteredTask,
 } from "../src/state/types.js";
-import { emptyState } from "../src/state/types.js";
+import { emptyState, emptyUsageAdvisorState } from "../src/state/types.js";
 
 describe("JsonStateStore", () => {
   test("loads empty state when no file exists and persists state atomically", async () => {
@@ -31,6 +36,7 @@ describe("JsonStateStore", () => {
         diagnostics: {},
         imageDrafts: {},
         clarifications: {},
+        usageAdvisor: emptyUsageAdvisorState(),
       });
 
       await store.save({
@@ -234,6 +240,7 @@ describe("JsonStateStore", () => {
         diagnostics: {},
         imageDrafts: {},
         clarifications: {},
+        usageAdvisor: emptyUsageAdvisorState(),
       });
       slackState.processedMessageIds.push("same-message-id");
       slackState.chats.same_chat = {
@@ -732,6 +739,153 @@ describe("JsonStateStore", () => {
       expect(state.jobs[job.id]).toBeDefined();
       expect(state.outbox[message.id]).toBeDefined();
     } finally { await rm(tempDir, { recursive: true, force: true }); }
+  });
+
+  test("UsageAdvisor state survives save and reload without changing schema v5", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-usage-advisor-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+      for (const at of [timestamp(1), timestamp(2), timestamp(3)]) {
+        advisor.record({ code: "delivery_retry", at });
+      }
+      advisor.review("usage-delivery-retry", "approve_for_planning", timestamp(4));
+      const state = emptyState();
+      state.usageAdvisor = advisor.state;
+
+      const store = new JsonStateStore(statePath);
+      await store.save(state);
+      const loaded = await store.load();
+      const persisted = JSON.parse(await readFile(statePath, "utf8"));
+
+      expect(persisted.schemaVersion).toBe(5);
+      expect(loaded.usageAdvisor).toEqual(advisor.state);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("UsageAdvisor loads legacy state with an empty advisor partition", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-usage-advisor-legacy-"));
+    const statePath = path.join(tempDir, "state.json");
+    try {
+      await writeFile(statePath, JSON.stringify({
+        schemaVersion: 5,
+        adapters: { "feishu:default": emptyState() },
+      }));
+      const raw = JSON.parse(await readFile(statePath, "utf8"));
+      delete raw.adapters["feishu:default"].usageAdvisor;
+      await writeFile(statePath, JSON.stringify(raw));
+
+      expect((await new JsonStateStore(statePath).load()).usageAdvisor).toEqual(emptyUsageAdvisorState());
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("UsageAdvisor drops malformed disk entries and rebuilds proposal text from code templates", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-usage-advisor-coerce-"));
+    const statePath = path.join(tempDir, "state.json");
+    const secret = "sk-secret C:\\private\\prompt sender@example.test task-identity";
+    try {
+      const state = emptyState() as BridgeState & { usageAdvisor: unknown };
+      state.usageAdvisor = {
+        aggregates: {
+          delivery_retry: {
+            code: "delivery_retry",
+            count: 9,
+            firstSeenAt: timestamp(9),
+            lastSeenAt: timestamp(1),
+            recentAt: [secret, timestamp(9), timestamp(1), timestamp(8), timestamp(2), timestamp(7), timestamp(3), timestamp(6), timestamp(4), timestamp(5)],
+            prompt: secret,
+          },
+          unknown_signal: { code: "unknown_signal", count: 999, firstSeenAt: timestamp(1), lastSeenAt: timestamp(2), recentAt: [timestamp(1)] },
+          routing_correction: { code: "delivery_retry", count: -4, firstSeenAt: "bad", lastSeenAt: "bad", recentAt: [] },
+          ownership_conflict: { code: "ownership_conflict", count: 1, firstSeenAt: timestamp(1), lastSeenAt: timestamp(1), recentAt: [timestamp(1)] },
+        },
+        proposals: {
+          "usage-delivery-retry": {
+            id: "usage-delivery-retry",
+            signalCode: "delivery_retry",
+            status: "approved_for_planning",
+            createdAt: timestamp(3),
+            reviewedAt: timestamp(4),
+            evidence: { count: 999, prompt: secret },
+            sections: { observation: secret, benefit: secret, risks: secret, scope: secret, rollback: secret, verification: secret },
+            apply: true,
+          },
+          malicious: { id: "malicious", signalCode: "delivery_retry", status: "applied", createdAt: timestamp(3), sections: { observation: secret } },
+          "usage-ownership-conflict": {
+            id: "usage-ownership-conflict",
+            signalCode: "ownership_conflict",
+            status: "pending_review",
+            createdAt: timestamp(1),
+            sections: { observation: secret },
+          },
+        },
+      };
+      await writeFile(statePath, JSON.stringify({ schemaVersion: 5, adapters: { "feishu:default": state } }));
+
+      const loaded = await new JsonStateStore(statePath).load();
+      const aggregate = loaded.usageAdvisor?.aggregates.delivery_retry;
+      const proposal = loaded.usageAdvisor?.proposals["usage-delivery-retry"];
+
+      expect(Object.keys(loaded.usageAdvisor?.aggregates ?? {})).toEqual(["delivery_retry", "ownership_conflict"]);
+      expect(aggregate).toMatchObject({ count: 9, firstSeenAt: timestamp(1), lastSeenAt: timestamp(9) });
+      expect(aggregate?.recentAt).toHaveLength(USAGE_ADVISOR_LIMITS.recentTimestamps);
+      expect(aggregate?.recentAt).toEqual([...aggregate!.recentAt].sort());
+      expect(Object.keys(loaded.usageAdvisor?.proposals ?? {})).toEqual(["usage-delivery-retry"]);
+      expect(proposal).toMatchObject({ status: "approved_for_planning", reviewedAt: timestamp(4) });
+      expect(proposal?.sections.observation).toBe("Durable outbound delivery repeatedly required retry.");
+      expect(JSON.stringify(loaded.usageAdvisor)).not.toContain(secret);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  test("UsageAdvisor reapplies closed caps and redaction before save", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-usage-advisor-save-"));
+    const statePath = path.join(tempDir, "state.json");
+    const secret = "Bearer secret prompt C:\\private sender@example.test";
+    try {
+      const state = emptyState() as BridgeState & { usageAdvisor: unknown };
+      state.usageAdvisor = {
+        aggregates: Object.fromEntries([
+          ...USAGE_ADVISOR_SIGNAL_CODES.map((code, index) => [code, {
+            code,
+            count: 3,
+            firstSeenAt: timestamp(index + 1),
+            lastSeenAt: timestamp(index + 3),
+            recentAt: Array.from({ length: 20 }, (_, offset) => timestamp(index + offset + 1)),
+            sender: secret,
+          }]),
+          ["unknown_signal", { code: "unknown_signal", count: 3, firstSeenAt: timestamp(1), lastSeenAt: timestamp(3), recentAt: [timestamp(1)] }],
+        ]),
+        proposals: Object.fromEntries(USAGE_ADVISOR_SIGNAL_CODES.map((code) => ["arbitrary-" + code, {
+          id: "arbitrary-" + code,
+          signalCode: code,
+          status: "pending_review",
+          createdAt: timestamp(3),
+          sections: { observation: secret },
+        }])),
+      };
+
+      const store = new JsonStateStore(statePath);
+      await store.save(state);
+      const persistedText = await readFile(statePath, "utf8");
+      const loaded = await store.load();
+
+      expect(Object.keys(loaded.usageAdvisor?.aggregates ?? {})).toHaveLength(USAGE_ADVISOR_LIMITS.aggregates);
+      expect(Object.keys(loaded.usageAdvisor?.proposals ?? {})).toHaveLength(0);
+      expect(Object.values(loaded.usageAdvisor?.aggregates ?? {}).every((item) =>
+        item!.recentAt.length <= USAGE_ADVISOR_LIMITS.recentTimestamps
+      )).toBe(true);
+      expect(persistedText).not.toContain(secret);
+      expect(persistedText).not.toContain("unknown_signal");
+      expect(persistedText).not.toContain("arbitrary-");
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
   });
 });
 
