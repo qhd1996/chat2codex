@@ -5,8 +5,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defaultChat2CodexHome, defaultEnvPath } from "../config/paths.js";
+import { renderWindowsLauncher, renderWindowsTaskXml, windowsTaskPath } from "./windows-task.js";
 
-export type ServiceTarget = "launchd" | "systemd";
+export type ServiceTarget = "launchd" | "systemd" | "windows-task";
 type ServiceCommand = "print" | "install" | "uninstall";
 
 export interface ServiceOptions {
@@ -18,12 +19,15 @@ export interface ServiceOptions {
   pathEnv: string;
   launchdLabel: string;
   systemdServiceName: string;
+  windowsTaskName: string;
+  windowsLauncherPath: string;
   stdoutPath: string;
   stderrPath: string;
 }
 
 const defaultLaunchdLabel = "com.chat2codex.bridge";
 const defaultSystemdServiceName = "chat2codex";
+const defaultWindowsTaskName = "Chat2Codex";
 
 if (isDirectRun()) {
   await runServiceSetup(process.argv.slice(2));
@@ -54,7 +58,7 @@ export async function runServiceSetup(argv: string[]): Promise<void> {
 }
 
 export function defaultServiceTarget(platform: NodeJS.Platform = process.platform): ServiceTarget {
-  return platform === "darwin" ? "launchd" : "systemd";
+  return platform === "darwin" ? "launchd" : platform === "win32" ? "windows-task" : "systemd";
 }
 
 export function createServiceOptions(args: ServiceCliArgs = {}): ServiceOptions {
@@ -72,6 +76,8 @@ export function createServiceOptions(args: ServiceCliArgs = {}): ServiceOptions 
     systemdServiceName: normalizeSystemdServiceName(
       args.systemdServiceName ?? defaultSystemdServiceName,
     ),
+    windowsTaskName: args.windowsTaskName ?? defaultWindowsTaskName,
+    windowsLauncherPath: path.resolve(args.windowsLauncherPath ?? path.join(projectDir, ".service", "windows", "launcher.ps1")),
     stdoutPath: path.resolve(
       projectDir,
       args.stdoutPath ?? path.join(logsDir, "chat2codex.out.log"),
@@ -101,6 +107,7 @@ export function defaultServicePath(target: ServiceTarget = defaultServiceTarget(
   if (target === "launchd") {
     return "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
   }
+  if (target === "windows-task") return process.env.PATH ?? "C:\\Windows\\System32";
   return "/usr/local/bin:/usr/bin:/bin";
 }
 
@@ -254,6 +261,13 @@ async function fileExists(filePath: string): Promise<boolean> {
 }
 
 function printService(options: ServiceOptions): void {
+  if (options.target === "windows-task") {
+    console.log(`# target: ${options.target}`);
+    console.log(`# task: ${windowsTaskPath(options.windowsTaskName)}`);
+    console.log(renderWindowsLauncher({ nodeBin: options.nodeBin, entrypoint: options.entrypoint, envFile: options.envFile, logFile: options.stderrPath, pathEnv: options.pathEnv }));
+    console.log(renderWindowsTaskXml({ taskName: options.windowsTaskName, userSid: "S-1-0-0", launcherPath: options.windowsLauncherPath }));
+    return;
+  }
   const filePath =
     options.target === "launchd"
       ? launchdPlistPath(options.launchdLabel)
@@ -276,6 +290,8 @@ export interface ServiceCliArgs {
   pathEnv?: string;
   launchdLabel?: string;
   systemdServiceName?: string;
+  windowsTaskName?: string;
+  windowsLauncherPath?: string;
   stdoutPath?: string;
   stderrPath?: string;
   help?: boolean;
@@ -332,6 +348,12 @@ function parseCliArgs(argv: string[]): ServiceCliArgs {
       case "--systemd-name":
         result.systemdServiceName = value;
         break;
+      case "--windows-task-name":
+        result.windowsTaskName = value;
+        break;
+      case "--windows-launcher":
+        result.windowsLauncherPath = value;
+        break;
       case "--stdout":
         result.stdoutPath = value;
         break;
@@ -347,7 +369,7 @@ function parseCliArgs(argv: string[]): ServiceCliArgs {
 }
 
 function parseTarget(value: string): ServiceTarget {
-  if (value === "launchd" || value === "systemd") {
+  if (value === "launchd" || value === "systemd" || value === "windows-task") {
     return value;
   }
   throw new Error(`Unsupported service target: ${value}`);
@@ -428,7 +450,8 @@ function printHelp(): void {
   chat2codex service uninstall [options]
 
 Options:
-  --target launchd|systemd       Defaults to launchd on macOS, systemd elsewhere
+  --target launchd|systemd|windows-task
+                                  Defaults to the native current-user target
   --project-dir <path>           Defaults to ~/.chat2codex
   --entrypoint <path>            Defaults to the installed chat2codex entrypoint,
                                   or dist/index.js when run from source
@@ -438,6 +461,8 @@ Options:
                                   Defaults to a stable service PATH
   --launchd-label <label>        Defaults to com.chat2codex.bridge
   --systemd-name <name>          Defaults to chat2codex
+  --windows-task-name <name>     Defaults to Chat2Codex
+  --windows-launcher <path>      Defaults under CHAT2CODEX_HOME/.service/windows
   --stdout <path>                Legacy launchd stdout path option; service output
                                   is discarded in favor of the rotating log
   --stderr <path>                launchd rotating application log path; defaults

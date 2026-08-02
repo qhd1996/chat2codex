@@ -71,5 +71,6 @@ describe("service setup", () => {
   test("chooses launchd only on macOS by default", () => {
     expect(defaultServiceTarget("darwin")).toBe("launchd");
     expect(defaultServiceTarget("linux")).toBe("systemd");
+    expect(defaultServiceTarget("win32")).toBe("windows-task");
   });
 });
