@@ -269,10 +269,12 @@ class ToggleControlDeliverySender extends CollectingSender {
 
 class FailingNextMarkdownSender extends CollectingSender {
   failNextMarkdown = false;
+  readonly nextMarkdownFailed = deferred<void>();
 
   override async sendMarkdown(chatId: string, markdown: string): Promise<void> {
     if (this.failNextMarkdown) {
       this.failNextMarkdown = false;
+      this.nextMarkdownFailed.resolve();
       throw new Error("simulated fork result delivery failure");
     }
     await super.sendMarkdown(chatId, markdown);
@@ -4032,6 +4034,7 @@ describe("MessageRouter access control", () => {
         text: "/archive",
       };
       await router.accept(message);
+      await sender.nextMarkdownFailed.promise;
       const store = new JsonStateStore(config.bridgeStatePath);
       await waitForState(
         store,
