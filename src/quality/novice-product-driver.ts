@@ -2,10 +2,21 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
+import type { AuthoritativeCodexThread } from "../agent/codex-runner.js";
+import { NonceReplayCache, authenticateGatewayRequest, signGatewayRequest, type GatewayCapability, type GatewayAuthErrorCode } from "../desktop-gateway/auth.js";
+import { DesktopOwnershipCoordinator } from "../core/desktop-ownership.js";
+import { DesktopReconciler } from "../core/desktop-reconciler.js";
+import { textInteractionPolicy } from "../core/interaction-policy.js";
+import { MediaOutbox } from "../core/media-outbox.js";
+import { Phase3GatewayController } from "../core/phase3-gateway-controller.js";
+import { TaskRegistry } from "../core/task-registry.js";
+import { WorkspaceRouter } from "../core/workspace-router.js";
 import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../desktop-gateway/server.js";
 import { JsonStateStore } from "../state/store.js";
+import { emptyState, type BridgeState, type DurableOutboxMessage } from "../state/types.js";
 import { installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceInstallInput, type WindowsServiceIo } from "../setup/windows-service.js";
 import { applyOwnerOnlyWindowsAcl, ensureWindowsGatewayKeys } from "../setup/windows-private-files.js";
+import { NoviceMockTransport } from "./novice-mock-transport.js";
 
 export interface FreshWindowsLifecycleResult {
   evidenceLevel: "repository";
@@ -197,3 +208,100 @@ function summary(state: { tasks: Record<string, unknown>; outbox: Record<string,
   return { taskIds: Object.keys(state.tasks).sort(), outbox: Object.values(state.outbox).map((item) => ({ id: item.id, status: item.status, sequence: item.sequence })).sort((a, b) => a.id.localeCompare(b.id)) };
 }
 function sha256(value: Uint8Array): string { return createHash("sha256").update(value).digest("hex"); }
+
+export async function runNoviceDailyUseJourney(options: { root: string }) {
+  const root = path.resolve(options.root);
+  const routeKinds = ["work", "travel", "personal", "finance", "ai_lab", "learning"] as const;
+  const routes: Record<string, string> = {};
+  for (const kind of routeKinds) {
+    const directory = path.join(root, kind);
+    await mkdir(directory, { recursive: true });
+    routes[kind] = directory;
+  }
+  const workspaceRouter = await WorkspaceRouter.create(routes, [root]);
+  const state = emptyState();
+  const registry = new TaskRegistry({ now: () => Date.parse("2026-08-02T00:00:00.000Z") });
+  const tasks = ["first", "second"].map((name, index) => registry.create(state, {
+    conversationId: "novice-chat", chatType: "direct", senderKey: "synthetic-sender",
+    title: "Synthetic " + name, aliases: [name], workspaceKind: index === 0 ? "work" : "travel",
+    workspaceRoot: workspaceRouter.resolveKind(index === 0 ? "work" : "travel").root, objective: "synthetic daily-use task",
+  }));
+  for (const [index, task] of tasks.entries()) {
+    registry.bindThread(state, task.taskId, "synthetic-thread-" + index);
+    registry.transition(state, task.taskId, "queued"); registry.transition(state, task.taskId, "running");
+    registry.appendRequest(state, task.taskId, "continue the exact task");
+    registry.transition(state, task.taskId, "stopping"); registry.transition(state, task.taskId, "interrupted");
+    registry.transition(state, task.taskId, "queued"); registry.transition(state, task.taskId, "running");
+    registry.appendRequest(state, task.taskId, "retry the exact task");
+  }
+  const task = tasks[0]!; const at = "2026-08-02T00:00:00.000Z";
+  const job = { id: "novice-daily-job", kind: "codex_run" as const, messageId: "novice-message", chatId: task.conversationId, chatType: "direct" as const, cwd: task.workspaceRoot, prompt: "synthetic prompt", collaborationMode: "plan" as const, threadId: task.threadId, status: "completed" as const, createdAt: at, updatedAt: at, completedAt: at, deliveryIds: [], taskId: task.taskId };
+  state.jobs[job.id] = job;
+  const outbox = new MediaOutbox().appendResult(state, job, {
+    text: "synthetic result", textKind: "markdown", createdAt: at,
+    stagedFiles: [
+      { sourcePath: path.join(root, "source.png"), stagedPath: path.join(root, "staged.png"), fileName: "result.png", kind: "image", mediaType: "image/png", size: 1, sha256: "a".repeat(64) },
+      { sourcePath: path.join(root, "source.txt"), stagedPath: path.join(root, "staged.txt"), fileName: "result.txt", kind: "file", mediaType: "text/plain", size: 1, sha256: "b".repeat(64) },
+    ],
+  });
+  const transport = new NoviceMockTransport(); const deliveredIds: string[] = [];
+  for (const delivery of outbox) { await deliverThroughProductState(delivery, transport); deliveredIds.push(delivery.id); }
+  let duplicateAcknowledgements = 0;
+  for (const delivery of outbox) if ((await transport.deliver(deliveryEnvelope(delivery))).duplicate) duplicateAcknowledgements += 1;
+  const approvalAllowed = textInteractionPolicy.isApprovalDecisionAllowed({ id: "approval", kind: "command", decisions: ["accept", "decline"] }, 0);
+  const permissionAllowed = textInteractionPolicy.isPermissionDecisionAllowed({ id: "permission", cwd: task.workspaceRoot, permissions: { fileSystem: { write: [task.workspaceRoot] } } }, "grantTurn");
+  const structuredValue = textInteractionPolicy.getMcpOptionValue({
+    status: "pending", updatedAt: at, request: { id: "structured", serverName: "synthetic", threadId: task.threadId!, turnId: "turn", message: "Select mode", mode: "form", fields: [{ name: "mode", title: "Mode", description: null, required: true, type: "enum", default: null, options: [{ value: "conservative", title: "Conservative" }] }] },
+  }, "mode", 0);
+  return { taskIds: tasks.map((item) => item.taskId), taskStatuses: tasks.map((item) => item.status), recentRequests: tasks.flatMap((item) => item.recentRequests), workspaceKinds: workspaceRouter.list().map((item) => item.kind), workspaceContained: workspaceRouter.list().every((item) => !path.relative(root, item.root).startsWith("..")), planMode: job.collaborationMode, approvalAllowed, permissionAllowed, structuredValue, outboxKinds: outbox.map((item) => item.kind), outboxSequences: outbox.map((item) => item.sequence), deliveredIds, duplicateAcknowledgements, codexRuns: 1 };
+}
+
+export async function runNoviceNetworkRecoveryJourney() {
+  const state = dailyOutboxFixture(); const transport = new NoviceMockTransport();
+  const deliveries = Object.values(state.outbox).sort((a, b) => a.sequence - b.sequence);
+  transport.setOnline(false); let offlineErrorCode = "";
+  try { await deliverThroughProductState(deliveries[0]!, transport); } catch (error) { offlineErrorCode = errorCode(error); }
+  const pendingWhileOffline = deliveries.filter((item) => item.status === "pending").map((item) => item.id);
+  transport.setOnline(true); const deliveryOrder: string[] = [];
+  for (const delivery of deliveries) { await deliverThroughProductState(delivery, transport); deliveryOrder.push(delivery.id); }
+  let duplicateAcknowledgements = 0;
+  for (const delivery of deliveries) if ((await transport.deliver(deliveryEnvelope(delivery))).duplicate) duplicateAcknowledgements += 1;
+  return { offlineErrorCode, pendingWhileOffline, deliveryIds: deliveries.map((item) => item.id), deliveryOrder, duplicateAcknowledgements, codexRuns: 1, allDelivered: deliveries.every((item) => item.status === "delivered") };
+}
+
+function deliveryEnvelope(delivery: DurableOutboxMessage) { return { idempotencyKey: delivery.idempotencyKey, kind: delivery.kind, contentHash: delivery.kind === "image" || delivery.kind === "file" ? delivery.sha256 : createHash("sha256").update(delivery.text).digest("hex") }; }
+async function deliverThroughProductState(delivery: DurableOutboxMessage, transport: NoviceMockTransport): Promise<void> { if (delivery.status === "delivered") return; delivery.status = "sending"; delivery.attempts += 1; try { await transport.deliver(deliveryEnvelope(delivery)); delivery.status = "delivered"; delivery.deliveredAt = "2026-08-02T00:00:01.000Z"; delivery.updatedAt = delivery.deliveredAt; } catch (error) { delivery.status = "pending"; delivery.lastError = "Mock transport unavailable."; throw error; } }
+function dailyOutboxFixture(): BridgeState { const state = emptyState(); const at = "2026-08-02T00:00:00.000Z"; state.tasks.task = { taskId: "task", conversationId: "conversation", chatType: "direct", senderKey: "synthetic", title: "task", aliases: [], workspaceKind: "explicit", workspaceRoot: "C:/synthetic", executionCwd: "C:/synthetic", isolationMode: "canonical_fifo", sessionEpoch: "epoch", threadId: "root", status: "completed", objectiveSummary: "", recentRequests: [], createdAt: at, updatedAt: at, lastActiveAt: at }; state.conversations.conversation = { taskIds: ["task"], lastTaskId: "task" }; const job = { id: "job", kind: "codex_run" as const, messageId: "message", chatId: "conversation", chatType: "direct" as const, cwd: "C:/synthetic", prompt: "synthetic", threadId: "root", status: "completed" as const, createdAt: at, updatedAt: at, completedAt: at, deliveryIds: [], taskId: "task" }; state.jobs.job = job; new MediaOutbox().appendResult(state, job, { textEntries: [{ kind: "text", text: "one" }, { kind: "text", text: "two" }], createdAt: at }); return state; }
+
+export async function runNoviceGatewayRecoveryJourney() {
+  const at = (second: number) => "2026-08-02T00:00:" + String(second).padStart(2, "0") + ".000Z";
+  const uuid = (n: number) => "019fc160-7e0d-7990-9317-" + String(n).padStart(12, "0");
+  const capability: GatewayCapability = { keyId: "prompt", role: "prompt_hook", endpoints: ["user_prompt_submit"], secret: new Uint8Array(32).fill(7) };
+  const body = Buffer.from("{}"); const now = new Date(at(1)); const nonce = "AQEBAQEBAQEBAQEBAQEBAQ";
+  const signed = signGatewayRequest({ method: "POST", path: "/v1/user-prompt-submit", requestId: uuid(1), timestamp: now.toISOString(), nonce, body, capability });
+  const cache = new NonceReplayCache({ now: () => now.getTime() });
+  const authenticated = await authenticateGatewayRequest({ method: "POST", path: "/v1/user-prompt-submit", headers: signed.headers, body, capabilities: [capability], nonceCache: cache, now: () => now.getTime() });
+  const nonceReplayCode = await rejectedGatewayCode(() => authenticateGatewayRequest({ method: "POST", path: "/v1/user-prompt-submit", headers: signed.headers, body, capabilities: [capability], nonceCache: cache, now: () => now.getTime() }));
+  const wrongCapability = { ...capability, secret: new Uint8Array(32).fill(8) };
+  const wrongTokenCode = await rejectedGatewayCode(() => authenticateGatewayRequest({ method: "POST", path: "/v1/user-prompt-submit", headers: signed.headers, body, capabilities: [wrongCapability], nonceCache: new NonceReplayCache(), now: () => now.getTime() }));
+  const staleRequestCode = await rejectedGatewayCode(() => authenticateGatewayRequest({ method: "POST", path: "/v1/user-prompt-submit", headers: signed.headers, body, capabilities: [capability], nonceCache: new NonceReplayCache(), now: () => now.getTime() + 30_001 }));
+  const state = gatewayState(at(0)); const ownership = new DesktopOwnershipCoordinator({ leaseDurationMs: 30_000 });
+  const binding = ownership.bind(state, { mutationId: "bind", bindingId: "binding", rootThreadId: "root-thread", taskId: "task", conversationId: "conversation", adapterId: "weixin:novice", bindingAnchorTurnId: "anchor", bindingAnchorTurnIndex: 0, bindingAnchorDigest: "e".repeat(64), observedAt: at(0) });
+  const generations = [binding.generation];
+  const desktop = ownership.takeover(state, { mutationId: "takeover", bindingId: "binding", expectedGeneration: 1, ownerInstanceId: "desktop", observedAt: at(1) }); generations.push(desktop.generation);
+  let staleTakeoverBlocked = false;
+  try { ownership.takeover(state, { mutationId: "stale", bindingId: "binding", expectedGeneration: 1, ownerInstanceId: "other", observedAt: at(2) }); } catch { staleTakeoverBlocked = true; }
+  try { ownership.heartbeat(state, { mutationId: "late", bindingId: "binding", expectedGeneration: 2, ownerInstanceId: "desktop", observedAt: at(32) }); } catch {}
+  generations.push(binding.generation);
+  const controller = new Phase3GatewayController({ ownership, readState: async (read) => read(state), mutateState: async (mutation) => mutation(state) });
+  const unboundDecision = (await controller.status({ kind: "status", requestId: uuid(2), rootThreadId: "unbound-root" })).decision;
+  const childDecision = (await controller.status({ kind: "status", requestId: uuid(3), rootThreadId: "child-thread" })).decision;
+  const rootThread: AuthoritativeCodexThread = { id: "root-thread", sessionId: "root-thread", cwd: "C:/synthetic", turns: [{ id: "anchor", status: "completed", items: [] }] };
+  const child: AuthoritativeCodexThread = { id: "child-thread", sessionId: "root-thread", cwd: "C:/synthetic", turns: rootThread.turns };
+  const childReconciliation = new DesktopReconciler().reconcile({ binding: { ...binding, owner: "desktop", activeStartFence: undefined }, thread: child }).kind;
+  return { authenticatedRole: authenticated.role, nonceReplayCode, wrongTokenCode, staleRequestCode, generations, staleTakeoverBlocked, expiredOwner: binding.owner, unboundDecision, childDecision, childReconciliation, exportedCount: 0 };
+}
+
+async function rejectedGatewayCode(run: () => Promise<unknown>): Promise<GatewayAuthErrorCode | string> { try { await run(); return "unexpected_pass"; } catch (error) { return errorCode(error); } }
+function errorCode(error: unknown): string { return error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "unknown"; }
+function gatewayState(at: string): BridgeState { const state = emptyState(); state.tasks.task = { taskId: "task", conversationId: "conversation", chatType: "direct", senderKey: "synthetic", title: "task", aliases: [], workspaceKind: "explicit", workspaceRoot: "C:/synthetic", executionCwd: "C:/synthetic", isolationMode: "canonical_fifo", sessionEpoch: "epoch", threadId: "root-thread", status: "completed", objectiveSummary: "", recentRequests: [], createdAt: at, updatedAt: at, lastActiveAt: at }; state.conversations.conversation = { taskIds: ["task"], lastTaskId: "task" }; return state; }
