@@ -9,6 +9,8 @@ export type CommandAction =
   | { kind: "answer_user_input" | "answer_mcp_field" | "decide_mcp_url"; taskId?: string; requestId?: string; replyCode?: string; value: string }
   | { kind: "discard_images"; conversationId?: string; senderKey?: string }
   | { kind: "submit_images"; taskId?: string; instruction: string }
+  | { kind: "list_advisor_proposals" }
+  | { kind: "review_advisor_proposal"; proposalId: string; decision: "approve_for_planning" | "reject" }
   | { kind: "show_help" | "list_tasks" | "list_projects" | "list_threads" | "list_archived" | "show_status" | "show_host" | "show_usage" | "show_summary" | "show_files" | "show_diff" | "show_logs" | "show_identity" }
   | { kind: "show_history"; selector?: string }
   | { kind: "select_project"; selector: string; explicitPath?: boolean }
@@ -28,6 +30,13 @@ export function parseSlashCommand(text: string): CommandAction | null {
     case "/compact": return { kind: "compact_task" }; case "/archive": return { kind: "archive_task" }; case "/unarchive": return { kind: "unarchive_thread", selector: argument };
     case "/retry": return { kind: "retry_task" }; case "/usage": return { kind: "show_usage" }; case "/new": case "/reset": return { kind: "reset_task" }; case "/stop": return { kind: "stop_task" }; case "/steer": return { kind: "steer_task", instruction: argument };
     case "/summary": return { kind: "show_summary" }; case "/files": return { kind: "show_files" }; case "/diff": return { kind: "show_diff" }; case "/logs": return { kind: "show_logs" }; case "/whoami": return { kind: "show_identity" };
+    case "/advisor": {
+      const decision = rest[0]?.toLowerCase();
+      const proposalId = rest[1];
+      if (proposalId && decision === "approve") return { kind: "review_advisor_proposal", proposalId, decision: "approve_for_planning" };
+      if (proposalId && decision === "reject") return { kind: "review_advisor_proposal", proposalId, decision: "reject" };
+      return { kind: "list_advisor_proposals" };
+    }
     case "/plan": return { kind: "create_task", instruction: argument, collaborationMode: "plan" };
     case "/service": return argument === "status" || !argument ? { kind: "service_status" } : argument === "logs" ? { kind: "service_logs" } : argument === "restart" ? { kind: "service_restart" } : null;
     case "/approve": return { kind: "approve", replyCode: rest[0], option: rest[1] }; case "/permit": return rest[1] === "session" ? { kind: "grant_session", replyCode: rest[0], option: rest[1] } : rest[1] === "turn" ? { kind: "grant_turn", replyCode: rest[0], option: rest[1] } : rest[1] === "deny" ? { kind: "deny", replyCode: rest[0], option: rest[1] } : null;

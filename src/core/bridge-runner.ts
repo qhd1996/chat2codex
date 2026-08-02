@@ -74,6 +74,7 @@ import { prefixTaskMessage } from "./task-labels.js";
 import { TaskRegistry } from "./task-registry.js";
 import { TaskScheduler } from "./task-scheduler.js";
 import { TaskTargetResolver } from "./task-target-resolver.js";
+import { UsageAdvisor } from "./usage-advisor.js";
 import { WorkspaceRouter } from "./workspace-router.js";
 import type {
   ApprovalCardInput,
@@ -89,6 +90,7 @@ import { JsonStateStore } from "../state/store.js";
 import {
   BridgeState,
   createSessionEpoch,
+  emptyUsageAdvisorState,
   type ChatSession,
   type DurableCodexJob,
   type DurableCodexJobStatus,
@@ -1227,6 +1229,14 @@ export class BridgeRunner {
       await this.sendTaskStatus(message.chatId, tasks);
       return;
     }
+    if (action.kind === "list_advisor_proposals") {
+      await this.sendAdvisorProposals(message.chatId);
+      return;
+    }
+    if (action.kind === "review_advisor_proposal") {
+      await this.reviewAdvisorProposal(message.chatId, action.proposalId, action.decision);
+      return;
+    }
     if (action.kind === "steer_task" || action.kind === "continue_task" || action.kind === "submit_images" || action.kind === "stop_task" || action.kind === "retry_task" || action.kind === "inspect_task") {
       const resolution = orchestrator.taskTargetResolver.resolve({
         tasks, conversationId: message.chatId, senderKey, explicitTaskId: action.taskId,
@@ -1313,6 +1323,12 @@ export class BridgeRunner {
         return true;
       case "show_usage":
         await this.sendTokenUsage(chatId);
+        return true;
+      case "list_advisor_proposals":
+        await this.sendAdvisorProposals(chatId);
+        return true;
+      case "review_advisor_proposal":
+        await this.reviewAdvisorProposal(chatId, action.proposalId, action.decision);
         return true;
       case "service_status":
       case "service_logs":
@@ -3277,6 +3293,7 @@ export class BridgeRunner {
         "- `/fork --turn <历史编号|turn_id>`：从历史 turn 非破坏性分叉",
         "- `/retry`：重试当前进程中这个 chat 最近一轮任务",
         "- `/usage`：查看最近一轮与当前 thread 的 token/context 用量",
+        "- `/advisor` / `/advisor approve|reject <建议 ID>`：查看或审查仅供规划的改进建议",
         "- `/service status|logs|restart`：查看或管理 bridge 服务（logs/restart 仅限管理员私聊）",
         "- `/plan <任务>`：执行一次 Plan 模式任务",
         "- `/stop` / `/steer <补充指令>`：停止或补充当前任务",
@@ -3287,6 +3304,66 @@ export class BridgeRunner {
         "历史 turn 分叉不会恢复或回滚本地文件。",
       ].join("\n"),
     );
+  }
+
+  private async sendAdvisorProposals(chatId: string): Promise<void> {
+    const advisor = new UsageAdvisor(this.requireState().usageAdvisor ?? emptyUsageAdvisorState());
+    const proposals = advisor.list().slice(0, 6);
+    if (proposals.length === 0) {
+      await this.sender.sendText(chatId, "UsageAdvisor 当前没有待展示的改进建议。");
+      return;
+    }
+    const lines = ["**UsageAdvisor 改进建议**", "", "批准仅表示可进入规划；不会应用、执行或部署任何变更。"];
+    for (const proposal of proposals) {
+      lines.push(
+        "",
+        `### ${proposal.id}`,
+        `- 状态：${proposal.status}`,
+        `- 观察：${proposal.sections.observation}`,
+        `- 收益：${proposal.sections.benefit}`,
+        `- 风险：${proposal.sections.risks}`,
+        `- 范围：${proposal.sections.scope}`,
+        `- 回滚：${proposal.sections.rollback}`,
+        `- 验证：${proposal.sections.verification}`,
+        `- 证据：${proposal.evidence.count} 次；首次 ${proposal.evidence.firstSeenAt}；最近 ${proposal.evidence.lastSeenAt}`,
+      );
+    }
+    await this.sendMarkdown(chatId, lines.join("\n"));
+  }
+
+  private async reviewAdvisorProposal(
+    chatId: string,
+    proposalId: string,
+    decision: "approve_for_planning" | "reject",
+  ): Promise<void> {
+    try {
+      const status = await this.mutateState((state) => {
+        const advisor = new UsageAdvisor(state.usageAdvisor ?? emptyUsageAdvisorState());
+        const current = advisor.list().find((proposal) => proposal.id === proposalId);
+        if (!current) throw new RangeError("ADVISOR_PROPOSAL_NOT_FOUND");
+        if (current.status !== "pending_review") throw new Error("ADVISOR_PROPOSAL_TERMINAL");
+        const reviewed = advisor.review(proposalId, decision);
+        state.usageAdvisor = advisor.state;
+        return reviewed.status;
+      });
+      if (status === "approved_for_planning") {
+        await this.sender.sendText(chatId, `UsageAdvisor 建议 ${proposalId} 已仅批准进入规划；未应用任何变更。`);
+      } else {
+        await this.sender.sendText(chatId, `UsageAdvisor 建议 ${proposalId} 已拒绝；未应用任何变更。`);
+      }
+    } catch (error) {
+      const detail = formatError(error);
+      if (detail.includes("ADVISOR_PROPOSAL_NOT_FOUND")) {
+        await this.sender.sendText(chatId, "未找到该 UsageAdvisor 建议；未应用任何变更。");
+        return;
+      }
+      if (detail.includes("ADVISOR_PROPOSAL_TERMINAL")) {
+        await this.sender.sendText(chatId, "该 UsageAdvisor 建议已完成审查，不能重复变更；未应用任何变更。");
+        return;
+      }
+      this.logger.warn("UsageAdvisor review could not be persisted", { error: detail });
+      await this.sender.sendText(chatId, "UsageAdvisor 审查未能安全保存；状态未变，未应用任何变更。");
+    }
   }
 
   private async retryLastRun(message: IncomingTextMessage): Promise<void> {
@@ -6684,6 +6761,7 @@ function restoreBridgeState(target: BridgeState, source: BridgeState): void {
   target.processedMessageIds = source.processedMessageIds;
   target.imageDrafts = source.imageDrafts;
   target.clarifications = source.clarifications;
+  target.usageAdvisor = source.usageAdvisor;
   target.diagnostics = source.diagnostics;
 }
 
@@ -7584,6 +7662,7 @@ function isReplaySafeRouterCommand(text: string): boolean {
     text === "/files" ||
     text === "/summary" ||
     text === "/usage" ||
+    text === "/advisor" ||
     text === "/plan" ||
     text === "/projects" ||
     text === "/threads" ||
@@ -7619,6 +7698,8 @@ function isBuiltInRouterCommand(text: string): boolean {
     text === "/files" ||
     text === "/summary" ||
     text === "/usage" ||
+    text === "/advisor" ||
+    text.startsWith("/advisor ") ||
     text === "/service" ||
     text.startsWith("/service ") ||
     text === "/retry" ||

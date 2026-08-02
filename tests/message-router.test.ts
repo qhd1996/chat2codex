@@ -59,6 +59,8 @@ import {
 import { loadConfig } from "../src/config/env.js";
 import { JsonStateStore } from "../src/state/store.js";
 import { emptyState } from "../src/state/types.js";
+import { emptyUsageAdvisorState } from "../src/state/types.js";
+import { UsageAdvisor } from "../src/core/usage-advisor.js";
 import { ImageDraftService } from "../src/core/image-drafts.js";
 import { ExecutionWorkspaceService } from "../src/core/execution-workspaces.js";
 import { TaskRegistry } from "../src/core/task-registry.js";
@@ -7414,6 +7416,60 @@ describe("MessageRouter access control", () => {
       expect(sender.messages[0]?.text).toContain("/fork --turn");
       expect(sender.messages[0]?.text).toContain("/retry");
       expect(sender.messages[0]?.text).toContain("/usage");
+      expect(sender.messages[0]?.text).toContain("/advisor");
+    });
+  });
+
+  test("UsageAdvisor lists fixed redacted proposals without running Codex", async () => {
+    await withUsageAdvisorRouter(async ({ router, sender, codex, store }) => {
+      const before = JSON.stringify((await store.load()).usageAdvisor);
+      await router.enqueue({ messageId: "m_advisor_list", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor" });
+
+      expect(codex.runs).toHaveLength(0);
+      const text = sender.messages.at(-1)?.text ?? "";
+      expect(text).toContain("UsageAdvisor");
+      expect(text).toContain("usage-delivery-retry");
+      for (const label of ["观察", "收益", "风险", "范围", "回滚", "验证", "证据"]) expect(text).toContain(label);
+      expect(JSON.stringify((await store.load()).usageAdvisor)).toBe(before);
+    });
+  });
+
+  test("UsageAdvisor approval records planning-only review and never runs Codex", async () => {
+    await withUsageAdvisorRouter(async ({ router, sender, codex, store }) => {
+      await router.enqueue({ messageId: "m_advisor_approve", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor approve usage-delivery-retry" });
+
+      expect(codex.runs).toHaveLength(0);
+      expect((await store.load()).usageAdvisor?.proposals["usage-delivery-retry"]?.status).toBe("approved_for_planning");
+      expect(sender.messages.at(-1)?.text).toContain("仅批准进入规划");
+      expect(sender.messages.at(-1)?.text).toContain("未应用任何变更");
+    });
+  });
+
+  test("UsageAdvisor rejection is terminal and never runs Codex", async () => {
+    await withUsageAdvisorRouter(async ({ router, sender, codex, store }) => {
+      await router.enqueue({ messageId: "m_advisor_reject", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor reject usage-delivery-retry" });
+      expect((await store.load()).usageAdvisor?.proposals["usage-delivery-retry"]?.status).toBe("rejected");
+      expect(sender.messages.at(-1)?.text).toContain("已拒绝");
+      expect(sender.messages.at(-1)?.text).toContain("未应用任何变更");
+
+      const terminal = JSON.stringify((await store.load()).usageAdvisor);
+      await router.enqueue({ messageId: "m_advisor_rereview", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor approve usage-delivery-retry" });
+      expect(JSON.stringify((await store.load()).usageAdvisor)).toBe(terminal);
+      expect(sender.messages.at(-1)?.text).toContain("已完成审查");
+      expect(codex.runs).toHaveLength(0);
+    });
+  });
+
+  test("UsageAdvisor unknown or invalid review preserves advisor state and never runs Codex", async () => {
+    await withUsageAdvisorRouter(async ({ router, sender, codex, store }) => {
+      const before = JSON.stringify((await store.load()).usageAdvisor);
+      await router.enqueue({ messageId: "m_advisor_unknown", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor approve missing" });
+      expect(JSON.stringify((await store.load()).usageAdvisor)).toBe(before);
+      expect(sender.messages.at(-1)?.text).toContain("未找到");
+
+      await router.enqueue({ messageId: "m_advisor_apply", chatId: "oc_chat", chatType: "direct", sender: { openId: "ou_user" }, text: "/advisor apply usage-delivery-retry" });
+      expect(JSON.stringify((await store.load()).usageAdvisor)).toBe(before);
+      expect(codex.runs).toHaveLength(0);
     });
   });
 
@@ -9169,6 +9225,36 @@ async function withRouter(
   }) => Promise<void>,
 ): Promise<void> {
   await withRouterAndCodex(env, new FakeCodex(), testBody);
+}
+
+async function withUsageAdvisorRouter(
+  testBody: (context: { router: MessageRouter; sender: CollectingSender; codex: FakeCodex; store: JsonStateStore }) => Promise<void>,
+): Promise<void> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-advisor-"));
+  let router: MessageRouter | undefined;
+  try {
+    const config = loadConfig({
+      FEISHU_APP_ID: "cli_test", FEISHU_APP_SECRET: "secret", CODEX_WORKDIR: tempDir,
+      BRIDGE_STATE_PATH: path.join(tempDir, "state.json"), ATTACHMENT_DOWNLOAD_DIR: path.join(tempDir, "attachments"),
+      ALLOWED_USER_IDS: "ou_user",
+    });
+    const store = new JsonStateStore(config.bridgeStatePath);
+    const state = emptyState();
+    const advisor = new UsageAdvisor(emptyUsageAdvisorState());
+    for (const at of ["2026-08-02T01:00:00.000Z", "2026-08-02T01:01:00.000Z", "2026-08-02T01:02:00.000Z"]) {
+      advisor.record({ code: "delivery_retry", at });
+    }
+    state.usageAdvisor = advisor.state;
+    await store.save(state);
+    const sender = new CollectingSender();
+    const codex = new FakeCodex();
+    router = new MessageRouter(config, store, sender, silentLogger, codex);
+    await router.start();
+    await testBody({ router, sender, codex, store });
+  } finally {
+    await router?.dispose();
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function withRouterAndCodex<TCodex extends CodexClient>(

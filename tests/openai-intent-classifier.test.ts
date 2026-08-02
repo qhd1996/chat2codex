@@ -110,6 +110,8 @@ describe("OpenAiIntentClassifier", () => {
     expect(prompt).toContain("Fields marked ? are optional; every other listed field is required");
     expect(prompt).toContain("Preserve an explicitly requested task name inside create_task.instruction");
     expect(prompt).toContain("collaborationMode=plan only when the user explicitly asks for Codex Plan mode");
+    expect(prompt).toContain('review_advisor_proposal={"kind":"review_advisor_proposal","proposalId":string,"decision":"approve_for_planning"|"reject"}');
+    expect(prompt).toContain("Advisor approval permits planning only");
   });
 
   test("instructs the task classifier to make explicit fail-closed image dispositions", async () => {
