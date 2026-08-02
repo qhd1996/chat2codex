@@ -50,9 +50,29 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.files.has(input.launcherPath)).toBe(false);
     expect(fixture.files.has(input.manifestPath)).toBe(false);
   });
+
+  test("preserves preexisting non-owned keys across install and uninstall", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, () => undefined, "preserved");
+    await installWindowsUserTask(input, fixture.io);
+    await uninstallWindowsUserTask(input.manifestPath, fixture.io);
+    for (const file of Object.values(fixture.keyPaths)) expect(fixture.files.get(file)).toBe("preexisting-key");
+  });
+
+  test("writes a hash-recorded rollback snapshot before an upgrade", async () => {
+    const priorManifest = { schemaVersion: 1, packageVersion: "0.8.0-old.1", taskName: "Chat2Codex", userSid: "S-1-5-21-1-2-3-1001", launcherPath: input.launcherPath, nodeBin: input.nodeBin, entrypoint: input.entrypoint, statePath: input.statePath, envFile: input.envFile, keyFiles: [], ownedKeyFiles: [], ownedFiles: [input.launcherPath, input.taskXmlPath, input.manifestPath], hashes: { old: "a".repeat(64) }, installedAt: "2026-08-01T00:00:00.000Z" };
+    const fixture = ioFixture({ [input.envFile]: "CUSTOM_STATE=yes\r\nBRIDGE_STATE_PATH=C:\\Custom\\state.json\r\n", [input.manifestPath]: JSON.stringify(priorManifest), [input.statePath]: "{\"schemaVersion\":6}" });
+    await installWindowsUserTask(input, fixture.io);
+    const rollbackWrites = fixture.events.filter((event) => event[0] === "write" && String(event[1]).includes("\\rollback\\"));
+    expect(rollbackWrites.length).toBeGreaterThanOrEqual(3);
+    const recordPath = rollbackWrites.map((event) => String(event[1])).find((file) => file.endsWith("backup.json"));
+    expect(recordPath).toBeDefined();
+    expect(fixture.files.get(recordPath!)).toContain("sha256");
+    expect(fixture.files.get(input.envFile)).toContain("BRIDGE_STATE_PATH=C:\\Custom\\state.json");
+    expect(fixture.files.get(input.envFile)?.match(/BRIDGE_STATE_PATH=/gu)).toHaveLength(1);
+  });
 });
 
-function ioFixture(initial: Record<string, string>, failRun: (args: string[]) => Error | undefined = () => undefined) {
+function ioFixture(initial: Record<string, string>, failRun: (args: string[]) => Error | undefined = () => undefined, keyMode: "created" | "preserved" = "created") {
   const files = new Map(Object.entries(initial));
   const events: unknown[][] = [];
   const keyPaths = {
@@ -60,13 +80,14 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
     "stop-hook": `${home}\\.secrets\\desktop-gateway\\stop-hook.key`,
     "desktop-mcp": `${home}\\.secrets\\desktop-gateway\\desktop-mcp.key`,
   };
+  if (keyMode === "preserved") for (const file of Object.values(keyPaths)) files.set(file, "preexisting-key");
   const io: WindowsServiceIo = {
     currentUserSid: async () => "S-1-5-21-1-2-3-1001", now: () => new Date("2026-08-02T14:00:00.000Z"), packageVersion: async () => "0.8.0-desktop.2",
     readText: async (file) => files.get(file) ?? null,
     writeTextAtomic: async (file, content) => { events.push(["write", file]); files.set(file, content); },
     removeFile: async (file) => { events.push(["remove", file]); files.delete(file); },
-    ensureGatewayKeys: async () => ({ created: Object.values(keyPaths), preserved: [], paths: keyPaths }),
+    ensureGatewayKeys: async () => ({ created: keyMode === "created" ? Object.values(keyPaths) : [], preserved: keyMode === "preserved" ? Object.values(keyPaths) : [], paths: keyPaths }),
     runFile: async (command, args) => { events.push(["run", command, args]); const error = failRun(args); if (error) throw error; return args[0] === "/Query" ? "<Task/>" : ""; },
   };
-  return { io, files, events };
+  return { io, files, events, keyPaths };
 }

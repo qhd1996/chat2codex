@@ -41,24 +41,32 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
     createdKeys = [...keys.created];
     const launcher = renderWindowsLauncher({ nodeBin: input.nodeBin, entrypoint: input.entrypoint, envFile: input.envFile, logFile: input.logFile, pathEnv: input.pathEnv, workingDirectory: home });
     const taskXml = renderWindowsTaskXml({ taskName: input.taskName, userSid: sid, launcherPath: input.launcherPath });
-    const managed = {
-      ATTACHMENT_DOWNLOAD_DIR: path.win32.join(home, ".data", "attachments"),
-      BRIDGE_STATE_PATH: input.statePath,
+    const priorEnv = snapshots.get(input.envFile) ?? "";
+    const userEnv = removeManagedEnvBlock(priorEnv);
+    const priorStatePath = readEnvPath(userEnv, "BRIDGE_STATE_PATH");
+    const priorAttachments = readEnvPath(userEnv, "ATTACHMENT_DOWNLOAD_DIR");
+    const priorHome = readEnvPath(userEnv, "CHAT2CODEX_HOME");
+    if (priorHome && priorHome.toLocaleLowerCase() !== home.toLocaleLowerCase()) throw new Error("CHAT2CODEX_HOME in the env file differs from the selected installation home.");
+    const statePath = priorStatePath ?? input.statePath;
+    const managed: Record<string, string> = {
       CHAT2CODEX_DESKTOP_GATEWAY_ENABLED: "true",
       CHAT2CODEX_DESKTOP_MCP_TOKEN_FILE: keys.paths["desktop-mcp"],
       CHAT2CODEX_DESKTOP_PROMPT_TOKEN_FILE: keys.paths["prompt-hook"],
       CHAT2CODEX_DESKTOP_STOP_TOKEN_FILE: keys.paths["stop-hook"],
-      CHAT2CODEX_HOME: home,
     };
-    const env = replaceManagedEnvBlock(snapshots.get(input.envFile) ?? "", managed);
+    if (!priorHome) managed.CHAT2CODEX_HOME = home;
+    if (!priorStatePath) managed.BRIDGE_STATE_PATH = statePath;
+    if (!priorAttachments) managed.ATTACHMENT_DOWNLOAD_DIR = path.win32.join(home, ".data", "attachments");
+    const env = replaceManagedEnvBlock(priorEnv, managed);
     const manifest: WindowsInstallationManifestV1 = {
       schemaVersion: 1, packageVersion: await io.packageVersion(), taskName: input.taskName, userSid: sid,
-      launcherPath: input.launcherPath, nodeBin: input.nodeBin, entrypoint: input.entrypoint, statePath: input.statePath,
-      envFile: input.envFile, keyFiles: Object.values(keys.paths),
+      launcherPath: input.launcherPath, nodeBin: input.nodeBin, entrypoint: input.entrypoint, statePath,
+      envFile: input.envFile, keyFiles: Object.values(keys.paths), ownedKeyFiles: [...keys.created],
       ownedFiles: [input.launcherPath, input.taskXmlPath, input.manifestPath],
       hashes: { "launcher.ps1": sha256(launcher), "task.xml": sha256(taskXml) }, installedAt: io.now().toISOString(),
     };
     parseWindowsInstallationManifest(manifest, home);
+    if (snapshots.get(input.manifestPath) !== null) await writeRollbackSnapshot(input, snapshots, statePath, io);
     await io.writeTextAtomic(input.envFile, env);
     await io.writeTextAtomic(input.launcherPath, launcher);
     await io.writeTextAtomic(input.taskXmlPath, taskXml);
@@ -88,7 +96,7 @@ export async function uninstallWindowsUserTask(manifestPath: string, io: Windows
   const manifest = parseWindowsInstallationManifest(value, home);
   const taskPath = windowsTaskPath(manifest.taskName);
   await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]);
-  for (const filePath of [...manifest.ownedFiles, ...manifest.keyFiles]) await io.removeFile(filePath);
+  for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles]) await io.removeFile(filePath);
   const env = await io.readText(manifest.envFile);
   if (env !== null) await io.writeTextAtomic(manifest.envFile, removeManagedEnvBlock(env));
 }
@@ -98,3 +106,30 @@ function absolute(value: string, label: string): string {
   return path.win32.normalize(value);
 }
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+
+function readEnvPath(source: string, key: string): string | undefined {
+  const line = source.split(/\r?\n/u).find((entry) => entry.startsWith(`${key}=`));
+  if (!line) return undefined;
+  const raw = line.slice(key.length + 1).trim();
+  let value = raw;
+  if (raw.startsWith('"')) {
+    try { value = JSON.parse(raw) as string; } catch { throw new Error(`${key} in the env file is malformed.`); }
+  }
+  if (typeof value !== "string" || !path.win32.isAbsolute(value)) throw new Error(`${key} in the env file must be absolute for the Windows service.`);
+  return path.win32.normalize(value);
+}
+
+async function writeRollbackSnapshot(input: WindowsServiceInstallInput, snapshots: Map<string, string | null>, statePath: string, io: WindowsServiceIo): Promise<void> {
+  const stamp = io.now().toISOString().replace(/[:.]/gu, "-");
+  const root = path.win32.join(input.home, ".service", "windows", "rollback", stamp);
+  const sources = [input.envFile, input.launcherPath, input.taskXmlPath, input.manifestPath, statePath];
+  const records: Array<{ source: string; backup: string; sha256: string }> = [];
+  for (const source of sources) {
+    const content = snapshots.has(source) ? snapshots.get(source) : await io.readText(source);
+    if (content === null || content === undefined) continue;
+    const backup = path.win32.join(root, `${records.length.toString().padStart(2, "0")}-${path.win32.basename(source)}`);
+    await io.writeTextAtomic(backup, content);
+    records.push({ source, backup, sha256: sha256(content) });
+  }
+  await io.writeTextAtomic(path.win32.join(root, "backup.json"), JSON.stringify({ schemaVersion: 1, createdAt: io.now().toISOString(), records }, null, 2) + "\n");
+}

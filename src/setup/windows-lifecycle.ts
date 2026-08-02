@@ -11,6 +11,7 @@ export interface WindowsInstallationManifestV1 {
   statePath: string;
   envFile: string;
   keyFiles: string[];
+  ownedKeyFiles: string[];
   ownedFiles: string[];
   hashes: Record<string, string>;
   installedAt: string;
@@ -31,7 +32,7 @@ export type WindowsLifecycleOperation =
 
 const begin = "# BEGIN CHAT2CODEX WINDOWS MANAGED";
 const end = "# END CHAT2CODEX WINDOWS MANAGED";
-const manifestKeys = ["entrypoint", "envFile", "hashes", "installedAt", "keyFiles", "launcherPath", "nodeBin", "ownedFiles", "packageVersion", "schemaVersion", "statePath", "taskName", "userSid"];
+const manifestKeys = ["entrypoint", "envFile", "hashes", "installedAt", "keyFiles", "launcherPath", "nodeBin", "ownedFiles", "ownedKeyFiles", "packageVersion", "schemaVersion", "statePath", "taskName", "userSid"];
 
 export function replaceManagedEnvBlock(source: string, values: Record<string, string>): string {
   if (typeof source !== "string") throw new Error("Env source must be text.");
@@ -80,11 +81,13 @@ export function parseWindowsInstallationManifest(value: unknown, home: string): 
   if (!Number.isFinite(Date.parse(input.installedAt as string))) throw new Error("Windows installation timestamp is invalid.");
   const root = absoluteWindows(home, "installation home");
   const keyFiles = pathsInside(input.keyFiles, root, "key files");
+  const ownedKeyFiles = pathsInsideAllowEmpty(input.ownedKeyFiles, root, "owned key files");
+  if (ownedKeyFiles.some((filePath) => !keyFiles.some((keyPath) => keyPath.toLocaleLowerCase() === filePath.toLocaleLowerCase()))) throw new Error("Windows installation owned key is not a declared key file.");
   const ownedFiles = pathsInside(input.ownedFiles, root, "owned files");
   const launcherPath = insidePath(input.launcherPath as string, root, "launcher");
   const nodeBin = absoluteWindows(input.nodeBin as string, "Node executable");
   const entrypoint = absoluteWindows(input.entrypoint as string, "entrypoint");
-  const statePath = insidePath(input.statePath as string, root, "state path");
+  const statePath = absoluteWindows(input.statePath as string, "state path");
   const envFile = absoluteWindows(input.envFile as string, "env file");
   object(input.hashes, "Windows installation hashes");
   const hashes: Record<string, string> = {};
@@ -94,7 +97,7 @@ export function parseWindowsInstallationManifest(value: unknown, home: string): 
   }
   return {
     schemaVersion: 1, packageVersion: input.packageVersion as string, taskName: input.taskName as string,
-    userSid: input.userSid as string, launcherPath, nodeBin, entrypoint, statePath, envFile, keyFiles, ownedFiles, hashes, installedAt: input.installedAt as string,
+    userSid: input.userSid as string, launcherPath, nodeBin, entrypoint, statePath, envFile, keyFiles, ownedKeyFiles, ownedFiles, hashes, installedAt: input.installedAt as string,
   };
 }
 
@@ -114,13 +117,19 @@ export function planWindowsUninstall(input: WindowsInstallationManifestV1, home:
   const manifest = parseWindowsInstallationManifest(input, home);
   return [
     { kind: "unregister_task", taskName: manifest.taskName },
-    ...[...manifest.ownedFiles, ...manifest.keyFiles].map((filePath) => ({ kind: "remove_owned" as const, path: filePath })),
+    ...[...manifest.ownedFiles, ...manifest.ownedKeyFiles].map((filePath) => ({ kind: "remove_owned" as const, path: filePath })),
     { kind: "remove_managed_env", path: manifest.envFile },
   ];
 }
 
 function pathsInside(value: unknown, root: string, label: string): string[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 64 || !value.every((item) => typeof item === "string")) throw new Error(`Windows installation ${label} are invalid.`);
+  const result = value.map((item) => insidePath(item, root, label));
+  if (new Set(result.map((item) => item.toLocaleLowerCase())).size !== result.length) throw new Error(`Windows installation ${label} contain duplicates.`);
+  return result;
+}
+function pathsInsideAllowEmpty(value: unknown, root: string, label: string): string[] {
+  if (!Array.isArray(value) || value.length > 64 || !value.every((item) => typeof item === "string")) throw new Error(`Windows installation ${label} are invalid.`);
   const result = value.map((item) => insidePath(item, root, label));
   if (new Set(result.map((item) => item.toLocaleLowerCase())).size !== result.length) throw new Error(`Windows installation ${label} contain duplicates.`);
   return result;

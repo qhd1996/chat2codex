@@ -4,7 +4,7 @@ export interface DistributionDoctorSnapshot {
   windowsVersion: string;
   packageVersion: string;
   manifest: null | { packageVersion: string; schemaVersion: number; taskName: string; launcherPath: string };
-  task?: { exists: boolean; taskName: string; launcherPath: string; lastResult: number };
+  task?: { exists: boolean; taskName: string; launcherPath: string; lastResult?: number };
   process?: { writers: number; lockHealthy: boolean };
   stateSchemaVersion?: number;
   loopbackHost?: string;
@@ -25,7 +25,7 @@ export function diagnoseWindowsDistribution(value: DistributionDoctorSnapshot): 
   if (value.manifest.schemaVersion !== 1 || value.manifest.packageVersion !== value.packageVersion) checks.push(error("Package manifest", "DIST_PACKAGE_DRIFT", "Installed package and lifecycle manifest do not match.", "Reinstall the reviewed archive or restore the prior manifest/package pair."));
   else checks.push(ok("Package manifest", "DIST_PACKAGE_OK", value.packageVersion));
   if (!value.task?.exists || value.task.taskName !== value.manifest.taskName || same(value.task.launcherPath) !== same(value.manifest.launcherPath)) checks.push(error("Windows user task", "DIST_TASK_DRIFT", "Scheduled Task identity or launcher action does not match the manifest.", "Do not start it; rerun the reviewed service install transaction."));
-  else checks.push(ok("Windows user task", "DIST_TASK_OK", `${value.task.taskName}; lastResult=${value.task.lastResult}`));
+  else checks.push(ok("Windows user task", "DIST_TASK_OK", `${value.task.taskName}; lastResult=${value.task.lastResult ?? "unknown"}`));
   if (value.process?.writers !== 1 || value.process.lockHealthy !== true) checks.push(error("Single writer", "DIST_WRITER_CONFLICT", "Expected exactly one healthy writer and lock.", "Stop and reconcile process ownership before restart or upgrade."));
   else checks.push(ok("Single writer", "DIST_WRITER_OK", "one writer and healthy lock"));
   if (value.stateSchemaVersion !== 6) checks.push(error("State schema", "DIST_SCHEMA_UNSUPPORTED", `Observed schema ${String(value.stateSchemaVersion)}; expected 6.`, "Restore a compatible backup or complete the reviewed migration."));

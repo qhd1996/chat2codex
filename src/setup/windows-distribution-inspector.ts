@@ -29,7 +29,7 @@ export async function inspectInstalledWindowsDistribution(home: string): Promise
   return {
     platform: process.platform, arch: process.arch, windowsVersion: os.release(), packageVersion: await readPackageVersion(),
     manifest: { packageVersion: manifest.packageVersion, schemaVersion: manifest.schemaVersion, taskName: manifest.taskName, launcherPath: manifest.launcherPath },
-    task: { exists: true, taskName: manifest.taskName, launcherPath: observedLauncher, lastResult: 0 },
+    task: { exists: true, taskName: manifest.taskName, launcherPath: observedLauncher },
     process: { writers, lockHealthy }, stateSchemaVersion, loopbackHost: "127.0.0.1", keys, hooks, desktop,
   };
 }

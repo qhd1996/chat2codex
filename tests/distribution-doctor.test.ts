@@ -5,7 +5,7 @@ import { diagnoseWindowsDistribution, type DistributionDoctorSnapshot } from "..
 const good: DistributionDoctorSnapshot = {
   platform: "win32", arch: "x64", windowsVersion: "10.0.26100", packageVersion: "0.8.0-desktop.2",
   manifest: { packageVersion: "0.8.0-desktop.2", schemaVersion: 1, taskName: "Chat2Codex", launcherPath: "C:\\Users\\Example\\.chat2codex\\.service\\windows\\launcher.ps1" },
-  task: { exists: true, taskName: "Chat2Codex", launcherPath: "C:\\Users\\Example\\.chat2codex\\.service\\windows\\launcher.ps1", lastResult: 0 },
+  task: { exists: true, taskName: "Chat2Codex", launcherPath: "C:\\Users\\Example\\.chat2codex\\.service\\windows\\launcher.ps1" },
   process: { writers: 1, lockHealthy: true }, stateSchemaVersion: 6, loopbackHost: "127.0.0.1",
   keys: ["prompt_hook", "stop_hook", "desktop_mcp"].map((role, index) => ({ role, path: `C:\\Users\\Example\\.chat2codex\\.secrets\\${index}.key`, formatValid: true, aclValid: true, fingerprint: `fp-${index}` })),
   hooks: { expectedHashesMatch: true }, desktop: { available: true, version: "26.801" },

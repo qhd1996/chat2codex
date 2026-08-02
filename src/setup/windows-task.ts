@@ -26,7 +26,7 @@ export function renderWindowsTaskXml(input: WindowsTaskDefinition): string {
     "-NoLogo", "-NoProfile", "-NonInteractive",
     "-ExecutionPolicy", "Bypass", "-File", psQuote(launcherPath),
   ].join(" " );
-  return `<?xml version="1.0" encoding="UTF-16"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><URI>\\Chat2Codex\\${xml(taskName)}</URI></RegistrationInfo>
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>${xml(input.userSid)}</UserId></LogonTrigger></Triggers>
