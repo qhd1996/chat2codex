@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const levels = ["static", "automated", "installed_behavior", "real_e2e"];
+const approvedAuthorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
 const verdicts = ["unproven", "pass", "contradicted"];
 const outcomes = ["pass", "fail", "incomplete", "contradicted"];
 const manifestKeys = ["authorityCommit", "evidence", "generatedAt", "manifestId", "repositoryCommit", "schemaVersion", "targets"];
@@ -18,6 +19,7 @@ export async function validateEvidenceManifest(value, { repositoryRoot, commitEx
   if (manifest.schemaVersion !== 1) throw new Error("Evidence schema version is unsupported.");
   boundedId(manifest.manifestId, "manifest ID", /^[a-z0-9][a-z0-9._-]{0,127}$/u);
   commit(manifest.authorityCommit, "authority commit");
+  if (manifest.authorityCommit !== approvedAuthorityCommit) throw new Error("Approved authority commit does not match the evidence manifest.");
   commit(manifest.repositoryCommit, "repository commit");
   if (commitExists) {
     if (!await commitExists(manifest.repositoryCommit)) throw new Error("Repository commit is not available in the repository.");

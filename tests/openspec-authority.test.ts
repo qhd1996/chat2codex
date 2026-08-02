@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,7 @@ const authorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
 const authorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
 const changeName = "minimal-quality-acceleration";
 const prohibitedTask = "019fc002-590e-7023-b7e5-2a802168f00a";
+const approvedLock = JSON.parse(await readFile(path.resolve(import.meta.dir, "..", "quality", "authority", "requirements-ledger.json"), "utf8"));
 
 const metadata = (overrides: Record<string, unknown> = {}) => ({
   changeName,
@@ -54,11 +55,7 @@ describe("OpenSpec authority overlay", () => {
     await withFixture(async ({ changeRoot }) => {
       await expect(validateOpenSpecAuthority({
         changeRoot,
-        lock: {
-          schemaVersion: 1, authoritative: false, authorityRepo, authorityCommit,
-          acceptedChangeIds: ["CR-0001", "CR-0002", "CR-0004", "CR-0005"],
-          requirementIds: ["OPS-001", "OPS-003", "OPS-004"], files: [validLockFile()], note: "audit only",
-        },
+        lock: validLock(),
       })).resolves.toEqual({ changeName, artifactCount: 4, requirementIds: ["OPS-001", "OPS-003", "OPS-004"] });
     });
   });
@@ -126,16 +123,20 @@ describe("OpenSpec authority overlay", () => {
       })).rejects.toThrow(/approved authority (?:commit|repo)/i);
     });
   });
+
+  test("rejects drift in the accepted CRs, requirement closure, or locked file hashes", async () => {
+    await withFixture(async ({ changeRoot }) => {
+      await expect(validateOpenSpecAuthority({ changeRoot, lock: { ...validLock(), acceptedChangeIds: ["CR-0001", "CR-0002", "CR-0005"] } })).rejects.toThrow(/accepted change.*snapshot/i);
+      await expect(validateOpenSpecAuthority({ changeRoot, lock: { ...validLock(), requirementIds: [...validLock().requirementIds, "FAKE-999"] } })).rejects.toThrow(/requirement.*snapshot/i);
+      await expect(validateOpenSpecAuthority({ changeRoot, lock: { ...validLock(), files: [{ ...validLockFile(), sha256: "b".repeat(64) }] } })).rejects.toThrow(/file.*snapshot/i);
+    });
+  });
 });
 
 function validLock() {
-  return {
-    schemaVersion: 1, authoritative: false, authorityRepo, authorityCommit, note: "audit only",
-    acceptedChangeIds: ["CR-0001", "CR-0002", "CR-0004", "CR-0005"],
-    requirementIds: ["OPS-001", "OPS-003", "OPS-004"], files: [validLockFile()],
-  };
+  return structuredClone(approvedLock);
 }
 
 function validLockFile() {
-  return { path: "docs/requirements/acceptance-matrix.md", sha256: "a".repeat(64) };
+  return structuredClone(approvedLock.files[0]);
 }

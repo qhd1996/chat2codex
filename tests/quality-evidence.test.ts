@@ -56,6 +56,7 @@ describe("quality evidence manifest", () => {
   for (const [name, mutate, pattern] of [
     ["unknown top-level field", (m: any) => { m.extra = true; }, /unknown.*manifest/i],
     ["future schema", (m: any) => { m.schemaVersion = 2; }, /schema version/i],
+    ["wrong authority commit", (m: any) => { m.authorityCommit = "b".repeat(40); }, /approved authority commit/i],
     ["duplicate targets", (m: any) => { m.targets.push({ ...m.targets[0] }); }, /duplicate.*target/i],
     ["duplicate evidence", (m: any) => { m.evidence.push({ ...m.evidence[0] }); }, /duplicate.*evidence/i],
     ["dangling evidence reference", (m: any) => { m.targets[0].evidenceIds = ["missing"]; }, /missing evidence/i],

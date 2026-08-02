@@ -24,7 +24,7 @@ describe("local OpenSpec wrapper", () => {
 
   test("rejects old Node, mutating commands, and unknown commands", () => {
     expect(() => buildLocalOpenSpecInvocation({ repositoryRoot: "C:\\repo", nodeVersion: "20.18.9", args: ["validate"], environment: {} })).toThrow(/20\.19\.0/);
-    for (const command of ["init", "update", "archive", "store", "config", "schema", "completion", "feedback", "new", "unknown"]) {
+    for (const command of ["init", "update", "archive", "store", "config", "schema", "completion", "feedback", "new", "list", "show", "status", "doctor", "unknown"]) {
       expect(() => buildLocalOpenSpecInvocation({ repositoryRoot: "C:\\repo", nodeVersion: "24.14.0", args: [command], environment: {} })).toThrow(/not allowed/i);
     }
   });

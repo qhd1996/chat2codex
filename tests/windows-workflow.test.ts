@@ -10,6 +10,7 @@ describe("Windows quality workflow", () => {
     const source = await readFile(path.join(root, ".github", "workflows", "windows-ci.yml"), "utf8");
     for (const required of [
       "windows-latest", "actions/checkout@v7", "actions/setup-node@v7", 'node-version: "24"',
+      "fetch-depth: 0",
       "oven-sh/setup-bun@v2", "bun-version: 1.3.9", "bun install --frozen-lockfile",
       "bun run quality:check", "scripts/run-test-shard.mjs", "bun run check",
       "scripts/make-router-shards.mjs", "tests/message-router.test.ts", "quality:windows",

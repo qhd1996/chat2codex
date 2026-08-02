@@ -3,10 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const minimumNode = [20, 19, 0];
-const allowedCommands = new Set([
-  "context", "doctor", "instructions", "list", "schemas",
-  "show", "status", "templates", "validate",
-]);
+const allowedCommands = new Set(["validate"]);
 
 export function buildLocalOpenSpecInvocation({ repositoryRoot, nodeVersion, args, environment }) {
   if (!satisfiesMinimumNode(nodeVersion)) {
