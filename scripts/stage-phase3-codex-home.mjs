@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -40,7 +41,20 @@ export async function stagePhase3CodexHome({ packageRoot, codexHome, realCodexHo
 
 async function verifyManifest(sourceRoot) {
   const manifest = JSON.parse(await readFile(path.join(sourceRoot, "docs/phase3/hook-sha256.json"), "utf8"));
+  if (manifest.algorithm !== "SHA-256") throw new Error("Hook manifest algorithm must be SHA-256");
   if (manifest.installation_status !== "UNTRUSTED_UNTIL_TASK_12_APPROVAL") throw new Error("Hook manifest is not pre-install only");
+  const expectedFiles = [
+    "scripts/codex-hooks/hook-client.mjs",
+    "scripts/codex-hooks/stop-wake.mjs",
+    "scripts/codex-hooks/user-prompt-submit.mjs",
+  ];
+  if (!manifest.files || JSON.stringify(Object.keys(manifest.files).sort()) !== JSON.stringify(expectedFiles)) {
+    throw new Error("Hook manifest file set is not closed");
+  }
+  for (const relativePath of expectedFiles) {
+    const actual = createHash("sha256").update(await readFile(path.join(sourceRoot, relativePath))).digest("hex");
+    if (actual !== manifest.files[relativePath]) throw new Error(`Hook manifest hash mismatch: ${relativePath}`);
+  }
 }
 
 function requiredAbsolute(value, label) {

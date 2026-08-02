@@ -1,0 +1,3 @@
+# Hook trust hashes must be identical across Windows and POSIX checkouts.
+scripts/codex-hooks/*.mjs text eol=lf
+docs/phase3/hook-sha256.json text eol=lf
