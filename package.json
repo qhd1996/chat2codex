@@ -55,6 +55,7 @@
     "start:bun": "bun src/index.ts",
     "test": "bun test",
     "test:stable": "bun test --max-concurrency=1",
+    "test:properties": "bun test tests/properties --max-concurrency=1",
     "check:stable": "bun run typecheck && bun run typecheck:contracts && bun run test:stable && bun run build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:contracts": "tsc -p tsconfig.contracts.json"
@@ -75,6 +76,7 @@
     "@types/node": "^26.0.1",
     "@types/proper-lockfile": "^4.1.4",
     "@types/qrcode-terminal": "^0.12.2",
+    "fast-check": "4.9.0",
     "typescript": "^7.0.2"
   },
   "engines": {
