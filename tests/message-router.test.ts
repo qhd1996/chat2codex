@@ -603,6 +603,7 @@ class MediaCollectingSender extends CollectingSender {
 class OrderedMediaSender extends MediaCollectingSender {
   readonly order: Array<"markdown" | "image" | "file"> = [];
   readonly mediaBytes: Buffer[] = [];
+  readonly mediaIdempotencyKeys: Array<string | undefined> = [];
 
   constructor(private failuresRemaining = 0) {
     super();
@@ -623,6 +624,7 @@ class OrderedMediaSender extends MediaCollectingSender {
       throw new Error("simulated first media delivery failure");
     }
     this.order.push(input.kind);
+    this.mediaIdempotencyKeys.push(options?.idempotencyKey);
     this.mediaBytes.push(await readFile(input.stagedPath));
     await super.sendMedia(chatId, input, options);
   }
@@ -633,9 +635,22 @@ class DeclaredOutputCodex implements CodexClient {
   readonly sourcePaths: string[] = [];
   nextDeclarationError?: string;
   nextOutputFiles?: string[];
+  private readonly runWaiters = new Map<number, ReturnType<typeof deferred<void>>>();
+
+  waitForRunCount(count: number): Promise<void> {
+    if (this.runs.length >= count) return Promise.resolve();
+    const waiter = this.runWaiters.get(count) ?? deferred<void>();
+    this.runWaiters.set(count, waiter);
+    return boundedRunStart(waiter.promise, count, () => this.runs.length);
+  }
 
   async run(input: CodexRunInput): Promise<CodexRunResult> {
     this.runs.push(input);
+    for (const [count, waiter] of this.runWaiters) {
+      if (this.runs.length < count) continue;
+      this.runWaiters.delete(count);
+      waiter.resolve();
+    }
     const taskId = input.sessionScope?.taskId;
     if (!taskId) throw new Error("Declared-output run omitted task identity.");
     const threadId = "thread-" + taskId;
@@ -705,21 +720,43 @@ class FakeCodex implements CodexClient {
 }
 
 class ConcurrentTaskCodex implements CodexClient {
+  readonly invocations: CodexRunInput[] = [];
   readonly runs: CodexRunInput[] = [];
   readonly steers: Array<{ taskId: string; text: string }> = [];
   readonly runControlWaits: string[] = [];
   private readonly releases = new Map<string, ReturnType<typeof deferred<void>>>();
   private readonly runControlReleases = new Map<string, ReturnType<typeof deferred<void>>>();
   private readonly failedTaskIds = new Set<string>();
+  private readonly runWaiters = new Map<number, ReturnType<typeof deferred<void>>>();
+  private readonly invocationWaiters = new Map<number, ReturnType<typeof deferred<void>>>();
 
   constructor(private readonly delayRunControl = false) {}
+
+  waitForRunCount(count: number): Promise<void> {
+    if (this.runs.length >= count) return Promise.resolve();
+    const waiter = this.runWaiters.get(count) ?? deferred<void>();
+    this.runWaiters.set(count, waiter);
+    return boundedRunStart(waiter.promise, count, () => this.runs.length);
+  }
+
+  waitForInvocationCount(count: number): Promise<void> {
+    if (this.invocations.length >= count) return Promise.resolve();
+    const waiter = this.invocationWaiters.get(count) ?? deferred<void>();
+    this.invocationWaiters.set(count, waiter);
+    return boundedRunStart(waiter.promise, count, () => this.invocations.length);
+  }
 
   async run(input: CodexRunInput): Promise<CodexRunResult> {
     const taskId = input.sessionScope?.taskId;
     if (!taskId) throw new Error("Task-scoped run omitted sessionScope.taskId.");
-    this.runs.push(input);
     const release = deferred<void>();
     this.releases.set(taskId, release);
+    this.invocations.push(input);
+    for (const [count, waiter] of this.invocationWaiters) {
+      if (this.invocations.length < count) continue;
+      this.invocationWaiters.delete(count);
+      waiter.resolve();
+    }
     const threadId = `thread-${taskId}`;
     await input.onThreadBound?.(threadId);
     if (this.delayRunControl) {
@@ -746,6 +783,14 @@ class ConcurrentTaskCodex implements CodexClient {
       steer: async (text) => { this.steers.push({ taskId, text }); },
     });
     await input.onProgress?.({ kind: "running", text: `progress-${taskId}` });
+    // Publish only after binding and progress callbacks settle. Tests use this
+    // as the readiness event before reading state or signaling completion.
+    this.runs.push(input);
+    for (const [count, waiter] of this.runWaiters) {
+      if (this.runs.length < count) continue;
+      this.runWaiters.delete(count);
+      waiter.resolve();
+    }
     await Promise.race([
       release.promise,
       resolveOnAbort(input.signal),
@@ -7661,6 +7706,15 @@ describe("MessageRouter access control", () => {
         () => ({ action: { kind: "create_task", instruction: "原子保存失败", workspaceKind: "work", executionIntent: "general" }, imageDisposition: "none", confidence: 1 }),
       ]);
       const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
+      const taskScheduler = new TaskScheduler({ maxConcurrentRuns: 1 });
+      const executionWorkspaces = await ExecutionWorkspaceService.create({
+        chat2codexHome: home, codexBin: config.codexBin,
+        sandboxProbe: async () => ({ verified: false, reason: "canonical FIFO test" }),
+      });
+      executionWorkspaces.prepare = async ({ taskId, workspaceRoot }) => ({
+        taskId, workspaceRoot, sourceReadRoot: workspaceRoot, executionCwd: workspaceRoot,
+        isolationMode: "canonical_fifo",
+      });
       const dependencies: NaturalConversationDependencies = {
         classifier,
         imageDrafts: new ImageDraftService({
@@ -7669,11 +7723,8 @@ describe("MessageRouter access control", () => {
           maxTotalBytes: config.weixinImageDraftMaxTotalBytes,
         }),
         taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter,
-        executionWorkspaces: await ExecutionWorkspaceService.create({
-          chat2codexHome: home, codexBin: config.codexBin,
-          sandboxProbe: async () => ({ verified: false, reason: "canonical FIFO test" }),
-        }),
-        taskScheduler: new TaskScheduler({ maxConcurrentRuns: 1 }),
+        executionWorkspaces,
+        taskScheduler,
       };
       const store = new FailNextMediaTerminalSaveStore(statePath, { chat2codexHome: home });
       const firstSender = new OrderedMediaSender(Number.MAX_SAFE_INTEGER);
@@ -7684,6 +7735,7 @@ describe("MessageRouter access control", () => {
         messageId: "declared-media", chatId: "weixin-chat", chatType: "direct",
         sender: { openId: "ou_user" }, text: "创建一个任务并返回图片和文件",
       });
+      await firstCodex.waitForRunCount(1);
       await waitForState(store, (state) => {
         const deliveries = Object.values(state.outbox).filter((item) => item.jobId === "declared-media");
         return deliveries.length === 3
@@ -7698,6 +7750,7 @@ describe("MessageRouter access control", () => {
       expect(failedDeliveries.map((item) => item.kind)).toEqual(["markdown", "image", "file"]);
       expect(firstSender.order).toEqual(["markdown"]);
       expect(firstCodex.runs).toHaveLength(1);
+      await waitForSchedulerIdle(taskScheduler);
       await firstRouter.accept({
         messageId: "media-status", chatId: "weixin-chat", chatType: "direct",
         sender: { openId: "ou_user" }, text: "查看任务状态",
@@ -7716,13 +7769,23 @@ describe("MessageRouter access control", () => {
         messageId: "invalid-declaration", chatId: "weixin-chat", chatType: "direct",
         sender: { openId: "ou_user" }, text: "创建另一个非法声明任务",
       });
-      await waitForState(store, (state) => state.jobs["invalid-declaration"]?.status === "completed");
+      await firstCodex.waitForRunCount(2);
+      await waitFor(() => firstSender.messages.some((message) =>
+        message.text === "[非法声明结果] 输出声明无效，未发送任何文件。"));
+      await waitForState(store, (state) => {
+        const deliveries = Object.values(state.outbox)
+          .filter((item) => item.jobId === "invalid-declaration");
+        return deliveries.length === 1
+          && deliveries[0]?.kind === "text"
+          && deliveries[0]?.status === "delivered"
+          && deliveries[0]?.text === "";
+      });
       const invalidState = await store.load();
       const invalidDeliveries = Object.values(invalidState.outbox).filter((item) => item.jobId === "invalid-declaration");
       expect(invalidDeliveries).toHaveLength(1);
       expect(invalidDeliveries[0]?.kind).toBe("text");
-      expect(invalidDeliveries[0]?.text.startsWith("[非法声明结果]")).toBe(true);
-      expect(invalidDeliveries[0]?.text).toContain("未发送任何文件");
+      expect(invalidDeliveries[0]).toMatchObject({ kind: "text", status: "delivered", text: "" });
+      await waitForSchedulerIdle(taskScheduler);
 
       const outsidePath = path.join(tempDir, "private-outside.txt");
       await writeFile(outsidePath, "must not leak");
@@ -7731,21 +7794,36 @@ describe("MessageRouter access control", () => {
         messageId: "outside-declaration", chatId: "weixin-chat", chatType: "direct",
         sender: { openId: "ou_user" }, text: "创建越界声明任务",
       });
-      await waitForState(store, (state) => state.jobs["outside-declaration"]?.status === "completed");
+      await firstCodex.waitForRunCount(3);
+      await waitFor(() => firstSender.messages.some((message) =>
+        message.text.startsWith("[越界声明结果] 输出文件未发送")));
+      await waitForState(store, (state) => {
+        const deliveries = Object.values(state.outbox)
+          .filter((item) => item.jobId === "outside-declaration");
+        return deliveries.length === 1
+          && deliveries[0]?.kind === "text"
+          && deliveries[0]?.status === "delivered"
+          && deliveries[0]?.text === "";
+      });
       const outsideState = await store.load();
       const outsideDeliveries = Object.values(outsideState.outbox).filter((item) => item.jobId === "outside-declaration");
       expect(outsideDeliveries).toHaveLength(1);
       expect(outsideDeliveries[0]?.kind).toBe("text");
-      expect(outsideDeliveries[0]?.text).toContain("输出文件未发送");
-      expect(outsideDeliveries[0]?.text).not.toContain(outsidePath);
+      expect(outsideDeliveries[0]).toMatchObject({ kind: "text", status: "delivered", text: "" });
+      expect(firstSender.messages.at(-1)?.text).not.toContain(outsidePath);
       expect(Object.values(outsideState.outbox).some((item) => item.jobId === "outside-declaration" && (item.kind === "image" || item.kind === "file"))).toBe(false);
+      await waitForSchedulerIdle(taskScheduler);
 
       store.failMediaJobId = "atomic-media-failure";
       await firstRouter.accept({
         messageId: "atomic-media-failure", chatId: "weixin-chat", chatType: "direct",
         sender: { openId: "ou_user" }, text: "创建媒体任务并模拟原子保存失败",
       });
-      await waitForState(store, (state) => state.jobs["atomic-media-failure"]?.status === "failed");
+      await firstCodex.waitForRunCount(4);
+      await waitForState(store, (state) =>
+        store.mediaSaveFailures === 1
+        && state.jobs["atomic-media-failure"]?.status === "failed",
+      );
       const atomicState = await store.load();
       const atomicJob = atomicState.jobs["atomic-media-failure"]!;
       expect(store.mediaSaveFailures).toBe(1);
@@ -7769,7 +7847,13 @@ describe("MessageRouter access control", () => {
           .every((item) => item.status === "delivered"),
       );
       expect(replayCodex.runs).toHaveLength(0);
-      expect(replaySender.order).toEqual(["image", "file"]);
+      expect({
+        order: replaySender.order,
+        idempotencyKeys: replaySender.mediaIdempotencyKeys,
+      }).toEqual({
+        order: ["image", "file"],
+        idempotencyKeys: failedDeliveries.slice(1).map((item) => item.idempotencyKey),
+      });
       expect(replaySender.mediaBytes).toEqual([
         Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]),
         Buffer.from("immutable notes"),
@@ -7779,7 +7863,7 @@ describe("MessageRouter access control", () => {
       await replayRouter?.dispose();
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   test("media sender preserves task ownership, sequence, and stable idempotency without exposing bytes", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "chat2codex-media-contract-"));
@@ -8119,9 +8203,9 @@ describe("MessageRouter access control", () => {
       });
 
       await router.accept(message("task-hotel", "新建一个日本酒店任务，放到旅行工作区"));
-      await waitFor(() => codex.runs.length === 1);
+      await codex.waitForInvocationCount(1);
       await router.accept(message("task-finance", "再新建一个财报分析任务，放到金融工作区"));
-      await waitFor(() => codex.runs.length === 2);
+      await codex.waitForInvocationCount(2);
       await waitForState(
         new JsonStateStore(config.bridgeStatePath),
         (current) => ["日本酒店", "财报分析"].every((title) =>
@@ -8135,13 +8219,13 @@ describe("MessageRouter access control", () => {
       const report = tasks.find((task) => task.title === "财报分析");
       expect(hotel).toBeDefined();
       expect(report).toBeDefined();
-      expect(codex.runs.map((run) => path.normalize(run.cwd).toLocaleLowerCase()).sort()).toEqual(
+      expect(codex.invocations.map((run) => path.normalize(run.cwd).toLocaleLowerCase()).sort()).toEqual(
         [finance, travel].map((item) => path.normalize(item).toLocaleLowerCase()).sort(),
       );
-      expect(new Set(codex.runs.map((run) => run.sessionScope?.taskId))).toEqual(
+      expect(new Set(codex.invocations.map((run) => run.sessionScope?.taskId))).toEqual(
         new Set([hotel!.taskId, report!.taskId]),
       );
-      expect(new Set(codex.runs.map((run) => run.threadId))).toEqual(new Set([undefined]));
+      expect(new Set(codex.invocations.map((run) => run.threadId))).toEqual(new Set([undefined]));
       expect(new Set([hotel, report].map((task) => task!.threadId))).toEqual(
         new Set([`thread-${hotel!.taskId}`, `thread-${report!.taskId}`]),
       );
@@ -8154,8 +8238,8 @@ describe("MessageRouter access control", () => {
       await waitFor(() => codex.steers.length === 1);
       expect(codex.steers).toEqual([{ taskId: hotel!.taskId, text: "优先筛选新宿" }]);
       await router.accept(message("stop-report", "停止财报分析任务"));
-      await waitFor(() => codex.runs.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted === true);
-      expect(codex.runs.find((run) => run.sessionScope?.taskId === hotel!.taskId)?.signal?.aborted).toBe(false);
+      await waitFor(() => codex.invocations.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted === true);
+      expect(codex.invocations.find((run) => run.sessionScope?.taskId === hotel!.taskId)?.signal?.aborted).toBe(false);
 
       codex.fail(hotel!.taskId);
       await waitFor(() => sender.messages.some((item) => item.text.includes(`done-${hotel!.taskId}`)));
@@ -8167,16 +8251,16 @@ describe("MessageRouter access control", () => {
 
       codex.succeed(hotel!.taskId);
       await router.accept(message("retry-hotel", "重试日本酒店任务"));
-      await waitFor(() => codex.runs.length === 3);
-      const retriedHotel = codex.runs[2]!;
+      await codex.waitForInvocationCount(3);
+      const retriedHotel = codex.invocations[2]!;
       expect(retriedHotel).toMatchObject({
         cwd: hotel!.executionCwd,
         prompt: "日本酒店",
         threadId: `thread-${hotel!.taskId}`,
       });
       expect(retriedHotel.sessionScope?.taskId).toBe(hotel!.taskId);
-      expect(codex.runs.filter((run) => run.sessionScope?.taskId === report!.taskId)).toHaveLength(1);
-      expect(codex.runs.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted).toBe(true);
+      expect(codex.invocations.filter((run) => run.sessionScope?.taskId === report!.taskId)).toHaveLength(1);
+      expect(codex.invocations.find((run) => run.sessionScope?.taskId === report!.taskId)?.signal?.aborted).toBe(true);
       await waitFor(() => codex.runControlWaits.filter((taskId) => taskId === hotel!.taskId).length === 2);
       codex.releaseRunControl(hotel!.taskId);
       await waitFor(() => sender.messages.filter((item) => item.text.includes(`progress-${hotel!.taskId}`)).length === 2);
@@ -8191,7 +8275,7 @@ describe("MessageRouter access control", () => {
       await waitFor(() => sender.messages.some((item) => item.text.includes("任务状态")));
       expect(sender.messages.at(-1)?.text).toContain("[日本酒店]");
     } finally {
-      for (const taskId of cleanupCodex?.runs.map((run) => run.sessionScope?.taskId).filter((taskId): taskId is string => Boolean(taskId)) ?? []) {
+      for (const taskId of cleanupCodex?.invocations.map((run) => run.sessionScope?.taskId).filter((taskId): taskId is string => Boolean(taskId)) ?? []) {
         cleanupCodex?.releaseRunControl(taskId);
         cleanupCodex?.finish(taskId);
       }
@@ -8264,11 +8348,15 @@ describe("MessageRouter access control", () => {
       const classifier = new QueueTaskClassifier([]); const codex = new ConcurrentTaskCodex(); const sender = new CollectingSender();
       const workspaceRouter = await WorkspaceRouter.create(config.workspaceRoutes, config.codexGroupAllowedRoots);
       const executionWorkspaces = await ExecutionWorkspaceService.create({ chat2codexHome: path.join(tempDir, "home"), codexBin: config.codexBin, sandboxProbe: async () => ({ verified: false, reason: "not needed" }) });
+      executionWorkspaces.prepare = async ({ taskId, workspaceRoot }) => ({
+        taskId, workspaceRoot, sourceReadRoot: workspaceRoot, executionCwd: workspaceRoot,
+        isolationMode: "canonical_fifo",
+      });
       router = new MessageRouter(config, store, sender, silentLogger, codex, {}, { classifier, imageDrafts: new ImageDraftService({ root: config.attachmentDownloadDir, ttlMs: config.weixinImageDraftTtlMs, maxCount: 4, maxFileBytes: config.weixinImageDraftMaxFileBytes, maxTotalBytes: config.weixinImageDraftMaxTotalBytes }), taskRegistry: new TaskRegistry(), taskTargetResolver: new TaskTargetResolver(), workspaceRouter, executionWorkspaces, taskScheduler: new TaskScheduler({ maxConcurrentRuns: 2 }) });
-      await router.start(); await waitFor(() => codex.runs.length === 2);
+      await router.start(); await codex.waitForInvocationCount(2);
       expect(classifier.taskInputs).toHaveLength(0);
-      expect(new Set(codex.runs.map((run) => run.sessionScope?.taskId))).toEqual(new Set(definitions.map((item) => item.taskId)));
-      expect(new Set(codex.runs.map((run) => run.cwd))).toEqual(new Set(definitions.map((item) => item.root)));
+      expect(new Set(codex.invocations.map((run) => run.sessionScope?.taskId))).toEqual(new Set(definitions.map((item) => item.taskId)));
+      expect(new Set(codex.invocations.map((run) => run.cwd))).toEqual(new Set(definitions.map((item) => item.root)));
       for (const item of definitions) codex.finish(item.taskId);
     } finally { await router?.dispose(); await rm(tempDir, { recursive: true, force: true }); }
   });
@@ -9632,11 +9720,46 @@ async function waitForState(
 ): Promise<void> {
   const startedAt = Date.now();
   while (!predicate(await store.load())) {
+    // Full-process reruns show legitimate failure convergence can cross three
+    // seconds under Windows load. Keep this bounded well below the shard
+    // watchdog while retaining the state diagnostic on a real stall.
     if (Date.now() - startedAt > 5000) {
-      throw new Error("Timed out waiting for persisted state");
+      const state = await store.load();
+      const diagnostic = {
+        tasks: Object.fromEntries(Object.entries(state.tasks).map(([id, task]) => [id, {
+          status: task.status, title: task.title, activeTurnId: task.activeTurnId,
+        }])),
+        jobs: Object.fromEntries(Object.entries(state.jobs).map(([id, job]) => [id, {
+          status: job.status, taskId: job.taskId, error: job.lastRun?.errorText,
+        }])),
+        outbox: Object.fromEntries(Object.entries(state.outbox).map(([id, item]) => [id, `${item.jobId}:${item.kind}:${item.status}`])),
+      };
+      throw new Error(`Timed out waiting for persisted state: ${JSON.stringify(diagnostic).slice(0, 4000)}`);
     }
     await new Promise((resolve) => setTimeout(resolve, 1));
   }
+}
+
+async function waitForSchedulerIdle(scheduler: TaskScheduler): Promise<void> {
+  const startedAt = Date.now();
+  while (scheduler.snapshot().global.active !== 0 || scheduler.snapshot().global.waiting !== 0) {
+    if (Date.now() - startedAt > 5000) {
+      throw new Error(`Timed out waiting for scheduler idle: ${JSON.stringify(scheduler.snapshot())}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1));
+  }
+}
+
+function boundedRunStart(promise: Promise<void>, expected: number, actual: () => number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(
+      `Timed out waiting for ${expected} started Codex runs; observed ${actual()}.`,
+    )), 5000);
+    promise.then(
+      () => { clearTimeout(timer); resolve(); },
+      (error) => { clearTimeout(timer); reject(error); },
+    );
+  });
 }
 
 function deferred<T>(): {
