@@ -34,6 +34,7 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   for (const filePath of owned) snapshots.set(filePath, await io.readText(filePath));
   const sid = await io.currentUserSid();
   const taskPath = windowsTaskPath(input.taskName);
+  const priorManifest = parsePriorManifest(snapshots.get(input.manifestPath), home);
   let createdKeys: string[] = [];
   let registered = false;
   try {
@@ -61,7 +62,8 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
     const manifest: WindowsInstallationManifestV1 = {
       schemaVersion: 1, packageVersion: await io.packageVersion(), taskName: input.taskName, userSid: sid,
       launcherPath: input.launcherPath, nodeBin: input.nodeBin, entrypoint: input.entrypoint, statePath,
-      envFile: input.envFile, keyFiles: Object.values(keys.paths), ownedKeyFiles: [...keys.created],
+      envFile: input.envFile, keyFiles: Object.values(keys.paths),
+      ownedKeyFiles: [...new Set([...(priorManifest?.ownedKeyFiles ?? []), ...keys.created])],
       ownedFiles: [input.launcherPath, input.taskXmlPath, input.manifestPath],
       hashes: { "launcher.ps1": sha256(launcher), "task.xml": sha256(taskXml) }, installedAt: io.now().toISOString(),
     };
@@ -70,11 +72,18 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
     await io.writeTextAtomic(input.envFile, env);
     await io.writeTextAtomic(input.launcherPath, launcher);
     await io.writeTextAtomic(input.taskXmlPath, taskXml);
-    await io.writeTextAtomic(input.manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+    const manifestText = JSON.stringify(manifest, null, 2) + "\n";
+    await io.writeTextAtomic(input.manifestPath, manifestText);
+    for (const [filePath, expected] of [[input.envFile, env], [input.launcherPath, launcher], [input.taskXmlPath, taskXml], [input.manifestPath, manifestText]] as const) {
+      const observed = await io.readText(filePath);
+      if (observed !== expected) throw new Error(`Windows lifecycle write verification failed: ${path.win32.basename(filePath)}`);
+    }
     await io.runFile("schtasks.exe", ["/Create", "/TN", taskPath, "/XML", input.taskXmlPath, "/F"]);
     registered = true;
     const queried = await io.runFile("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]);
     if (!queried.trim()) throw new Error("Windows task query returned no definition.");
+    const queriedLauncher = taskLauncherPath(queried);
+    if (queriedLauncher.toLocaleLowerCase() !== input.launcherPath.toLocaleLowerCase()) throw new Error("Windows task query launcher differs from the installation manifest.");
     return { taskPath, manifest, createdKeys: createdKeys.length };
   } catch (error) {
     if (registered) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch(() => undefined);
@@ -106,6 +115,17 @@ function absolute(value: string, label: string): string {
   return path.win32.normalize(value);
 }
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+function parsePriorManifest(source: string | null | undefined, home: string): WindowsInstallationManifestV1 | undefined {
+  if (!source) return undefined;
+  try { return parseWindowsInstallationManifest(JSON.parse(source), home); }
+  catch (error) { throw new Error(`Prior Windows installation manifest is invalid: ${error instanceof Error ? error.message : String(error)}`); }
+}
+function taskLauncherPath(source: string): string {
+  const decoded = source.replace(/&apos;/gu, "'").replace(/&quot;/gu, '"').replace(/&lt;/gu, "<").replace(/&gt;/gu, ">").replace(/&amp;/gu, "&");
+  const match = decoded.match(/-File\s+'([^'](?:[^']|'')*)'/u);
+  if (!match) throw new Error("Windows task query omitted the package-owned launcher.");
+  return path.win32.normalize(match[1].replace(/''/gu, "'"));
+}
 
 function readEnvPath(source: string, key: string): string | undefined {
   const line = source.split(/\r?\n/u).find((entry) => entry.startsWith(`${key}=`));

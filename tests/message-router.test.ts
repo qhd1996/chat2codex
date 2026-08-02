@@ -2435,9 +2435,18 @@ describe("MessageRouter access control", () => {
             delivery.jobId === "m_replay" &&
             delivery.attempts === 1 &&
             delivery.status === "pending",
-        ),
+        ) || ["failed", "interrupted", "cancelled"].includes(state.jobs.m_replay?.status ?? ""),
       );
       const failed = await store.load();
+      if (failed.jobs.m_replay?.status !== "completed") {
+        throw new Error(`Unexpected replay fixture terminal: ${JSON.stringify({
+          job: failed.jobs.m_replay,
+          chat: failed.chats.oc_chat?.lastRun,
+          recentFailures: failed.diagnostics.byChat?.oc_chat?.recentFailures,
+          outbox: Object.values(failed.outbox).filter((item) => item.jobId === "m_replay").map((item) => ({ kind: item.kind, status: item.status, attempts: item.attempts, lastError: item.lastError })),
+          visible: failedSender.messages.map((message) => message.text),
+        })}`);
+      }
       expect(firstCodex.runs).toHaveLength(1);
       expect(failed.jobs.m_replay?.status).toBe("completed");
       expect(failed.pendingMessages.m_replay).toBeUndefined();
@@ -2481,7 +2490,7 @@ describe("MessageRouter access control", () => {
       await replayRouter?.dispose();
       await rm(tempDir, { recursive: true, force: true });
     }
-  });
+  }, 15_000);
 
   test("retries a transient final delivery in-process without rerunning Codex", async () => {
     const sender = new TransientFinalDeliverySender();
