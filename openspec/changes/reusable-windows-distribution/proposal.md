@@ -1,4 +1,4 @@
-<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"proposal","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"21a5800c4d725375af256a1e1c827bab75c3f034","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
+<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"proposal","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"9942bb5fbef593305480802a170d6bcb3e0a1a6a","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
 
 # Reusable Windows distribution
 

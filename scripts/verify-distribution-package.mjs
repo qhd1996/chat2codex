@@ -32,7 +32,7 @@ export async function validateDistributionTree(rootInput) {
     const actual = createHash("sha256").update(await readFile(await regular(root, relative))).digest("hex");
     if (actual !== expected) throw new Error(`Hook hash mismatch: ${relative}`);
   }
-  const roots = ["package.json", ".env.example", "README.md", "README.zh-CN.md", "THIRD_PARTY_NOTICES.md", "distribution", "docs/architecture.md", "docs/codex-app-server-protocol", "docs/phase3", "docs/windows", "docs/quality/clean-windows-e2e-runbook.md", "scripts/codex-hooks"];
+  const roots = path.basename(root) === "package" ? packageRoots : ["package.json", ".env.example", "README.md", "README.zh-CN.md", "THIRD_PARTY_NOTICES.md", "distribution", "docs/architecture.md", "docs/codex-app-server-protocol", "docs/phase3", "docs/windows", "docs/quality/clean-windows-e2e-runbook.md", "scripts/codex-hooks"];
   const files = [];
   for (const relative of roots) await collect(root, relative, files);
   if (path.basename(root) === "package") {

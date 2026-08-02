@@ -7,7 +7,7 @@ import { describe, expect, test } from "bun:test";
 import { validateEvidenceManifest } from "../scripts/verify-quality-evidence.mjs";
 
 const commit = "a".repeat(40);
-const authorityCommit = "21a5800c4d725375af256a1e1c827bab75c3f034";
+const authorityCommit = "9942bb5fbef593305480802a170d6bcb3e0a1a6a";
 const sha256 = (value: string) => new Bun.CryptoHasher("sha256").update(value).digest("hex");
 
 async function fixture() {

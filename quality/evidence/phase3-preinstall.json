@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "manifestId": "phase3-preinstall",
-  "authorityCommit": "21a5800c4d725375af256a1e1c827bab75c3f034",
+  "authorityCommit": "9942bb5fbef593305480802a170d6bcb3e0a1a6a",
   "repositoryCommit": "efec4a5ec8c995fbbd7cc2dac00130638f095bfd",
   "generatedAt": "2026-08-02T12:17:49.758Z",
   "targets": [

@@ -10,8 +10,8 @@ stays active.
 
 ## Authority and scope
 
-- Requirements authority: ledger `21a5800c4d725375af256a1e1c827bab75c3f034`
-  with accepted CR-0006 (`DIST-001..003`) and CR-0007.
+- Requirements authority: ledger `9942bb5fbef593305480802a170d6bcb3e0a1a6a`
+  with accepted CR-0006 (`DIST-001..003`), CR-0007, and CR-0008.
 - Design: `2a1c740`; plan: `817c4b0`.
 - Worktree/branch: `.worktrees/reusable-windows-distribution` /
   `feat/reusable-windows-distribution`.
@@ -22,6 +22,8 @@ stays active.
   occurred.
 - No real current-user Scheduled Task was registered. Key-generation tests used
   fresh temporary directories and removed them.
+- CR-0008 conditionally authorizes the exact message
+  `codex连接微信成功，请试用` only after the entire Goal passes. It has not been sent.
 
 ## Delivered repository capabilities
 

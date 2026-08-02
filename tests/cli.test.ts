@@ -8,10 +8,12 @@ import {
   checkCodexProtocolCompatibility,
   createGracefulShutdownController,
   createUncaughtExceptionHandler,
+  requestSupervisorRestart,
   parseCommand,
   runCli,
 } from "../src/cli.js";
 import { createNodeTestExecutable } from "./helpers/platform.js";
+import type { GracefulShutdownController } from "../src/cli.js";
 
 const originalCwd = process.cwd();
 const originalLog = console.log;
@@ -64,6 +66,17 @@ describe("CLI", () => {
 
     expect(disposeCalls).toBe(1);
     expect(forceExitCodes).toEqual([]);
+  });
+
+  test("a service restart requests graceful shutdown with the supervisor restart exit code", () => {
+    const signals: string[] = [];
+    const exitCodes: number[] = [];
+    requestSupervisorRestart(
+      { request: (signal) => signals.push(signal) } as GracefulShutdownController,
+      (code) => exitCodes.push(code),
+    );
+    expect(signals).toEqual(["SIGTERM"]);
+    expect(exitCodes).toEqual([75]);
   });
 
   test("a second shutdown signal forces exit without calling process.exit in tests", async () => {

@@ -4,8 +4,8 @@ import { fileURLToPath } from "node:url";
 
 const prohibitedTaskId = "019fc002-590e-7023-b7e5-2a802168f00a";
 const approvedAuthorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
-const approvedAuthorityCommit = "21a5800c4d725375af256a1e1c827bab75c3f034";
-const approvedAcceptedChangeIds = ["CR-0001", "CR-0002", "CR-0004", "CR-0005", "CR-0006", "CR-0007"];
+const approvedAuthorityCommit = "9942bb5fbef593305480802a170d6bcb3e0a1a6a";
+const approvedAcceptedChangeIds = ["CR-0001", "CR-0002", "CR-0004", "CR-0005", "CR-0006", "CR-0007", "CR-0008"];
 const approvedRequirementIds = [
   "DESKTOP-001", "DESKTOP-002", "DESKTOP-003",
   "DIST-001", "DIST-002", "DIST-003",
@@ -17,8 +17,8 @@ const approvedRequirementIds = [
 ];
 const approvedFiles = new Map([
   ["docs/requirements/baselines/v1.0.0.md", "27a07bc5d3be5063eb819c68ce143571e400dd04098deddd327c64328273940a"],
-  ["docs/requirements/acceptance-matrix.md", "15989304a86c525b9d8fb60bbba55bfde620382097858b1b61e83f6ed9fbf0e2"],
-  ["docs/requirements/CURRENT.md", "e5a8263f5fcd342f4972febc57591253793a5c0fc1b71fb4012fd8773c856b53"],
+  ["docs/requirements/acceptance-matrix.md", "22e691517582cf1689e65170c1438184ecb5ad9e06b895f271516f7359474486"],
+  ["docs/requirements/CURRENT.md", "e0f17225bbb70cd093d1712a728bb64ae5cece427846af8675adf19c078223f9"],
   ["docs/requirements/changes/CR-0001-initial-ledger-and-scope-migration.md", "9dca7ff19287d473ebab6d37d56a90c7cca7b4a06aad269453d63bb179cc3237"],
   ["docs/requirements/changes/CR-0002-configurable-auto-review.md", "1f78d9e2b258df52dc1d4143cdcdd5609973b22504ecbdff5ea8d1b99aae0f65"],
   ["docs/requirements/changes/CR-0003-risk-timeboxes-and-progress-cadence.md", "84f864e5c79fc7a08647564ea0ddfd3926c567f29d1007890ebc4838cb56b9dc"],
@@ -26,6 +26,7 @@ const approvedFiles = new Map([
   ["docs/requirements/changes/CR-0005-adaptive-model-routing.md", "c9cf44c31f432e0fab0746b98c18000616265210b04a3b1110ac2c1d9464cfde"],
   ["docs/requirements/changes/CR-0006-reusable-windows-distribution.md", "2515dcf163b16c224551925557eda3b1ad66b1e7332dbe4cb806dc3fe922074d"],
   ["docs/requirements/changes/CR-0007-overnight-repository-autonomy.md", "3544ea91982aba57fa91972b1848526f1ca817c515b849ff97ed9f2e6239bbf3"],
+  ["docs/requirements/changes/CR-0008-goal-completion-weixin-notice.md", "ce5b69b68b9b86cb398e4e22053a58bb077e89552d5346e472febb52cd50c11c"],
   ["docs/requirements/adr/ADR-0001-ledger-authority.md", "f3b57fd9c5e4c12f182ec8b99dc24eca005994f648ea22a4247e16c37c1df8fe"],
   ["docs/requirements/adr/ADR-0002-task-isolation-and-concurrency.md", "f9233ca2109755611f61202648266b48f308d8c09a2e5c068d6e9526b8353644"],
   ["docs/requirements/adr/ADR-0003-durable-media-delivery.md", "59c716c01d494af6192a059a6a11269cecf50433803baec0e7d2fc768e2afce6"],

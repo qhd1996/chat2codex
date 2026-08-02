@@ -3567,7 +3567,7 @@ export class BridgeRunner {
       }
       await this.sender.sendText(
         message.chatId,
-        "已接受服务重启请求；bridge 将优雅退出并由 launchd/systemd 自动拉起。",
+        "已接受服务重启请求；bridge 将优雅退出并由 launchd/systemd/Windows Task Scheduler 自动拉起。",
       );
       this.restartAfterMessageIds.add(message.messageId);
       return;

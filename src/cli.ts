@@ -77,6 +77,7 @@ interface UncaughtExceptionHandlerOptions {
 }
 
 const defaultShutdownTimeoutMs = 10_000;
+export const supervisorRestartExitCode = 75;
 
 export async function runCli(argv = process.argv.slice(2)): Promise<void> {
   const { command, args } = parseCommand(argv);
@@ -217,7 +218,7 @@ Options:
         config,
         platform,
         logger,
-        () => shutdown?.request("SIGTERM"),
+        () => requestSupervisorRestart(shutdown),
       );
     } finally {
       resolveRuntimeReady(runtime);
@@ -234,6 +235,15 @@ Options:
       await instanceLock?.release();
     }
   }
+}
+
+export function requestSupervisorRestart(
+  shutdown: Pick<GracefulShutdownController, "request"> | undefined,
+  setExitCode: (code: number) => void = (code) => { process.exitCode = code; },
+): void {
+  if (!shutdown) return;
+  setExitCode(supervisorRestartExitCode);
+  shutdown.request("SIGTERM");
 }
 
 export function createGracefulShutdownController(

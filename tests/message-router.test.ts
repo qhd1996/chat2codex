@@ -9418,6 +9418,7 @@ describe("MessageRouter access control", () => {
       expect(sender.messages[1]?.text).toContain("latest line");
       expect(sender.messages[2]?.text).toContain("只允许在私聊中");
       expect(sender.messages[3]?.text).toContain("优雅退出");
+      expect(sender.messages[3]?.text).toContain("Windows Task Scheduler");
     } finally {
       await router?.dispose();
       await rm(tempDir, { recursive: true, force: true });
