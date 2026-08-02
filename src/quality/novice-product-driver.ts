@@ -33,6 +33,16 @@ export interface FreshWindowsLifecycleResult {
   residualOwnedFiles: string[];
 }
 
+export function validateFreshWindowsLifecycleResult(value: FreshWindowsLifecycleResult): FreshWindowsLifecycleResult {
+  if (value.evidenceLevel !== "repository" || value.taskRegistration !== "simulated") throw new Error("Fresh novice lifecycle evidence level is invalid.");
+  if (value.installAttempts !== 2 || value.uninstallAttempts !== 2 || value.uninstallNoopCount !== 1) throw new Error("Fresh novice lifecycle is not double-idempotent.");
+  if (value.createdKeyCount !== 3 || value.preservedKeyCount !== 3 || value.distinctKeyFingerprints !== 3) throw new Error("Fresh novice lifecycle key evidence is invalid.");
+  if (value.taskCreateCount !== 2 || value.taskDeleteCount !== 1) throw new Error("Fresh novice lifecycle task evidence is invalid.");
+  if (!value.userDataPreserved) throw new Error("Fresh novice lifecycle user data was not preserved.");
+  if (value.residualOwnedFiles.length !== 0) throw new Error("Fresh novice lifecycle left an owned residual.");
+  return value;
+}
+
 export async function runFreshWindowsLifecycleJourney(options: {
   root: string; seedState: string; stopAfterDoubleUninstall?: boolean;
 }): Promise<FreshWindowsLifecycleResult> {
@@ -86,11 +96,11 @@ export async function runFreshWindowsLifecycleJourney(options: {
   const manifest = await readFile(input.manifestPath, "utf8").catch(() => null);
   const residualOwnedFiles = manifest === null ? [] : ["installation.json"];
   const userDataPreserved = await readFile(statePath, "utf8").then((value) => value === options.seedState).catch(() => false);
-  return {
+  return validateFreshWindowsLifecycleResult({
     evidenceLevel: "repository", taskRegistration: "simulated", installAttempts, uninstallAttempts, uninstallNoopCount,
     createdKeyCount, preservedKeyCount, distinctKeyFingerprints: new Set(existingKeys).size || fixture.distinctFingerprints.size,
     taskCreateCount: fixture.taskCreateCount(), taskDeleteCount: fixture.taskDeleteCount(), userDataPreserved, residualOwnedFiles,
-  };
+  });
 }
 
 function windowsLifecycleIo(input: WindowsServiceInstallInput, home: string) {
