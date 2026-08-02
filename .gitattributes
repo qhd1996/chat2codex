@@ -1,3 +1,6 @@
 # Evidence manifests hash repository bytes. Keep their checked-out bytes stable on Windows.
 quality/evidence/*.json text eol=lf
 docs/superpowers/verification/*.md text eol=lf
+# Hook trust hashes must be identical across Windows and POSIX checkouts.
+scripts/codex-hooks/*.mjs text eol=lf
+docs/phase3/hook-sha256.json text eol=lf

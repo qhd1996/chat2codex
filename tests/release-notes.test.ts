@@ -86,4 +86,45 @@ describe("release notes rendering", () => {
     expect(architecture).toContain("best-effort");
     expect(architecture).toContain("schema v5");
   });
+
+  test("documents the inert Phase 3 Gateway contract and seven-row acceptance boundary", async () => {
+    const root = path.resolve(import.meta.dir, "..");
+    const [english, chinese, architecture, environment, installation, rollback] = await Promise.all([
+      readFile(path.join(root, "README.md"), "utf8"),
+      readFile(path.join(root, "README.zh-CN.md"), "utf8"),
+      readFile(path.join(root, "docs/architecture.md"), "utf8"),
+      readFile(path.join(root, ".env.example"), "utf8"),
+      readFile(path.join(root, "docs/phase3/installation-runbook.md"), "utf8"),
+      readFile(path.join(root, "docs/phase3/rollback-runbook.md"), "utf8"),
+    ]);
+
+    for (const source of [english, chinese, architecture]) {
+      expect(source).toContain("127.0.0.1");
+      expect(source).toContain("UserPromptSubmit");
+      expect(source).toContain("thread/read");
+      expect(source).toContain("schema v6");
+      expect(source.toLowerCase()).toContain("unbound");
+      expect(source).toContain("plugin/list");
+    }
+
+    expect(environment).toContain("CHAT2CODEX_DESKTOP_GATEWAY_ENABLED=false");
+    expect(environment).toContain("127.0.0.1");
+    expect(environment).toContain("CHAT2CODEX_DESKTOP_HEARTBEAT_MS=10000");
+    expect(environment).not.toContain("CHAT2CODEX_DESKTOP_GATEWAY_HEARTBEAT_MS");
+    expect(environment).not.toMatch(/^[^#\r\n]*CHAT2CODEX_DESKTOP_.*(?:TOKEN|SECRET|KEY)=\S+/mu);
+
+    expect(installation).toMatch(/^# Phase 3 installation runbook\r?\n\r?\n> STOP:/u);
+    for (const approval of ["~/.codex", "Hook trust", "Desktop restart", "production write", "Computer Use", "real Weixin send"]) {
+      expect(installation).toContain(approval);
+    }
+    expect(installation).toContain("Hook SHA-256 manifest");
+    expect(installation).toContain("temporary Codex Home");
+    expect(installation).toContain("verify-phase3-temp-codex-home.mjs");
+    expect(installation.match(/^\| [1-7]\. /gmu)).toHaveLength(7);
+
+    expect(rollback).toContain("immediate bridge-only mode");
+    expect(rollback.toLowerCase()).toContain("full schema v6 to v5 downgrade");
+    expect(rollback).toContain("STOP-ROLLBACK");
+    expect(rollback).toContain("undelivered outbox");
+  });
 });

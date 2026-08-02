@@ -139,7 +139,32 @@ The advisor partition is optional in schema v5, so an older package ignores it
 during rollback; reloading a legacy state yields an empty advisor.
 
 Ordered outbound Weixin media and the review-only UsageAdvisor foundation coexist
-in schema v5. Codex desktop visibility and same-thread handoff remain Phase 3.
+in schema v5.
+
+## Phase 3 authenticated Desktop boundary
+
+Schema v6 adds root-thread bindings, generation ownership, actual-turn fences,
+excluded control turns, advisory wakes, release requests, and reconciled/mirrored
+high water without weakening Phase 2 media or UsageAdvisor. One in-process Gateway
+shares the single serialized state writer with BridgeRunner and binds only IPv4
+127.0.0.1. Distinct prompt_hook, stop_hook, and desktop_mcp token files authorize
+closed endpoint sets; request and response HMACs are fresh, replay-resistant, and
+contain no raw prompt, sender, path, token, or result bytes.
+
+UserPromptSubmit is the start gate: a current Desktop owner/generation creates one
+durable fence on its actual turn_id before a model turn may continue. Stop never
+blocks or supplies result content; it is a best-effort wake. Recovery scans stable
+thread/read(includeTurns: true), stages declared files immutably, and atomically
+commits deterministic outbox identities plus high water. Missing/malformed reads
+advance nothing and mark ownership uncertain. An explicit concrete root threadId
+is required; unbound roots and child Agent threadIds remain non-exportable even
+when a parent session identity is shared.
+
+The Gateway has no dependency on plugin/list. The repository ships only inert,
+disabled examples and a Hook SHA-256 manifest. Installation and schema v6 to v5
+rollback are separately approved operational actions; any binding, fence, wake,
+release, staging, uncertain state, or undelivered outbox obligation blocks a full
+downgrade. The preferred rollback is immediate bridge-only mode in schema v6.
 
 Run `bun run typecheck:contracts` to compile the reference adapter and
 `bun test tests/architecture-boundaries.test.ts` to verify the isolation rule.

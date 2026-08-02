@@ -91,6 +91,27 @@ describe("architecture boundaries", () => {
     expect(source).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec(?:\.js)?["'`]?\s*,?\s*["'`](?:init|update|archive)/iu);
     expect(source).not.toMatch(/\b(?:Set-Acl|icacls|schtasks|Start-ScheduledTask|Stop-Process)\b/iu);
   });
+
+  test("Phase 3 repository assets are inert, loopback-only, and do not depend on plugin discovery", async () => {
+    const files = [
+      "docs/phase3/codex-hooks.example.json",
+      "docs/phase3/codex-mcp.example.toml",
+      "docs/phase3/installation-runbook.md",
+      "docs/phase3/rollback-runbook.md",
+      "scripts/stage-phase3-codex-home.mjs",
+      "scripts/generate-phase3-temp-codex-home.mjs",
+      "scripts/verify-phase3-temp-codex-home.mjs",
+    ];
+    const sources = await Promise.all(files.map((file) => readFile(path.join(workspaceRoot, file), "utf8")));
+    const combined = sources.join("\n");
+    expect(combined).not.toMatch(/(?:^|[^a-z])0\.0\.0\.0(?:[^a-z]|$)/u);
+    for (const line of combined.split(/\r?\n/u).filter((entry) => entry.includes("plugin/list"))) {
+      expect(line.toLowerCase()).toMatch(/(?:not depend|without|prohibit|do not|never calls)/u);
+    }
+    expect(combined).not.toMatch(/(?:TOKEN|SECRET|KEY)[A-Z0-9_]*\s*=\s*["']?[A-Za-z0-9_-]{43}(?:["']|\s|$)/u);
+    expect(combined).toContain("127.0.0.1");
+    expect(combined).toContain("INERT");
+  });
 });
 
 async function typescriptFiles(directory: string): Promise<string[]> {

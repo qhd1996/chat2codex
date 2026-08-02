@@ -1,0 +1,10 @@
+{
+  "algorithm": "SHA-256",
+  "installation_status": "UNTRUSTED_UNTIL_TASK_12_APPROVAL",
+  "source_hook_commit": "3a0a7f4",
+  "files": {
+    "scripts/codex-hooks/hook-client.mjs": "97d50e2e311e352cde674f58eb62eb53e4b956a5255adc6a00c137aaf63d9f00",
+    "scripts/codex-hooks/stop-wake.mjs": "96e6d66f3a9eafca658459c124d33fd4b045de8aba2b998ad21f0930de789169",
+    "scripts/codex-hooks/user-prompt-submit.mjs": "9388ddd4d4900534729dcfc44d14928cb3f8cab306bf6a5cbdd9708ed08745e6"
+  }
+}

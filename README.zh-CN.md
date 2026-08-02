@@ -376,6 +376,22 @@ bun run check
 
 本地开发和 pull request 流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。在共享 chat 中运行 Chat2Codex 或报告安全问题前，请先阅读 [SECURITY.md](SECURITY.md)。
 
+## Phase 3 Desktop Gateway（安装前）
+
+仓库已包含一个默认禁用的强认证 Gateway 候选，只监听 IPv4 127.0.0.1，
+使用三个分作用域且仅属主可读的 token 文件与签名响应，并把一个明确的根
+threadId 绑定到唯一 owner/generation。UserPromptSubmit 必须 fail-closed，并用
+实际 turn_id 建立 fence；Stop 仅用于 advisory wake。稳定 thread/read 才是权威
+来源，幂等有序 outbox 与 high water 在同一事务推进。unbound 根线程和具体
+child Agent 线程默认不可外发。
+
+该路线不依赖 plugin/list。schema v6 在保留 Phase 2 媒体与 UsageAdvisor 的
+同时增加 Desktop binding/fence/wake 状态。安装、修改 ~/.codex、Hook trust、
+Desktop restart、production write、Computer Use 和每次真人微信发送仍是 Task 12
+逐项审批动作。详见 docs/phase3/installation-runbook.md 与
+docs/phase3/rollback-runbook.md；回滚明确区分 immediate bridge-only mode 与受阻断
+条件保护的 schema v6 到 v5 降级。
+
 ## 后续功能
 
 1. 完成安全、有序微信出站文字/图片/文件的生产部署和真人客户端验收。
