@@ -1,10 +1,10 @@
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { planNoviceIsolation, runNoviceArchiveAcceptance, validateNoviceWorkerEvidence } from "../scripts/run-novice-acceptance.mjs";
+import { planNoviceIsolation, planNpmInvocation, runNoviceArchiveAcceptance, validateNoviceWorkerEvidence } from "../scripts/run-novice-acceptance.mjs";
 
 describe("novice archive isolation", () => {
   test("plans a private profile, Codex Home, Chat2Codex Home, and npm prefix", async () => {
@@ -38,6 +38,23 @@ describe("novice archive isolation", () => {
   test("ships no developer or production drive path in the archive runner", async () => {
     const source = await Bun.file(path.resolve(import.meta.dir, "..", "scripts", "run-novice-acceptance.mjs")).text();
     expect(source).not.toMatch(/[A-Za-z]:[\\/](?:Users|workspace|Chat2Codex|codex)/iu);
+  });
+
+  test("runs the standard Windows npm CLI through the current Node executable", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-npm-"));
+    const cli = path.join(root, "node_modules", "npm", "bin", "npm-cli.js");
+    await mkdir(path.dirname(cli), { recursive: true });
+    await writeFile(cli, "// synthetic npm cli\n");
+    try {
+      await expect(planNpmInvocation({ command: "npm", args: ["--version"], platform: "win32", pathValue: root, nodeCommand: process.execPath }))
+        .resolves.toEqual({ command: process.execPath, args: [cli, "--version"] });
+      await expect(planNpmInvocation({ command: "npm", args: [], platform: "win32", pathValue: path.join(root, "missing"), nodeCommand: process.execPath }))
+        .rejects.toThrow(/install node.*npm|npm cli/i);
+      await expect(planNpmInvocation({ command: "npmXcmd", args: ["--version"], platform: "win32", pathValue: root, nodeCommand: process.execPath }))
+        .resolves.toEqual({ command: "npmXcmd", args: ["--version"] });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   test("requires complete package-only worker evidence", () => {

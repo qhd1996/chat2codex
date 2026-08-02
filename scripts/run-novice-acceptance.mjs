@@ -43,8 +43,9 @@ export async function runNoviceArchiveAcceptance(input) {
   for (const directory of Object.values(plan.environment)) await mkdir(directory, { recursive: true });
   const npm = input.npmCommand ?? "npm";
   const installArgs = ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", plan.environment.npmPrefix, plan.archive];
-  const install = spawnSync(npm, installArgs, { cwd: plan.ownedRoot, encoding: "utf8", windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
-  if (install.status !== 0) throw new Error("Private npm installation failed: " + redactedTail(install.stderr));
+  const invocation = await planNpmInvocation({ command: npm, args: installArgs, platform: process.platform, pathValue: process.env.PATH, nodeCommand: input.nodeCommand ?? process.execPath });
+  const install = spawnSync(invocation.command, invocation.args, { cwd: plan.ownedRoot, encoding: "utf8", windowsHide: true, maxBuffer: 8 * 1024 * 1024 });
+  if (install.error || install.status !== 0) throw new Error("Private npm installation failed: " + redactedTail(install.error?.message ?? install.stderr));
   const installedRoot = await realpath(plan.installedPackageRoot);
   if (!inside(plan.environment.npmPrefix, installedRoot) || overlaps(installedRoot, path.resolve(input.repositoryRoot))) throw new Error("Installed novice package escaped the private prefix or resolved to the repository.");
   const worker = path.join(installedRoot, "scripts", "novice-windows-worker.mjs");
@@ -61,6 +62,19 @@ export async function runNoviceArchiveAcceptance(input) {
   const workerEvidence = JSON.parse(marker.slice("NOVICE_PACKAGE_RESULT ".length));
   validateNoviceWorkerEvidence(workerEvidence, { installedRoot, packageVersion: JSON.parse(await readFile(path.join(installedRoot, "package.json"), "utf8")).version });
   return { plan, qualifying: plan.qualifyingEnvironment, verdict: plan.qualifyingEnvironment ? "pass" : "package_smoke", install: { command: [npm, ...installArgs].map(redactPart), exitCode: install.status }, worker: workerEvidence };
+}
+
+export async function planNpmInvocation(input) {
+  const command = String(input.command);
+  const args = Array.isArray(input.args) ? [...input.args] : [];
+  if (input.platform !== "win32" || !/^npm(?:\.cmd)?$/iu.test(command)) return { command, args };
+  const entries = String(input.pathValue ?? "").split(";").filter(Boolean);
+  for (const entry of entries) {
+    const cli = path.join(entry, "node_modules", "npm", "bin", "npm-cli.js");
+    const info = await lstat(cli).catch(() => null);
+    if (info?.isFile() && !info.isSymbolicLink() && same(await realpath(cli), cli)) return { command: input.nodeCommand, args: [cli, ...args] };
+  }
+  throw new Error("npm CLI was not found. Install Node.js with npm, then run doctor and retry.");
 }
 
 export function validateNoviceWorkerEvidence(value, expected) {
