@@ -1,4 +1,4 @@
-<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"specs","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"9942bb5fbef593305480802a170d6bcb3e0a1a6a","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
+<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"specs","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"01e827bbdc6584136627d9f1f137e8051f0a8c97","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
 
 ## ADDED Requirements
 
