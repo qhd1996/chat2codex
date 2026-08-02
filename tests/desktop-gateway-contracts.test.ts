@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  desktopGatewayControlPrompts,
   gatewayEndpointKinds,
   parseGatewayRequest,
   parseGatewayResponse,
@@ -11,6 +12,13 @@ const requestId = "019fc160-7e0d-7990-9317-e830a4425a8f";
 const sessionId = "019fc160-7e0d-7990-9317-e830a4425a90";
 
 describe("Desktop Gateway contracts", () => {
+  test("freezes the exact code-owned control prompt bytes", () => {
+    expect(desktopGatewayControlPrompts).toEqual({
+      takeover: "/chat2codex:takeover-desktop",
+      release_request: "/chat2codex:release-to-bridge",
+    });
+  });
+
   test("freezes the closed endpoint surface", () => {
     expect(gatewayEndpointKinds).toEqual([
       "status",

@@ -2,6 +2,8 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
+import { desktopGatewayControlPrompts } from "../src/desktop-gateway/contracts.js";
+
 import {
   CONTROL_PROMPTS,
   runStopWake,
@@ -48,6 +50,7 @@ describe("UserPromptSubmit Hook", () => {
   });
 
   test("handles only exact code-owned control literals and always blocks the model turn", async () => {
+    expect(CONTROL_PROMPTS).toEqual(desktopGatewayControlPrompts);
     for (const [controlKind, prompt] of Object.entries(CONTROL_PROMPTS)) {
       let sent: any;
       const result = await runUserPromptSubmit(JSON.stringify({ ...basePrompt, prompt }), {

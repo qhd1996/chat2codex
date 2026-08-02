@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+export const desktopGatewayControlPrompts = Object.freeze({
+  takeover: "/chat2codex:takeover-desktop",
+  release_request: "/chat2codex:release-to-bridge",
+} as const);
+
 export const gatewayEndpointKinds = [
   "status",
   "desktop_heartbeat",

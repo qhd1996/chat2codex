@@ -1,10 +1,7 @@
 import type { GatewayEndpointKind } from "./contracts.js";
 
 export const desktopGatewayProtocolVersion = "1";
-export const desktopGatewayControlPrompts = Object.freeze({
-  takeover: "/chat2codex:takeover-desktop",
-  release_request: "/chat2codex:release-to-bridge",
-} as const);
+export { desktopGatewayControlPrompts } from "./contracts.js";
 
 const endpointPaths: Readonly<Record<GatewayEndpointKind, string>> = {
   status: "/v1/status",
