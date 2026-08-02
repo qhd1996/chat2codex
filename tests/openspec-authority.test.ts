@@ -113,6 +113,19 @@ describe("OpenSpec authority overlay", () => {
       await expect(validateOpenSpecAuthority({ changeRoot, lock: { ...validLock(), files: [{ ...validLockFile(), extra: true }] } })).rejects.toThrow(/unknown.*file/i);
     });
   });
+
+  test("rejects changing both the lock and every artifact to a different authority root", async () => {
+    await withFixture(async ({ changeRoot, files }) => {
+      const changedCommit = "b".repeat(40);
+      const changedRepo = "F:/other/requirements/docs/requirements/";
+      for (const [kind, file] of Object.entries(files)) {
+        await writeFile(file, artifact(kind, { authorityCommit: changedCommit, authorityRepo: changedRepo }));
+      }
+      await expect(validateOpenSpecAuthority({
+        changeRoot, lock: { ...validLock(), authorityCommit: changedCommit, authorityRepo: changedRepo },
+      })).rejects.toThrow(/approved authority (?:commit|repo)/i);
+    });
+  });
 });
 
 function validLock() {

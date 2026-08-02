@@ -20,7 +20,6 @@ export async function validateEvidenceManifest(value, { repositoryRoot, commitEx
   commit(manifest.authorityCommit, "authority commit");
   commit(manifest.repositoryCommit, "repository commit");
   if (commitExists) {
-    if (!await commitExists(manifest.authorityCommit)) throw new Error("Authority commit is not available in the repository.");
     if (!await commitExists(manifest.repositoryCommit)) throw new Error("Repository commit is not available in the repository.");
   }
   timestamp(manifest.generatedAt, "generatedAt");
@@ -82,11 +81,13 @@ export async function validateEvidenceManifest(value, { repositoryRoot, commitEx
   }
 
   let passedTargets = 0;
+  const referencedEvidence = new Set();
   for (const target of targetById.values()) {
     for (const evidenceId of target.evidenceIds) {
       const evidence = evidenceById.get(evidenceId);
       if (!evidence) throw new Error(`Missing evidence referenced by ${target.id}: ${evidenceId}`);
       if (evidence.targetId !== target.id) throw new Error(`Evidence target mismatch for ${evidenceId}.`);
+      referencedEvidence.add(evidenceId);
     }
     const records = target.evidenceIds.map((id) => evidenceById.get(id));
     if (target.verdict === "pass") {
@@ -95,8 +96,13 @@ export async function validateEvidenceManifest(value, { repositoryRoot, commitEx
       if (records.every((record) => levels.indexOf(record.level) < requiredRank)) throw new Error(`Evidence level does not satisfy ${target.requiredLevel} for ${target.id}.`);
       passedTargets += 1;
     }
-    if (target.verdict === "unproven" && target.evidenceIds.length > 0) throw new Error(`Unproven target must not cite evidence: ${target.id}.`);
+    if (target.verdict === "unproven") {
+      const requiredRank = levels.indexOf(target.requiredLevel);
+      if (records.some((record) => record.outcome === "pass" && levels.indexOf(record.level) >= requiredRank)) throw new Error(`Unproven target has sufficient passing evidence: ${target.id}.`);
+    }
+    if (target.verdict === "contradicted" && !records.some((record) => record.outcome === "contradicted")) throw new Error(`Contradicted target lacks contradicted evidence: ${target.id}.`);
   }
+  for (const evidenceId of evidenceById.keys()) if (!referencedEvidence.has(evidenceId)) throw new Error(`Orphan evidence record: ${evidenceId}.`);
 
   return { manifestId: manifest.manifestId, targets: manifest.targets.length, evidence: manifest.evidence.length, passedTargets };
 }

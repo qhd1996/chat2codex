@@ -3,6 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const prohibitedTaskId = "019fc002-590e-7023-b7e5-2a802168f00a";
+const approvedAuthorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
+const approvedAuthorityCommit = "07603ee8ddd38546aca003ff7be8370aa9a51203";
 const artifactFiles = {
   proposal: "proposal.md",
   specs: path.join("specs", "quality-gates", "spec.md"),
@@ -52,6 +54,8 @@ function validateLock(lock) {
   assertExactKeys(lock, lockKeys, "lock");
   if (lock.schemaVersion !== 1) throw new Error("Authority lock schema version is unsupported.");
   if (lock.authoritative !== false) throw new Error("Authority lock must remain non-authoritative.");
+  if (lock.authorityRepo !== approvedAuthorityRepo) throw new Error("Approved authority repo does not match the lock.");
+  if (lock.authorityCommit !== approvedAuthorityCommit) throw new Error("Approved authority commit does not match the lock.");
   if (typeof lock.authorityRepo !== "string" || !lock.authorityRepo.endsWith("/docs/requirements/")) throw new Error("Authority lock repo is invalid.");
   if (typeof lock.authorityCommit !== "string" || !/^[0-9a-f]{40}$/u.test(lock.authorityCommit)) throw new Error("Authority lock commit is invalid.");
   if (!Array.isArray(lock.acceptedChangeIds) || !lock.acceptedChangeIds.every((value) => /^CR-[0-9]{4}$/u.test(value))) throw new Error("Authority lock accepted changes are invalid.");

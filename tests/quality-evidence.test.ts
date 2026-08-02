@@ -88,6 +88,27 @@ describe("quality evidence manifest", () => {
     });
   });
 
+  test("retains weaker evidence on an unproven stronger target without promotion", async () => {
+    await withFixture(async (root, manifest) => {
+      manifest.targets[0].verdict = "unproven";
+      manifest.targets[0].evidenceIds = [];
+      manifest.targets[1].evidenceIds = ["authority-test"];
+      manifest.evidence[0].targetId = "DESKTOP-001";
+      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root })).resolves.toMatchObject({ passedTargets: 0 });
+    });
+  });
+
+  test("requires direct evidence for contradicted targets and rejects orphan records", async () => {
+    await withFixture(async (root, manifest) => {
+      manifest.targets[1].verdict = "contradicted";
+      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root })).rejects.toThrow(/contradicted.*evidence/i);
+      manifest.targets[1].verdict = "unproven";
+      manifest.targets[0].verdict = "unproven";
+      manifest.targets[0].evidenceIds = [];
+      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root })).rejects.toThrow(/orphan.*evidence/i);
+    });
+  });
+
   test("rejects outside-root, missing, and symlink artifacts", async () => {
     await withFixture(async (root, manifest) => {
       manifest.evidence[0].artifact.path = "../outside.json";
@@ -120,12 +141,12 @@ describe("quality evidence manifest", () => {
     });
   });
 
-  test("rejects commits that the repository cannot resolve", async () => {
+  test("allows the locked external authority commit but rejects an unavailable repository commit", async () => {
     await withFixture(async (root, manifest) => {
-      const exists = async (value: string) => value === commit;
-      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root, commitExists: exists })).rejects.toThrow(/authority commit.*not available/i);
-      const both = async (value: string) => value === commit || value === authorityCommit;
-      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root, commitExists: both })).resolves.toMatchObject({ passedTargets: 1 });
+      const repositoryExists = async (value: string) => value === commit;
+      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root, commitExists: repositoryExists })).resolves.toMatchObject({ passedTargets: 1 });
+      const noCommitExists = async () => false;
+      await expect(validateEvidenceManifest(manifest, { repositoryRoot: root, commitExists: noCommitExists })).rejects.toThrow(/repository commit.*not available/i);
     });
   });
 });
