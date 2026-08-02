@@ -37,7 +37,10 @@ const staleTokenPauseMs = 60 * 60 * 1_000;
 export async function createWeixinAdapter(
   config: BridgeConfig,
   logger: Logger,
-  options: { fetchImpl?: typeof fetch } = {},
+  options: {
+    fetchImpl?: typeof fetch;
+    randomBytesImpl?: (size: number) => Buffer;
+  } = {},
 ): Promise<ChatAdapter> {
   const credentials = await loadWeixinCredentials(config.weixinCredentialsPath);
   const runtimePath = weixinRuntimePath(config.weixinCredentialsPath);
@@ -48,6 +51,7 @@ export async function createWeixinAdapter(
     token: credentials.token,
     logger,
     fetchImpl: options.fetchImpl,
+    randomBytesImpl: options.randomBytesImpl,
   });
   const adapterId = `weixin:${credentials.accountId}`;
   let controller: AbortController | undefined;
@@ -120,6 +124,24 @@ export async function createWeixinAdapter(
       await api.sendText({
         to: target.conversationId,
         text,
+        contextToken: conversation?.contextToken,
+        clientId,
+      });
+      return {
+        status: "delivered",
+        handle: {
+          adapterId,
+          conversationId: target.conversationId,
+          messageId: clientId,
+        },
+      };
+    },
+    async sendMedia(target, input, options) {
+      const conversation = runtime.conversations[target.conversationId];
+      const clientId = options?.idempotencyKey ?? randomUUID();
+      await api.sendMedia({
+        to: target.conversationId,
+        input,
         contextToken: conversation?.contextToken,
         clientId,
       });

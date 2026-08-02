@@ -17,9 +17,17 @@ export const WeixinItemType = {
   VIDEO: 5,
 } as const;
 
+export const WeixinUploadMediaType = {
+  IMAGE: 1,
+  VIDEO: 2,
+  FILE: 3,
+  VOICE: 4,
+} as const;
+
 export interface WeixinCdnMedia {
   encrypt_query_param?: string;
   aes_key?: string;
+  encrypt_type?: number;
   full_url?: string;
 }
 
@@ -30,6 +38,7 @@ export interface WeixinMessageItem {
   image_item?: {
     media?: WeixinCdnMedia;
     aeskey?: string;
+    mid_size?: number;
   };
   voice_item?: {
     media?: WeixinCdnMedia;
@@ -38,6 +47,8 @@ export interface WeixinMessageItem {
   file_item?: {
     media?: WeixinCdnMedia;
     file_name?: string;
+    md5?: string;
+    len?: string;
   };
   video_item?: {
     media?: WeixinCdnMedia;
@@ -46,6 +57,27 @@ export interface WeixinMessageItem {
     title?: string;
     message_item?: WeixinMessageItem;
   };
+}
+
+/** Wire fields captured from @tencent-weixin/openclaw-weixin 2.4.6. */
+export interface WeixinGetUploadUrlRequest {
+  filekey: string;
+  media_type: number;
+  to_user_id: string;
+  rawsize: number;
+  rawfilemd5: string;
+  filesize: number;
+  no_need_thumb: boolean;
+  aeskey: string;
+}
+
+export interface WeixinGetUploadUrlResponse {
+  ret?: number;
+  errcode?: number;
+  errmsg?: string;
+  upload_param?: string;
+  thumb_upload_param?: string;
+  upload_full_url?: string;
 }
 
 export interface WeixinMessage {

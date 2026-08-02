@@ -5,8 +5,8 @@ import path from "node:path";
 
 import { afterEach, describe, expect, test } from "bun:test";
 
-import { WeixinApiClient } from "../src/adapters/weixin/api.js";
-import { weixinAdapterInternals } from "../src/adapters/weixin/adapter.js";
+import { WeixinApiClient, weixinApiInternals } from "../src/adapters/weixin/api.js";
+import { createWeixinAdapter, weixinAdapterInternals } from "../src/adapters/weixin/adapter.js";
 import {
   loadWeixinCredentials,
   loadWeixinRuntime,
@@ -14,6 +14,7 @@ import {
   saveWeixinRuntime,
 } from "../src/adapters/weixin/store.js";
 import { emptyWeixinRuntimeState } from "../src/adapters/weixin/types.js";
+import { loadConfig } from "../src/config/env.js";
 import { weixinSetupInternals } from "../src/setup/weixin.js";
 import type { Logger } from "../src/util/logger.js";
 import { expectPrivateFileMode } from "./helpers/platform.js";
@@ -25,6 +26,15 @@ const logger: Logger = {
   warn() {},
   error() {},
 };
+
+const tencent246Fixture = {
+  plaintext: Buffer.from("phase2 fixture"),
+  aesKey: Buffer.from("000102030405060708090a0b0c0d0e0f", "hex"),
+  ciphertextHex: "6b070c645a2d34211cdd17bcc0e7c0ce",
+  md5Hex: "c3928f8b905a849b8a40226b93efbe2b",
+  fileKey: "101112131415161718191a1b1c1d1e1f",
+  downloadParam: "download-opaque",
+} as const;
 
 afterEach(async () => {
   await Promise.all(
@@ -198,6 +208,30 @@ describe("Weixin protocol adapter", () => {
     expect(succeededRuntime.getUpdatesBuf).toBe("cursor-after-batch");
   });
 
+  test("keeps an ordinary long-poll timeout as an empty update batch", async () => {
+    const client = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret",
+      logger,
+      fetchImpl: async (_request, init) => {
+        await new Promise<void>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })),
+            { once: true },
+          );
+        });
+        throw new Error("unreachable");
+      },
+    });
+
+    await expect(client.getUpdates("cursor-before-timeout", 10)).resolves.toEqual({
+      ret: 0,
+      msgs: [],
+      get_updates_buf: "cursor-before-timeout",
+    });
+  });
+
   test("passes context and idempotency key in outbound requests without logging secrets", async () => {
     const requests: Array<{ url: string; headers: Headers; body: unknown }> = [];
     const client = new WeixinApiClient({
@@ -231,6 +265,312 @@ describe("Weixin protocol adapter", () => {
         to_user_id: "wx-user",
       },
     });
+  });
+
+  test("encrypts outbound media with the pinned AES-128-ECB PKCS#7 fixture", () => {
+    expect(
+      weixinApiInternals.encryptAes128Ecb(
+        tencent246Fixture.plaintext,
+        tencent246Fixture.aesKey,
+      ).toString("hex"),
+    ).toBe(tencent246Fixture.ciphertextHex);
+    expect(weixinApiInternals.aesPaddedSize(tencent246Fixture.plaintext.length)).toBe(16);
+    expect(weixinApiInternals.aesPaddedSize(16)).toBe(32);
+  });
+
+  test("uploads and sends one native outbound image with exact Tencent 2.4.6 fields", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-weixin-upload-"));
+    temporaryDirectories.push(directory);
+    const stagedPath = path.join(directory, "answer.png");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    const requests: Array<{ url: string; method: string; body: unknown }> = [];
+    const randomValues = [Buffer.from(tencent246Fixture.fileKey, "hex"), tencent246Fixture.aesKey];
+    const client = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret",
+      logger,
+      randomBytesImpl: () => Buffer.from(randomValues.shift()!),
+      fetchImpl: async (input, init) => {
+        const url = String(input);
+        const bytes = init?.body instanceof Uint8Array ? Buffer.from(init.body) : undefined;
+        requests.push({
+          url,
+          method: init?.method ?? "GET",
+          body: bytes ?? JSON.parse(String(init?.body)) as unknown,
+        });
+        if (url.endsWith("/ilink/bot/getuploadurl")) {
+          return Response.json({ ret: 0, upload_full_url: "https://cdn.example.test/upload?signed=private" });
+        }
+        if (url.startsWith("https://cdn.example.test/upload")) {
+          return new Response(null, { status: 200, headers: { "x-encrypted-param": tencent246Fixture.downloadParam } });
+        }
+        return Response.json({ ret: 0 });
+      },
+    });
+
+    await client.sendMedia({
+      to: "wx-user",
+      input: {
+        kind: "image",
+        stagedPath,
+        fileName: "answer.png",
+        mediaType: "image/png",
+        size: tencent246Fixture.plaintext.length,
+        sha256: crypto.createHash("sha256").update(tencent246Fixture.plaintext).digest("hex"),
+      },
+      contextToken: "context-secret",
+      clientId: "stable-delivery-id",
+    });
+
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({
+      url: "https://api.example.test/ilink/bot/getuploadurl",
+      method: "POST",
+      body: {
+        filekey: tencent246Fixture.fileKey,
+        media_type: 1,
+        to_user_id: "wx-user",
+        rawsize: 14,
+        rawfilemd5: tencent246Fixture.md5Hex,
+        filesize: 16,
+        no_need_thumb: true,
+        aeskey: tencent246Fixture.aesKey.toString("hex"),
+      },
+    });
+    expect(requests[1]).toMatchObject({
+      url: "https://cdn.example.test/upload?signed=private",
+      method: "POST",
+    });
+    expect(Buffer.isBuffer(requests[1]?.body) && requests[1].body.toString("hex")).toBe(
+      tencent246Fixture.ciphertextHex,
+    );
+    expect(requests[2]).toMatchObject({
+      url: "https://api.example.test/ilink/bot/sendmessage",
+      method: "POST",
+      body: {
+        msg: {
+          client_id: "stable-delivery-id",
+          context_token: "context-secret",
+          to_user_id: "wx-user",
+          item_list: [{
+            type: 2,
+            image_item: {
+              media: {
+                encrypt_query_param: tencent246Fixture.downloadParam,
+                aes_key: tencent246Fixture.aesKey.toString("base64"),
+                encrypt_type: 1,
+              },
+              mid_size: 16,
+            },
+          }],
+        },
+      },
+    });
+  });
+
+  test("sends a native outbound file with sanitized name and stable client ID", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-weixin-file-"));
+    temporaryDirectories.push(directory);
+    const credentialsPath = path.join(directory, "credentials.json");
+    const stagedPath = path.join(directory, "report.bin");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    await saveWeixinCredentials(credentialsPath, {
+      schemaVersion: 1,
+      accountId: "clawbot",
+      token: "bot-secret",
+      baseUrl: "https://api.example.test",
+      savedAt: new Date().toISOString(),
+    });
+    await saveWeixinRuntime(path.join(directory, "runtime.json"), {
+      ...emptyWeixinRuntimeState(),
+      conversations: {
+        "wx-user": { contextToken: "context-secret", updatedAt: new Date().toISOString() },
+      },
+    });
+    const sentMessages: unknown[] = [];
+    const randomValues = [Buffer.alloc(16, 0x20), Buffer.alloc(16, 0x30)];
+    const adapter = await createWeixinAdapter(
+      loadConfig({ CHAT2CODEX_ADAPTER: "weixin", CODEX_WORKDIR: directory, WEIXIN_CREDENTIALS_PATH: credentialsPath }),
+      logger,
+      {
+        randomBytesImpl: () => Buffer.from(randomValues.shift()!),
+        fetchImpl: async (input, init) => {
+          const url = String(input);
+          if (url.endsWith("/ilink/bot/getuploadurl")) {
+            return Response.json({ ret: 0, upload_param: "upload-opaque" });
+          }
+          if (url.startsWith("https://novac2c.cdn.weixin.qq.com/c2c/upload")) {
+            return new Response(null, { status: 200, headers: { "x-encrypted-param": "download-file" } });
+          }
+          sentMessages.push(JSON.parse(String(init?.body)) as unknown);
+          return Response.json({ ret: 0 });
+        },
+      },
+    );
+    const result = await adapter.sendMedia!(
+      { adapterId: "weixin:clawbot", conversationId: "wx-user" },
+      {
+        kind: "file",
+        stagedPath,
+        fileName: "../../report?.txt",
+        mediaType: "application/octet-stream",
+        size: tencent246Fixture.plaintext.length,
+        sha256: crypto.createHash("sha256").update(tencent246Fixture.plaintext).digest("hex"),
+      },
+      { idempotencyKey: "stable-file-delivery" },
+    );
+
+    expect(result).toMatchObject({
+      status: "delivered",
+      handle: { messageId: "stable-file-delivery" },
+    });
+    expect(sentMessages).toEqual([
+      expect.objectContaining({
+        msg: expect.objectContaining({
+          client_id: "stable-file-delivery",
+          context_token: "context-secret",
+          item_list: [{
+            type: 4,
+            file_item: expect.objectContaining({
+              file_name: "report_.txt",
+              len: "14",
+              media: expect.objectContaining({
+                encrypt_query_param: "download-file",
+                encrypt_type: 1,
+              }),
+            }),
+          }],
+        }),
+      }),
+    ]);
+  });
+
+  test("fails closed on upload errors, timeouts, or changed staged bytes without leaking secrets", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-weixin-fail-"));
+    temporaryDirectories.push(directory);
+    const stagedPath = path.join(directory, "changed.bin");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    const logLines: string[] = [];
+    const capturingLogger: Logger = {
+      debug(message, data) { logLines.push(String(message) + " " + JSON.stringify(data)); },
+      info(message, data) { logLines.push(String(message) + " " + JSON.stringify(data)); },
+      warn(message, data) { logLines.push(String(message) + " " + JSON.stringify(data)); },
+      error(message, data) { logLines.push(String(message) + " " + JSON.stringify(data)); },
+    };
+    const client = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret-never-log",
+      logger: capturingLogger,
+      randomBytesImpl: () => Buffer.from("00112233445566778899aabbccddeeff", "hex"),
+      fetchImpl: async (_input, init) => {
+        const signal = init?.signal;
+        await new Promise<void>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(Object.assign(new Error("key=00112233445566778899aabbccddeeff"), { name: "AbortError" })), { once: true });
+        });
+        throw new Error("unreachable");
+      },
+    });
+    const input = {
+      kind: "file" as const,
+      stagedPath,
+      fileName: "changed.bin",
+      mediaType: "application/octet-stream",
+      size: tencent246Fixture.plaintext.length,
+      sha256: crypto.createHash("sha256").update(tencent246Fixture.plaintext).digest("hex"),
+    };
+    await fs.appendFile(stagedPath, "changed");
+    await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable", timeoutMs: 10 })).rejects.toThrow("staged media");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable", timeoutMs: 10 })).rejects.toThrow("timed out");
+    const renderedLogs = logLines.join("\n");
+    expect(renderedLogs).not.toContain("bot-secret-never-log");
+    expect(renderedLogs).not.toContain("00112233445566778899aabbccddeeff");
+  });
+
+  test("rejects failed upload responses before any native media message is sent", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-weixin-response-"));
+    temporaryDirectories.push(directory);
+    const stagedPath = path.join(directory, "response.bin");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    const input = {
+      kind: "file" as const,
+      stagedPath,
+      fileName: "response.bin",
+      mediaType: "application/octet-stream",
+      size: tencent246Fixture.plaintext.length,
+      sha256: crypto.createHash("sha256").update(tencent246Fixture.plaintext).digest("hex"),
+    };
+    let sendMessageCalls = 0;
+    const client = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret",
+      logger,
+      randomBytesImpl: () => Buffer.alloc(16, 7),
+      fetchImpl: async (request) => {
+        const url = String(request);
+        if (url.endsWith("/ilink/bot/getuploadurl")) {
+          return Response.json({ ret: 0, upload_full_url: "https://cdn.example.test/upload" });
+        }
+        if (url.endsWith("/ilink/bot/sendmessage")) sendMessageCalls += 1;
+        return new Response("rejected", { status: 403 });
+      },
+    });
+
+    await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable" }))
+      .rejects.toThrow("HTTP 403");
+    expect(sendMessageCalls).toBe(0);
+  });
+
+  test("may request a fresh upload URL on retry but preserves the delivery client ID", async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "chat2codex-weixin-retry-"));
+    temporaryDirectories.push(directory);
+    const stagedPath = path.join(directory, "retry.bin");
+    await fs.writeFile(stagedPath, tencent246Fixture.plaintext);
+    const input = {
+      kind: "file" as const,
+      stagedPath,
+      fileName: "retry.bin",
+      mediaType: "application/octet-stream",
+      size: tencent246Fixture.plaintext.length,
+      sha256: crypto.createHash("sha256").update(tencent246Fixture.plaintext).digest("hex"),
+    };
+    const uploadUrls: string[] = [];
+    const clientIds: string[] = [];
+    let uploadUrlAttempt = 0;
+    const client = new WeixinApiClient({
+      baseUrl: "https://api.example.test",
+      token: "bot-secret",
+      logger,
+      randomBytesImpl: () => Buffer.alloc(16, uploadUrlAttempt + 1),
+      fetchImpl: async (request, init) => {
+        const url = String(request);
+        if (url.endsWith("/ilink/bot/getuploadurl")) {
+          uploadUrlAttempt += 1;
+          const fresh = "https://cdn.example.test/upload/" + uploadUrlAttempt;
+          uploadUrls.push(fresh);
+          return Response.json({ ret: 0, upload_full_url: fresh });
+        }
+        if (url === "https://cdn.example.test/upload/1") {
+          return new Response("retry", { status: 503 });
+        }
+        if (url === "https://cdn.example.test/upload/2") {
+          return new Response(null, { status: 200, headers: { "x-encrypted-param": "download-retry" } });
+        }
+        const body = JSON.parse(String(init?.body)) as { msg?: { client_id?: string } };
+        clientIds.push(body.msg?.client_id ?? "");
+        return Response.json({ ret: 0 });
+      },
+    });
+
+    await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable-retry" }))
+      .rejects.toThrow("HTTP 503");
+    await expect(client.sendMedia({ to: "wx-user", input, clientId: "stable-retry" }))
+      .resolves.toBeUndefined();
+    expect(uploadUrls).toEqual([
+      "https://cdn.example.test/upload/1",
+      "https://cdn.example.test/upload/2",
+    ]);
+    expect(clientIds).toEqual(["stable-retry"]);
   });
 
   test("decrypts AES-128-ECB CDN payloads and enforces the size limit", async () => {
