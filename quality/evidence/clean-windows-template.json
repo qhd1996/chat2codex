@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "environment": { "kind": "unproven", "freshProfile": false, "repositoryAbsent": false, "priorChat2CodexAbsent": false, "os": "unproven", "arch": "unproven" },
   "archive": { "version": "0.0.0-unproven", "size": 1, "sha256": "0000000000000000000000000000000000000000000000000000000000000000" },
   "versions": { "node": "unproven", "npm": "unproven", "codexCli": "unproven", "codexDesktop": "unproven" },

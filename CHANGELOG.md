@@ -22,6 +22,10 @@ numbers once releases are published.
   unregisters the new task and restores prior installer-owned files. Repository
   automation does not install the task, modify real `~/.codex`, trust Hooks,
   restart Desktop, use Computer Use, or send real Weixin messages.
+- Novice scenario evidence binds each table row to code-owned product-probe
+  hashes instead of accepting inventory echo as execution proof. Clean-Windows
+  evidence uses closed stage-specific hash types, rejects late approvals and
+  unredacted user paths, and records exact owned cleanup on failure.
 
 ## 0.8.0 - 2026-07-29
 

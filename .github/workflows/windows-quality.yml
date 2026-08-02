@@ -89,6 +89,11 @@ jobs:
     permissions:
       contents: none
     steps:
+      - name: Initialize fail-closed clean-run evidence
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path candidate -Force | Out-Null
+          [ordered]@{ verdict = 'fail'; failureCode = 'job_incomplete'; reportPresent = $false; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath candidate/clean-run-status.json -Encoding utf8
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
@@ -113,37 +118,77 @@ jobs:
         env:
           C2C_RUNNER_ENVIRONMENT: ${{ runner.environment }}
         run: |
-          $metadata = Get-Content -LiteralPath candidate/candidate-metadata.json -Raw | ConvertFrom-Json
-          $archive = Get-Item -LiteralPath (Join-Path candidate $metadata.archiveName)
-          $oldMetadata = Get-Content -LiteralPath old-package/old-metadata.json -Raw | ConvertFrom-Json
-          $oldArchive = Get-Item -LiteralPath (Join-Path old-package $oldMetadata.archiveName)
-          if ($archive.Length -ne $metadata.archiveSize) { throw 'archive size mismatch' }
-          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'archive hash mismatch' }
-          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $oldArchive.FullName).Hash.ToLowerInvariant() -ne $oldMetadata.sha256) { throw 'old archive hash mismatch' }
-          New-Item -ItemType Directory -Path candidate/extracted | Out-Null
-          tar -xf $archive.FullName -C candidate/extracted
-          node candidate/extracted/package/scripts/verify-distribution-package.mjs candidate/extracted/package
-          $npmRoot = Join-Path $env:RUNNER_TEMP 'novice-codex-cli'
-          npm install --ignore-scripts --no-audit --no-fund --prefix $npmRoot '@openai/codex@0.146.0'
-          $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai/codex') -Recurse -File | Where-Object Name -Like 'codex*.exe' | Select-Object -First 1
-          if (-not $codexBin) { throw 'Codex CLI binary missing' }
-          $env:Path = $codexBin.DirectoryName + ';' + $env:Path
           $environmentRoot = Join-Path $env:RUNNER_TEMP 'novice-owned-environment'
           $ownedRoot = $environmentRoot
           $report = Join-Path $env:RUNNER_TEMP 'novice-clean-evidence.json'
+          $runStatus = Join-Path $PWD 'candidate/clean-run-status.json'
+          $proofPath = Join-Path $PWD 'candidate/zero-residual-proof.json'
           $env:CHAT2CODEX_NOVICE_ISOLATION = '1'
           $runIdentity = 'github-' + '${{ github.run_id }}' + '-' + '${{ github.run_attempt }}'
           $env:CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT = $environmentRoot
           $env:CHAT2CODEX_NOVICE_RUN_IDENTITY = $runIdentity
-          node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
-          node candidate/extracted/package/scripts/verify-novice-evidence.mjs --external $report
+          $failureCode = $null
+          try {
+            $metadata = Get-Content -LiteralPath candidate/candidate-metadata.json -Raw | ConvertFrom-Json
+            $archive = Get-Item -LiteralPath (Join-Path candidate $metadata.archiveName)
+            $oldMetadata = Get-Content -LiteralPath old-package/old-metadata.json -Raw | ConvertFrom-Json
+            $oldArchive = Get-Item -LiteralPath (Join-Path old-package $oldMetadata.archiveName)
+            if ($archive.Length -ne $metadata.archiveSize) { throw 'archive_size_mismatch' }
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'archive_hash_mismatch' }
+            if ((Get-FileHash -Algorithm SHA256 -LiteralPath $oldArchive.FullName).Hash.ToLowerInvariant() -ne $oldMetadata.sha256) { throw 'old_archive_hash_mismatch' }
+            New-Item -ItemType Directory -Path candidate/extracted | Out-Null
+            tar -xf $archive.FullName -C candidate/extracted
+            if ($LASTEXITCODE -ne 0) { throw 'candidate_extract_failed' }
+            node candidate/extracted/package/scripts/verify-distribution-package.mjs candidate/extracted/package
+            if ($LASTEXITCODE -ne 0) { throw 'candidate_package_invalid' }
+            $npmRoot = Join-Path $env:RUNNER_TEMP 'novice-codex-cli'
+            npm install --ignore-scripts --no-audit --no-fund --prefix $npmRoot '@openai/codex@0.146.0'
+            if ($LASTEXITCODE -ne 0) { throw 'codex_cli_install_failed' }
+            $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai/codex') -Recurse -File | Where-Object Name -Like 'codex*.exe' | Select-Object -First 1
+            if (-not $codexBin) { throw 'codex_cli_binary_missing' }
+            $env:Path = $codexBin.DirectoryName + ';' + $env:Path
+            node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
+            if ($LASTEXITCODE -ne 0) { throw 'novice_acceptance_failed' }
+            node candidate/extracted/package/scripts/verify-novice-evidence.mjs --external $report
+            if ($LASTEXITCODE -ne 0) { throw 'novice_evidence_invalid' }
+            Copy-Item -LiteralPath $report -Destination candidate/novice-clean-evidence.json
+          } catch {
+            $failureCode = if ($_.Exception.Message -match '^[a-z0-9_]+$') { $_.Exception.Message } else { 'clean_package_acceptance_failed' }
+            throw
+          } finally {
+            [ordered]@{ verdict = if ($failureCode) { 'fail' } else { 'pass' }; failureCode = $failureCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
+          }
+      - name: Finalize exact owned cleanup and zero-residual proof
+        if: always()
+        shell: pwsh
+        run: |
+          $environmentRoot = Join-Path $env:RUNNER_TEMP 'novice-owned-environment'
+          $ownedRoot = $environmentRoot
+          $report = Join-Path $env:RUNNER_TEMP 'novice-clean-evidence.json'
+          $runStatus = Join-Path $PWD 'candidate/clean-run-status.json'
+          $proofPath = Join-Path $PWD 'candidate/zero-residual-proof.json'
+          $taskName = 'Chat2Codex-Novice-' + '${{ github.sha }}'.Substring(0, 8)
+          $hasher = [Security.Cryptography.SHA256]::Create()
+          try { $userHash = ([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($taskName)))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
+          $userName = 'C2CN' + $userHash.Substring(0, 8)
+          $taskPath = '\Chat2Codex\' + $taskName
+          $deleteTask = Start-Process -FilePath schtasks.exe -ArgumentList @('/Delete', '/TN', $taskPath, '/F') -Wait -PassThru -WindowStyle Hidden
+          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName -ErrorAction Continue }
           $needle = 'novice-owned-environment'
           $matching = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
-          $residualUsers = @(Get-LocalUser | Where-Object Name -Like 'C2CN*')
-          $proof = [ordered]@{ OwnedRootExists = Test-Path -LiteralPath $ownedRoot; EnvironmentRootExists = Test-Path -LiteralPath $environmentRoot; MatchingProcesses = $matching.Count; ResidualTestUsers = $residualUsers.Count; ReportSha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $report).Hash.ToLowerInvariant() }
-          $proof | ConvertTo-Json | Set-Content -LiteralPath candidate/zero-residual-proof.json -Encoding utf8
-          if ($proof.OwnedRootExists -or $proof.EnvironmentRootExists -or $proof.MatchingProcesses -ne 0 -or $proof.ResidualTestUsers -ne 0) { throw 'clean package acceptance left owned residuals' }
-          Copy-Item -LiteralPath $report -Destination candidate/novice-clean-evidence.json
+          foreach ($process in $matching) { Stop-Process -Id $process.ProcessId -Force -ErrorAction Continue }
+          if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction Continue }
+          $remaining = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
+          $residualUsers = @(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)
+          $queryTask = Start-Process -FilePath schtasks.exe -ArgumentList @('/Query', '/TN', $taskPath) -Wait -PassThru -WindowStyle Hidden
+          $residualTask = $queryTask.ExitCode -eq 0
+          $reportHash = if (Test-Path -LiteralPath $report) { (Get-FileHash -Algorithm SHA256 -LiteralPath $report).Hash.ToLowerInvariant() } else { $null }
+          $proof = [ordered]@{ OwnedRootExists = Test-Path -LiteralPath $ownedRoot; EnvironmentRootExists = Test-Path -LiteralPath $environmentRoot; MatchingProcesses = $remaining.Count; ResidualTestUsers = $residualUsers.Count; ResidualTask = $residualTask; ReportSha256 = $reportHash }
+          $proof | ConvertTo-Json | Set-Content -LiteralPath $proofPath -Encoding utf8
+          $status = Get-Content -LiteralPath $runStatus -Raw | ConvertFrom-Json
+          $cleanupComplete = -not $proof.OwnedRootExists -and -not $proof.EnvironmentRootExists -and $proof.MatchingProcesses -eq 0 -and $proof.ResidualTestUsers -eq 0 -and -not $proof.ResidualTask
+          [ordered]@{ verdict = $status.verdict; failureCode = $status.failureCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $cleanupComplete } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
+          if (-not $cleanupComplete) { throw 'clean_package_cleanup_incomplete' }
       - name: Upload redacted clean-package evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -152,5 +197,6 @@ jobs:
           path: |
             candidate/novice-clean-evidence.json
             candidate/zero-residual-proof.json
+            candidate/clean-run-status.json
           if-no-files-found: error
           retention-days: 14

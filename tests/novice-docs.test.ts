@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
+import YAML from "yaml";
 
 const root = path.resolve(import.meta.dir, "..");
 
@@ -23,6 +24,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(workflow).toContain("Select-Object -First 1");
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
+    const parsed = YAML.parse(workflow);
+    const parsedSteps = parsed?.jobs?.["clean-package-acceptance"]?.steps;
+    expect(Array.isArray(parsedSteps)).toBe(true);
+    expect(parsedSteps.find((step: any) => step.name === "Finalize exact owned cleanup and zero-residual proof")?.if).toBe("always()");
+    expect(parsedSteps.find((step: any) => step.name === "Upload redacted clean-package evidence")?.if).toBe("always()");
     for (const value of ["needs: novice-acceptance", "actions/download-artifact@v4", "@openai/codex@0.146.0", "C2C_RUNNER_ENVIRONMENT", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--run-identity", "--codex-bin", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
     for (const value of ["$environmentRoot", "--environment-root $environmentRoot", "--sha256 $metadata.sha256", "--repository-commit $metadata.repositoryCommit", "--run-identity $runIdentity", "CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT", "CHAT2CODEX_NOVICE_RUN_IDENTITY"]) expect(cleanJob).toContain(value);
     for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);
@@ -31,5 +37,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(cleanJob).toContain("$needle = 'novice-owned-environment'");
     expect(cleanJob).not.toContain("actions/checkout");
     expect(cleanJob).not.toMatch(/Add-Member.*(?:environmentKind|freshProfile|repositoryAbsent|priorPackageAbsent)/iu);
+    for (const value of ["clean-run-status.json", "zero-residual-proof.json", "ResidualTestUsers", "ResidualTask", "Remove-LocalUser", "Start-Process -FilePath schtasks.exe", "-WindowStyle Hidden", "finally", "Finalize exact owned cleanup", "$userName", "$taskPath = '\\Chat2Codex\\' + $taskName"]) expect(cleanJob).toContain(value);
+    expect(cleanJob).toMatch(/if:\s*always\(\)[\s\S]*clean-run-status\.json/u);
+    expect(cleanJob).not.toContain("Where-Object Name -Like 'C2CN*'");
   });
 });

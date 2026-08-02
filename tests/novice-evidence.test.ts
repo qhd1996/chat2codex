@@ -28,9 +28,12 @@ describe("novice acceptance evidence", () => {
       (v: any) => { v.repetitions[0].scenarioExecutions[0].actions = []; },
       (v: any) => { v.repetitions[0].scenarioExecutions[0].promptCodes = ["FAKE_PROMPT"]; },
       (v: any) => { v.repetitions[0].scenarioExecutions[0].probes = ["fake_probe"]; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].productProofs = []; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].productProofs[0].source = "fake_source"; },
+      (v: any) => { v.repetitions[0].scenarioExecutions[0].productProofs[0].sha256 = "not-a-hash"; },
     ]) {
       const value = validComplete(); mutate(value);
-      expect(() => validateNoviceEvidence(value, validationOptions)).toThrow(/scenario.*execution|action|prompt|probe|duplicate/i);
+      expect(() => validateNoviceEvidence(value, validationOptions)).toThrow(/scenario.*execution|action|prompt|probe|duplicate|product.*proof|hash/i);
     }
   });
 
@@ -92,7 +95,7 @@ describe("novice acceptance evidence", () => {
 });
 
 function validComplete() {
-  const scenarioExecutions = scenarioDefinitions.map((scenario: any) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes })).sort((a: any, b: any) => a.scenarioId.localeCompare(b.scenarioId));
+  const scenarioExecutions = scenarioDefinitions.map((scenario: any) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes, productProofs: expectedProofs(scenario.id).map((source) => ({ source, sha256: "8".repeat(64) })) })).sort((a: any, b: any) => a.scenarioId.localeCompare(b.scenarioId));
   const repetitions = Array.from({ length: 30 }, (_, offset) => ({
     index: offset + 1, seed: 2026080200 + offset + 1,
     startedAt: "2026-08-03T01:00:00.000Z", completedAt: "2026-08-03T01:01:00.000Z", verdict: "pass",
@@ -102,7 +105,7 @@ function validComplete() {
     processProof: { pid: 200 + offset, createdAt: "2026-08-03T01:00:30.000Z", stopped: true, residualProcesses: 0 },
   }));
   return {
-    schemaVersion: 4, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
+    schemaVersion: 5, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit: "a".repeat(40),
     generatedAt: "2026-08-03T01:02:00.000Z", evidenceLevel: "isolated_package", verdict: "pass",
     environment: { kind: "clean_windows_vm", os: "win32", arch: "x64", freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: "0.8.0-novice.1", size: 1234, sha256: "c".repeat(64) },
@@ -110,6 +113,23 @@ function validComplete() {
     scenarioIds: [...scenarioIds], repetitions, failureHistory: [{ repetition: 1, code: "historical_failure", fixedByCommit: "a".repeat(40) }],
     attestation: validAttestation(), realUpgrade: { ...validRealUpgrade(), configSha256: "9".repeat(64), finalConfigSha256: "9".repeat(64), oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb" },
   };
+}
+
+function expectedProofs(id: string): string[] {
+  const values: Record<string, string[]> = {
+    "fresh.download-and-prerequisites": ["archive_identity"], "fresh.setup-and-doctor": ["setup_doctor"],
+    "fresh.service-lifecycle": ["native_lifecycle"], "fresh.task-control": ["daily_use"],
+    "fresh.media-roundtrip": ["daily_use"], "fresh.multi-task-workspace-plan": ["daily_use"],
+    "fresh.approval-permission-structured": ["daily_use"], "fresh.uninstall-and-reinstall": ["native_lifecycle"],
+    "fresh.purge-confirmation": ["purge_surface"], "upgrade.idempotent-install-upgrade": ["native_lifecycle", "upgrade_rollback"],
+    "upgrade.schema-migration": ["upgrade_rollback"], "upgrade.rollback-and-resume": ["upgrade_rollback"],
+    "recovery.configuration-and-schema": ["setup_doctor", "schema_failure"],
+    "recovery.network-and-gateway-offline": ["network_recovery", "gateway_recovery", "gateway_offline"],
+    "recovery.duplicate-and-reordered-message": ["daily_use", "network_recovery"],
+    "recovery.process-and-interruption": ["restart_recovery"], "recovery.disk-and-permission": ["storage_permission"],
+    "recovery.gateway-token-generation": ["gateway_recovery"], "recovery.unbound-and-child-exclusion": ["gateway_recovery"],
+  };
+  return values[id] ?? [];
 }
 function validRealUpgrade() { return { oldArchiveSha256: "d".repeat(64), candidateArchiveSha256: "c".repeat(64), oldVersion: "0.8.0-orchestrator.4", candidateVersion: "0.8.0-novice.1", ownedEnvironmentHash: "6".repeat(64), runIdentityHash: "5".repeat(64), installAttempts: 2, upgradeAttempts: 2, rollbackAttempts: 2, uninstallAttempts: 2, reinstallAttempts: 2, sourceSchema: 5, migratedSchema: 6, rollbackSchema: 5, finalSchema: 6, sourceStateSha256: "1".repeat(64), backupStateSha256: "1".repeat(64), rollbackStateSha256: "1".repeat(64), taskIds: ["task-existing"], deliveredIds: ["out-delivered"], pendingIds: ["out-pending"], finalTaskIds: ["task-existing"], finalDeliveredIds: ["out-delivered"], finalPendingIds: ["out-pending"], finalPackageVersion: "0.8.0-novice.1", userDataPreserved: true, commands: ["install old","install candidate","uninstall"], residualProcesses: 0 }; }
 

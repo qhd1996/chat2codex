@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -107,8 +108,9 @@ describe("novice archive isolation", () => {
 });
 
 function completeWorkerEvidence() {
-  const scenarioIds = Array.from({ length: 19 }, (_, index) => "scenario." + index);
-  const scenarioExecutions = scenarioIds.map((scenarioId) => ({ scenarioId, verdict: "pass", preconditions: ["ready"], actions: ["act"], promptCodes: ["PROMPT"], invariants: ["safe"], faults: [], recovery: ["recover"], probes: ["probe"] }));
+  const definitions = requireScenarioDefinitions();
+  const scenarioIds = definitions.map((item: any) => item.id).sort();
+  const scenarioExecutions = definitions.map((item: any) => ({ scenarioId: item.id, verdict: "pass", preconditions: item.preconditions, actions: item.actions, promptCodes: item.expectedPromptCodes, invariants: item.invariants, faults: item.faults, recovery: item.recovery, probes: item.requiredProbes, productProofs: proofSources(item.id).map((source) => ({ source, sha256: "7".repeat(64) })) })).sort((left: any, right: any) => left.scenarioId.localeCompare(right.scenarioId));
   return {
     packageRoot: path.resolve("C:/owned/npm-prefix/node_modules/chat2codex"), packageVersion: "0.8.0-novice.1", archiveSha256: "b".repeat(64), runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
     repositoryImported: false, cliVersion: "0.8.0-novice.1", manifestHash: "c".repeat(64), stateHash: "d".repeat(64),
@@ -119,6 +121,8 @@ function completeWorkerEvidence() {
     repetitions: Array.from({ length: 30 }, (_, offset) => ({ index: offset + 1, seed: 2026080201 + offset, startedAt: "2026-08-03T00:00:00.000Z", completedAt: "2026-08-03T00:00:01.000Z", verdict: "pass", counts: { pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 }, scenarioIds, scenarioExecutions, stateHashes: ["e".repeat(64)], commands: ["<installed-package>/scripts/novice-windows-worker.mjs"], processProof: { pid: 300 + offset, createdAt: "2026-08-03T00:00:00.500Z", stopped: true, residualProcesses: 0 } })),
   };
 }
+function requireScenarioDefinitions(): any[] { return JSON.parse(readFileSync(path.resolve(import.meta.dir, "..", "quality", "scenarios", "novice-daily-use.json"), "utf8")); }
+function proofSources(id: string): string[] { const values: Record<string,string[]> = { "fresh.download-and-prerequisites":["archive_identity"],"fresh.setup-and-doctor":["setup_doctor"],"fresh.service-lifecycle":["native_lifecycle"],"fresh.task-control":["daily_use"],"fresh.media-roundtrip":["daily_use"],"fresh.multi-task-workspace-plan":["daily_use"],"fresh.approval-permission-structured":["daily_use"],"fresh.uninstall-and-reinstall":["native_lifecycle"],"fresh.purge-confirmation":["purge_surface"],"upgrade.idempotent-install-upgrade":["native_lifecycle","upgrade_rollback"],"upgrade.schema-migration":["upgrade_rollback"],"upgrade.rollback-and-resume":["upgrade_rollback"],"recovery.configuration-and-schema":["setup_doctor","schema_failure"],"recovery.network-and-gateway-offline":["network_recovery","gateway_recovery","gateway_offline"],"recovery.duplicate-and-reordered-message":["daily_use","network_recovery"],"recovery.process-and-interruption":["restart_recovery"],"recovery.disk-and-permission":["storage_permission"],"recovery.gateway-token-generation":["gateway_recovery"],"recovery.unbound-and-child-exclusion":["gateway_recovery"] }; return values[id] ?? []; }
 
 function qualifyingAttestation(change: Record<string, unknown> = {}) {
   const installedFiles = ["package/package.json", "package/dist/index.js", "package/scripts/novice-service-probe.mjs", "owned/.env", "owned/.service/windows/launcher.ps1", "owned/.service/windows/task.xml", "owned/.service/windows/installation.json", "owned/.data/state.json"].map((filePath, index) => ({ path: filePath, sha256: String(index + 1).repeat(64) }));

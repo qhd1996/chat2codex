@@ -46,7 +46,7 @@ for (let index = 1; index <= repetitions; index += 1) {
   probes ??= result.probes;
   scenarioIds ??= result.scenarioIds;
   scenarioExecutions ??= result.scenarioExecutions;
-  if (JSON.stringify(result.probes) !== JSON.stringify(probes) || JSON.stringify(result.scenarioIds) !== JSON.stringify(scenarioIds) || JSON.stringify(result.scenarioExecutions) !== JSON.stringify(scenarioExecutions)) throw new Error("Installed novice repetition coverage drifted.");
+  if (JSON.stringify(result.probes) !== JSON.stringify(probes) || JSON.stringify(result.scenarioIds) !== JSON.stringify(scenarioIds) || scenarioContract(result.scenarioExecutions) !== scenarioContract(scenarioExecutions)) throw new Error("Installed novice repetition coverage drifted.");
   records.push({
     index, seed: 2026080200 + index, startedAt, completedAt: new Date().toISOString(), verdict: "pass",
     counts: result.counts, scenarioIds: result.scenarioIds, scenarioExecutions: result.scenarioExecutions, stateHashes: result.stateHashes,
@@ -68,3 +68,4 @@ process.stdout.write("NOVICE_PACKAGE_RESULT " + JSON.stringify(evidence) + "\n")
 async function hashTree(root) { const entries = []; await collect(root, root, entries); const hash = createHash("sha256"); for (const file of entries.sort()) { hash.update(path.relative(root, file).replaceAll("\\", "/") + "\0"); hash.update(await readFile(file)); } return hash.digest("hex"); }
 async function collect(root, current, output) { for (const entry of await readdir(current, { withFileTypes: true })) { const candidate = path.join(current, entry.name); if (entry.isSymbolicLink()) throw new Error("Installed package contains a symlink."); if (entry.isDirectory()) await collect(root, candidate, output); else if (entry.isFile()) output.push(candidate); } }
 function inside(root, candidate) { if (!candidate) return false; const relative = path.relative(root, path.resolve(candidate)); return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)); }
+function scenarioContract(items) { return JSON.stringify(items.map(({ productProofs, ...item }) => ({ ...item, productProofSources: productProofs.map((proof) => proof.source) }))); }

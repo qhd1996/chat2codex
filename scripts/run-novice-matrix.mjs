@@ -15,7 +15,6 @@ if (!process.versions.bun) throw new Error("Novice matrix must run under the pro
 const root = process.cwd();
 const scenarioIds = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8")).map((item) => item.id).sort();
 const scenarioInventory = JSON.parse(await readFile(path.join(root, "quality", "scenarios", "novice-daily-use.json"), "utf8"));
-const scenarioExecutions = scenarioInventory.map((scenario) => ({ scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes, invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes })).sort((a, b) => a.scenarioId.localeCompare(b.scenarioId));
 const repositoryCommit = run("git", ["rev-parse", "HEAD"]).trim();
 const trackedDirty = run("git", ["status", "--porcelain", "--untracked-files=no"]).trim();
 if (trackedDirty) throw new Error("Novice matrix requires clean committed tracked files.");
@@ -60,7 +59,8 @@ try {
     };
     const stateHashes = extractHashes(String(shard.stdoutTail ?? "") + "\n" + String(shard.stderrTail ?? "") + "\n" + String(nativeShard.stdoutTail ?? ""));
     if (stateHashes.length === 0) stateHashes.push(hashText(repositoryCommit + ":" + index + ":repository-state-observation"));
-    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], scenarioExecutions, stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")], processProof: null };
+    const packageReport = await extractPackageExecutionReport(scenarioIds, index);
+    const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && nativeResult.status === 0 && nativeContract && packageReport && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], scenarioExecutions: packageReport?.scenarioExecutions ?? [], stateHashes, commands: [command.map(redactCommandPart).join(" "), nativeCommand.map(redactCommandPart).join(" ")], processProof: null };
     records.push(record);
     if (record.verdict !== "pass") {
       failureHistory.push({ repetition: index, code: "matrix_repetition_failed", fixedByCommit: null });
@@ -71,7 +71,7 @@ try {
     }
   }
   const report = {
-    schemaVersion: 4, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
+    schemaVersion: 5, authorityCommit: "01e827bbdc6584136627d9f1f137e8051f0a8c97", repositoryCommit,
     generatedAt: new Date().toISOString(), evidenceLevel: "repository", verdict: repetitions === 30 ? "repository_pass" : "unproven",
     environment: { kind: "repository_worktree", os: process.platform, arch: process.arch, freshProfile: false, repositoryAbsent: false, priorPackageAbsent: false, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: packageJson.version, size: 0, sha256: "0".repeat(64) },
@@ -91,3 +91,8 @@ function codexVersion() { try { const output = run("codex", ["--version"]).trim(
 function hashText(value) { return new Bun.CryptoHasher("sha256").update(value).digest("hex"); }
 function extractHashes(value) { return [...new Set(value.match(/\b[a-f0-9]{64}\b/gu) ?? [])].slice(0, 64); }
 function redactCommandPart(value) { return /(?:Users|workspace|\.tmp)/iu.test(value) ? "<owned-path>" : value; }
+async function extractPackageExecutionReport(expectedScenarioIds, index) {
+  const module = await import(path.join(root, "src", "quality", "novice-package-matrix.ts"));
+  const value = await module.runNovicePackageRepetition({ root: path.join(tempRoot, "evidence-" + String(index).padStart(2, "0")), packageRoot: root, packageVersion: packageJson.version, cliVersion: packageJson.version, archiveVerified: true, restartProbePath: path.join(root, "scripts", "novice-restart-probe.mjs") });
+  return JSON.stringify([...value.scenarioIds].sort()) === JSON.stringify(expectedScenarioIds) ? value : null;
+}

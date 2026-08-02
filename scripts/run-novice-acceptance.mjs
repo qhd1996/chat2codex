@@ -124,18 +124,20 @@ export function validateNoviceWorkerEvidence(value, expected) {
   if (expected.expectedScenarioIds && JSON.stringify([...value.scenarioIds].sort()) !== JSON.stringify([...expected.expectedScenarioIds].sort())) throw new Error("Installed novice scenario inventory differs from the package.");
   if (!Array.isArray(value.repetitions) || value.repetitions.length !== expected.expectedRepetitions) throw new Error("Installed novice repetition coverage is incomplete.");
   for (const [offset, repetition] of value.repetitions.entries()) {
-    if (repetition.index !== offset + 1 || repetition.verdict !== "pass" || repetition.counts?.pass !== 19 || repetition.counts?.fail !== 0 || repetition.counts?.skip !== 0 || repetition.counts?.timeout !== 0 || repetition.counts?.residualProcesses !== 0 || JSON.stringify([...repetition.scenarioIds].sort()) !== JSON.stringify([...value.scenarioIds].sort()) || JSON.stringify(repetition.scenarioExecutions) !== JSON.stringify(value.scenarioExecutions)) throw new Error("Installed novice repetition failed closed.");
+    if (repetition.index !== offset + 1 || repetition.verdict !== "pass" || repetition.counts?.pass !== 19 || repetition.counts?.fail !== 0 || repetition.counts?.skip !== 0 || repetition.counts?.timeout !== 0 || repetition.counts?.residualProcesses !== 0 || JSON.stringify([...repetition.scenarioIds].sort()) !== JSON.stringify([...value.scenarioIds].sort()) || scenarioContract(repetition.scenarioExecutions) !== scenarioContract(value.scenarioExecutions)) throw new Error("Installed novice repetition failed closed.");
   }
   return value;
 }
+function scenarioContract(items) { return JSON.stringify(items.map(({ productProofs, ...item }) => ({ ...item, productProofSources: productProofs.map((proof) => proof.source) }))); }
 function validateScenarioExecutions(raw, scenarioIds) {
   if (!Array.isArray(raw) || raw.length !== scenarioIds.length) throw new Error("Installed novice scenario executions are incomplete.");
-  const keys = ["actions","faults","invariants","preconditions","probes","promptCodes","recovery","scenarioId","verdict"];
+  const keys = ["actions","faults","invariants","preconditions","probes","productProofs","promptCodes","recovery","scenarioId","verdict"];
   const observed = new Set();
   for (const item of raw) {
     if (!item || typeof item !== "object" || Array.isArray(item) || JSON.stringify(Object.keys(item).sort()) !== JSON.stringify(keys) || typeof item.scenarioId !== "string" || item.verdict !== "pass" || observed.has(item.scenarioId)) throw new Error("Installed novice scenario execution is invalid.");
     observed.add(item.scenarioId);
     for (const field of ["preconditions","actions","promptCodes","invariants","faults","recovery","probes"]) if (!Array.isArray(item[field]) || field !== "faults" && item[field].length === 0 || new Set(item[field]).size !== item[field].length || item[field].some((value) => typeof value !== "string" || !value)) throw new Error("Installed novice scenario execution tokens are invalid.");
+    if (!Array.isArray(item.productProofs) || item.productProofs.length < 1 || item.productProofs.some((proof) => !proof || Object.keys(proof).sort().join(",") !== "sha256,source" || typeof proof.source !== "string" || !/^[a-f0-9]{64}$/u.test(proof.sha256))) throw new Error("Installed novice scenario product proof is invalid.");
   }
   if (JSON.stringify([...observed].sort()) !== JSON.stringify([...scenarioIds].sort())) throw new Error("Installed novice scenario execution inventory differs.");
 }
@@ -148,7 +150,7 @@ export function buildQualifyingNoviceEvidence(input) {
   if (input.attestation.archiveSha256 !== input.archive.sha256 || input.attestation.repositoryCommit !== input.repositoryCommit || input.attestation.oldArchiveSha256 !== input.realUpgrade.oldArchiveSha256 || input.attestation.oldRepositoryCommit !== input.realUpgrade.oldRepositoryCommit || input.attestation.runIdentityHash !== input.worker.runIdentityHash || input.attestation.ownedEnvironmentHash !== input.worker.ownedEnvironmentHash) throw new Error("Qualifying novice attestation binding differs from the package journey.");
   const repetitions = input.worker.repetitions.map((item) => ({ ...item }));
   const manifest = {
-    schemaVersion: 4,
+    schemaVersion: 5,
     authorityCommit: input.authorityCommit,
     repositoryCommit: input.repositoryCommit,
     generatedAt: new Date().toISOString(),

@@ -16,6 +16,7 @@ import {
   runNoviceStoragePermissionRecoveryJourney,
   runV5UpgradeRollbackJourney,
   validateFreshWindowsLifecycleResult,
+  type FreshWindowsLifecycleResult,
 } from "./novice-product-driver.js";
 import { parseNoviceScenarioInventory, validateNoviceCoverage } from "./novice-scenarios.js";
 import { runNoviceScenario, type NoviceDriver } from "./novice-simulator.js";
@@ -40,6 +41,7 @@ export interface NovicePackageRepetitionResult {
   scenarioExecutions: Array<{
     scenarioId: string; verdict: "pass"; preconditions: string[]; actions: string[]; promptCodes: string[];
     invariants: string[]; faults: string[]; recovery: string[]; probes: string[];
+    productProofs: Array<{ source: string; sha256: string }>;
   }>;
   counts: { pass: number; fail: number; skip: number; timeout: number; residualProcesses: number };
   stateHashes: string[];
@@ -111,6 +113,7 @@ export async function runNovicePackageRepetition(options: {
   };
 
   const predicates = scenarioPredicates({ options, daily, network, gateway, upgrade, restart, probes, schemaFailures });
+  const productProofs = buildProductProofs({ options, setupQrMock, doctor, native, daily, network, gateway, upgrade, restart, storagePermissionRecovery, schemaFailures, gatewayOffline, purgeUnavailableWithoutConfirmation });
   const scenarioIds = scenarios.map((item) => item.id).sort();
   const failed = scenarioIds.filter((id) => predicates.get(id) !== true);
   if (predicates.size !== scenarioIds.length || failed.length) {
@@ -126,6 +129,7 @@ export async function runNovicePackageRepetition(options: {
       promptCodes: execution.promptCodes, invariants: [...scenario.invariants], faults: execution.events.filter((item) => item.kind === "fault").map((item) => item.name),
       actions: execution.events.filter((item) => item.kind === "action").map((item) => item.name),
       recovery: execution.events.filter((item) => item.kind === "recovery").map((item) => item.name), probes: [...scenario.requiredProbes],
+      productProofs: requiredProofSources(scenario.id).map((source) => ({ source, sha256: productProofs.get(source)! })),
     });
   }
   scenarioExecutions.sort((left, right) => left.scenarioId.localeCompare(right.scenarioId));
@@ -152,6 +156,44 @@ export async function runNovicePackageRepetition(options: {
     },
     processProof: restart.processProof,
   };
+}
+
+const scenarioProofSources: Record<string, string[]> = {
+  "fresh.download-and-prerequisites": ["archive_identity"], "fresh.setup-and-doctor": ["setup_doctor"],
+  "fresh.service-lifecycle": ["native_lifecycle"], "fresh.task-control": ["daily_use"],
+  "fresh.media-roundtrip": ["daily_use"], "fresh.multi-task-workspace-plan": ["daily_use"],
+  "fresh.approval-permission-structured": ["daily_use"], "fresh.uninstall-and-reinstall": ["native_lifecycle"],
+  "fresh.purge-confirmation": ["purge_surface"], "upgrade.idempotent-install-upgrade": ["native_lifecycle", "upgrade_rollback"],
+  "upgrade.schema-migration": ["upgrade_rollback"], "upgrade.rollback-and-resume": ["upgrade_rollback"],
+  "recovery.configuration-and-schema": ["setup_doctor", "schema_failure"],
+  "recovery.network-and-gateway-offline": ["network_recovery", "gateway_recovery", "gateway_offline"],
+  "recovery.duplicate-and-reordered-message": ["daily_use", "network_recovery"],
+  "recovery.process-and-interruption": ["restart_recovery"], "recovery.disk-and-permission": ["storage_permission"],
+  "recovery.gateway-token-generation": ["gateway_recovery"], "recovery.unbound-and-child-exclusion": ["gateway_recovery"],
+};
+
+function requiredProofSources(scenarioId: string): string[] {
+  const sources = scenarioProofSources[scenarioId];
+  if (!sources?.length) throw new Error("Installed novice scenario has no product proof contract: " + scenarioId);
+  return sources;
+}
+
+function buildProductProofs(value: {
+  options: { archiveVerified: boolean; packageVersion: string; cliVersion: string }; setupQrMock: boolean; doctor: { healthy: boolean; configRecovery: boolean };
+  native: FreshWindowsLifecycleResult; daily: Awaited<ReturnType<typeof runNoviceDailyUseJourney>>; network: Awaited<ReturnType<typeof runNoviceNetworkRecoveryJourney>>;
+  gateway: Awaited<ReturnType<typeof runNoviceGatewayRecoveryJourney>>; upgrade: Awaited<ReturnType<typeof runV5UpgradeRollbackJourney>>;
+  restart: { recovered: boolean; codexRuns: number; processProof: { stopped: true; residualProcesses: 0 } }; storagePermissionRecovery: boolean; schemaFailures: boolean; gatewayOffline: boolean; purgeUnavailableWithoutConfirmation: boolean;
+}): Map<string, string> {
+  const normalized = new Map<string, unknown>([
+    ["archive_identity", value.options], ["setup_doctor", { setupQrMock: value.setupQrMock, ...value.doctor }],
+    ["native_lifecycle", value.native], ["daily_use", value.daily],
+    ["network_recovery", value.network], ["gateway_recovery", value.gateway],
+    ["upgrade_rollback", { sourceSchema: value.upgrade.sourceSchema, migratedSchema: value.upgrade.migratedSchema, backupExact: value.upgrade.sourceHash === value.upgrade.backupHash, rollbackExact: value.upgrade.sourceHash === value.upgrade.rollbackHash, taskIdsBefore: value.upgrade.taskIdsBefore, taskIdsAfter: value.upgrade.taskIdsAfter, rollbackTaskIds: value.upgrade.rollbackTaskIds, outboxBefore: value.upgrade.outboxBefore, outboxAfter: value.upgrade.outboxAfter, rollbackOutbox: value.upgrade.rollbackOutbox }],
+    ["restart_recovery", { recovered: value.restart.recovered, codexRuns: value.restart.codexRuns, stopped: value.restart.processProof.stopped, residualProcesses: value.restart.processProof.residualProcesses }],
+    ["storage_permission", { recovered: value.storagePermissionRecovery }], ["schema_failure", { rejected: value.schemaFailures }],
+    ["gateway_offline", { rejected: value.gatewayOffline }], ["purge_surface", { unavailableWithoutConfirmation: value.purgeUnavailableWithoutConfirmation }],
+  ]);
+  return new Map([...normalized].map(([source, proof]) => [source, sha256(Buffer.from(JSON.stringify(proof)))]));
 }
 
 async function executeScenarioContract(scenario: ReturnType<typeof parseNoviceScenarioInventory>[number]) {

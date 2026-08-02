@@ -56,4 +56,15 @@ describe("novice scenario inventory", () => {
       expect(() => validateNoviceCoverage(changed)).toThrow(new RegExp(token, "i"));
     }
   });
+
+  test("rejects token-complete inventories that assign obligations to the wrong scenario", async () => {
+    const source = JSON.parse(await readFile(inventoryPath, "utf8"));
+    const items = parseNoviceScenarioInventory(source);
+    const target = items.find((item) => item.id === "fresh.media-roundtrip")!;
+    const donor = items.find((item) => item.id === "fresh.download-and-prerequisites")!;
+    const moved = items.map((item) => item.id === target.id
+      ? { ...item, actions: item.actions.filter((action) => action !== "send_file") }
+      : item.id === donor.id ? { ...item, actions: [...item.actions, "send_file" as const] } : item);
+    expect(() => validateNoviceCoverage(moved)).toThrow(/fresh\.media-roundtrip|send_file|assignment/i);
+  });
 });

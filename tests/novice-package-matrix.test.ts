@@ -27,8 +27,15 @@ test("executes every packaged novice scenario through its required product probe
       expect(execution).toEqual({
         scenarioId: scenario.id, verdict: "pass", preconditions: scenario.preconditions, actions: scenario.actions, promptCodes: scenario.expectedPromptCodes,
         invariants: scenario.invariants, faults: scenario.faults, recovery: scenario.recovery, probes: scenario.requiredProbes,
+        productProofs: expect.arrayContaining([
+          expect.objectContaining({ source: expect.any(String), sha256: expect.stringMatching(/^[a-f0-9]{64}$/u) }),
+        ]),
       });
     }
+    const byId = new Map(result.scenarioExecutions.map((item) => [item.scenarioId, item]));
+    expect(byId.get("fresh.media-roundtrip")?.productProofs.map((item) => item.source)).toEqual(["daily_use"]);
+    expect(byId.get("recovery.process-and-interruption")?.productProofs.map((item) => item.source)).toEqual(["restart_recovery"]);
+    expect(byId.get("recovery.disk-and-permission")?.productProofs.map((item) => item.source)).toEqual(["storage_permission"]);
     expect(result.counts).toEqual({ pass: 19, fail: 0, skip: 0, timeout: 0, residualProcesses: 0 });
     expect(result.probes).toMatchObject({
       setupQrMock: true,

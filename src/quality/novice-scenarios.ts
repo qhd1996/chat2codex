@@ -77,6 +77,28 @@ export const requiredNoviceCoverage = [
   ...noviceActions, ...noviceFaults, ...noviceProbes,
 ] as const;
 
+const requiredScenarioAssignments: Record<string, string> = {
+  "fresh.download-and-prerequisites": "download_candidate,verify_sha256,install_node,install_codex_cli,install_chat2codex||archive_identity,prerequisite_versions,prompt_redaction",
+  "fresh.setup-and-doctor": "setup_weixin,simulate_scan_login,run_doctor||setup_state,doctor_diagnostics,prompt_redaction",
+  "fresh.service-lifecycle": "service_install,service_start,service_stop,service_restart||service_lifecycle,process_identity,zero_residual_processes",
+  "fresh.task-control": "create_task,continue_task,stop_task,retry_task||task_control,outbox_idempotency",
+  "fresh.media-roundtrip": "receive_text,receive_image,receive_file,send_text,send_image,send_file||media_transport,outbox_idempotency",
+  "fresh.multi-task-workspace-plan": "select_multiple_tasks,choose_workspace,enable_plan_mode||workspace_routing,plan_mode",
+  "fresh.approval-permission-structured": "submit_approval,set_permissions,submit_structured_input||scoped_approval,structured_input",
+  "fresh.uninstall-and-reinstall": "service_uninstall,service_reinstall,uninstall_twice,reinstall_twice||double_idempotency,user_data_retention,zero_residual_processes",
+  "fresh.purge-confirmation": "request_data_purge||user_data_retention,scoped_approval",
+  "upgrade.idempotent-install-upgrade": "install_twice,service_upgrade,upgrade_twice||double_idempotency,service_lifecycle,outbox_idempotency",
+  "upgrade.schema-migration": "migrate_schema||schema_migration,rollback_integrity",
+  "upgrade.rollback-and-resume": "rollback_schema,service_restart,retry_task||rollback_integrity,outbox_idempotency",
+  "recovery.configuration-and-schema": "run_doctor|config_error,malformed_schema,future_schema|doctor_diagnostics,schema_migration,prompt_redaction",
+  "recovery.network-and-gateway-offline": "retry_task|unstable_network,network_offline,gateway_offline|media_transport,gateway_authentication,outbox_idempotency",
+  "recovery.duplicate-and-reordered-message": "continue_task|duplicate_message,reordered_message|task_control,outbox_idempotency",
+  "recovery.process-and-interruption": "service_restart|process_crash,power_loss,interrupted_install,interrupted_upgrade,interrupted_uninstall|process_identity,rollback_integrity,zero_residual_processes",
+  "recovery.disk-and-permission": "service_upgrade|disk_full,permission_denied|rollback_integrity,user_data_retention,prompt_redaction",
+  "recovery.gateway-token-generation": "submit_structured_input|wrong_token,expired_generation|gateway_authentication,generation_fence,prompt_redaction",
+  "recovery.unbound-and-child-exclusion": "continue_task||unbound_child_exclusion,generation_fence,prompt_redaction",
+};
+
 export function parseNoviceScenarioInventory(value: unknown): NoviceScenario[] {
   if (!Array.isArray(value) || value.length === 0 || value.length > 128) throw new Error("Novice scenario inventory is invalid.");
   const ids = new Set<string>();
@@ -112,6 +134,13 @@ export function validateNoviceCoverage(items: NoviceScenario[]): { requirements:
   const missing: string[] = requiredNoviceCoverage.filter((token) => !covered.has(token));
   for (const requirement of noviceRequirements) if (!requirements.has(requirement)) missing.push(requirement);
   if (missing.length) throw new Error(`Missing novice coverage: ${missing.join(", ")}`);
+  const observedIds = new Set(items.map((item) => item.id));
+  for (const id of Object.keys(requiredScenarioAssignments)) if (!observedIds.has(id)) throw new Error(`Missing novice scenario assignment: ${id}`);
+  for (const item of items) {
+    const expected = requiredScenarioAssignments[item.id];
+    const actual = [item.actions.join(","), item.faults.join(","), item.requiredProbes.join(",")].join("|");
+    if (!expected || actual !== expected) throw new Error(`Invalid novice scenario assignment: ${item.id}`);
+  }
   return { requirements: requirements.size, scenarios: items.length, coverageTokens: requiredNoviceCoverage.length, missing: [] };
 }
 

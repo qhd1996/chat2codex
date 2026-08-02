@@ -16,10 +16,15 @@ const processProofKeys = ["createdAt", "pid", "residualProcesses", "stopped"];
 const attestationKeys = ["anotherInteractiveUserDenied", "archiveSha256", "attestationHash", "commands", "doctorExitCode", "environmentKind", "firstProcess", "freshProfile", "githubActions", "installAttempts", "installedFiles", "lockHealthy", "newKeysAfterReinstall", "oldArchiveSha256", "oldRepositoryCommit", "ownedEnvironmentHash", "ownedRootRemoved", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent", "repositoryCommit", "runIdentityHash", "runnerEnvironment", "secondProcess", "singleWriter", "startAttempts", "stopAttempts", "taskNameHash", "taskRemoved", "uninstallAttempts", "userDataPreserved", "zeroResidualProcesses"];
 const attestationProcessKeys = ["commandHash", "createdAt", "pid", "stateSha256"];
 const installedFileKeys = ["path", "sha256"];
+const scenarioExecutionKeys = ["actions", "faults", "invariants", "preconditions", "probes", "productProofs", "promptCodes", "recovery", "scenarioId", "verdict"];
+const productProofKeys = ["sha256", "source"];
+const expectedProofSources = {
+  "fresh.download-and-prerequisites": ["archive_identity"], "fresh.setup-and-doctor": ["setup_doctor"], "fresh.service-lifecycle": ["native_lifecycle"], "fresh.task-control": ["daily_use"], "fresh.media-roundtrip": ["daily_use"], "fresh.multi-task-workspace-plan": ["daily_use"], "fresh.approval-permission-structured": ["daily_use"], "fresh.uninstall-and-reinstall": ["native_lifecycle"], "fresh.purge-confirmation": ["purge_surface"], "upgrade.idempotent-install-upgrade": ["native_lifecycle", "upgrade_rollback"], "upgrade.schema-migration": ["upgrade_rollback"], "upgrade.rollback-and-resume": ["upgrade_rollback"], "recovery.configuration-and-schema": ["setup_doctor", "schema_failure"], "recovery.network-and-gateway-offline": ["network_recovery", "gateway_recovery", "gateway_offline"], "recovery.duplicate-and-reordered-message": ["daily_use", "network_recovery"], "recovery.process-and-interruption": ["restart_recovery"], "recovery.disk-and-permission": ["storage_permission"], "recovery.gateway-token-generation": ["gateway_recovery"], "recovery.unbound-and-child-exclusion": ["gateway_recovery"],
+};
 
 export function validateNoviceEvidence(value, options) {
   const manifest = object(value, "manifest"); exactKeys(manifest, manifestKeys, "manifest");
-  if (manifest.schemaVersion !== 4) throw new Error("Novice evidence schema version is unsupported.");
+  if (manifest.schemaVersion !== 5) throw new Error("Novice evidence schema version is unsupported.");
   if (manifest.authorityCommit !== authorityCommit) throw new Error("Novice evidence authority commit is invalid.");
   commit(manifest.repositoryCommit, "repository commit"); timestamp(manifest.generatedAt, "generatedAt");
   if (manifest.evidenceLevel !== "repository" && manifest.evidenceLevel !== "isolated_package") throw new Error("Novice evidence level is invalid.");
@@ -86,7 +91,14 @@ function buildExpectedScenarioExecutions(raw) {
 function validateScenarioExecutionEvidence(raw, expected) {
   if (!Array.isArray(raw) || !expected || raw.length !== expected.length) throw new Error("Novice scenario execution evidence is incomplete.");
   const sorted = [...raw].sort((a,b)=>String(a?.scenarioId).localeCompare(String(b?.scenarioId)));
-  if (JSON.stringify(sorted) !== JSON.stringify(expected)) throw new Error("Novice scenario execution actions, prompts, invariants, faults, recovery, or probes differ from the accepted inventory.");
+  for (const [index, rawItem] of sorted.entries()) {
+    const item = object(rawItem, "scenario execution"); exactKeys(item, scenarioExecutionKeys, "scenario execution");
+    const { productProofs, ...inventory } = item;
+    if (JSON.stringify(inventory) !== JSON.stringify(expected[index])) throw new Error("Novice scenario execution actions, prompts, invariants, faults, recovery, or probes differ from the accepted inventory.");
+    const sources = expectedProofSources[item.scenarioId];
+    if (!Array.isArray(productProofs) || !sources || productProofs.length !== sources.length) throw new Error("Novice scenario execution product proof is incomplete.");
+    for (const [offset, rawProof] of productProofs.entries()) { const proof=object(rawProof,"product proof"); exactKeys(proof,productProofKeys,"product proof"); if(proof.source!==sources[offset]) throw new Error("Novice scenario execution product proof source is invalid."); hash(proof.sha256,"scenario product proof"); }
+  }
 }
 export async function resolveNoviceEvidenceInput(rootInput, args) {
   const root = path.resolve(rootInput);
