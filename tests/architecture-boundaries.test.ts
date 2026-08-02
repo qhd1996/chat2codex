@@ -112,6 +112,16 @@ describe("architecture boundaries", () => {
     expect(combined).toContain("127.0.0.1");
     expect(combined).toContain("INERT");
   });
+
+  test("Phase 3 fixtures bind only a concrete root and never register SubagentStop", async () => {
+    const root = JSON.parse(await readFile(path.join(workspaceRoot, "tests/fixtures/phase3-root-thread.json"), "utf8"));
+    const child = JSON.parse(await readFile(path.join(workspaceRoot, "tests/fixtures/phase3-child-thread.json"), "utf8"));
+    const hooks = JSON.parse(await readFile(path.join(workspaceRoot, "docs/phase3/codex-hooks.example.json"), "utf8"));
+    expect(root.id).toBe(root.sessionId);
+    expect(child.id).not.toBe(root.id);
+    expect(child.sessionId).toBe(root.id);
+    expect(hooks.hooks).not.toHaveProperty("SubagentStop");
+  });
 });
 
 async function typescriptFiles(directory: string): Promise<string[]> {

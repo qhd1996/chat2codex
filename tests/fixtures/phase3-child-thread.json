@@ -1,0 +1,24 @@
+{
+  "id": "phase3-child-thread",
+  "sessionId": "phase3-root-thread",
+  "parentThreadId": "phase3-root-thread",
+  "cwd": "C:/phase3-workspace",
+  "turns": [
+    {
+      "id": "turn-z-anchor",
+      "status": "completed",
+      "items": [
+        { "id": "anchor-user", "type": "userMessage", "text": "anchor" },
+        { "id": "anchor-agent", "type": "agentMessage", "text": "anchor result", "phase": "final_answer" }
+      ]
+    },
+    {
+      "id": "child-output",
+      "status": "completed",
+      "items": [
+        { "id": "child-user", "type": "userMessage", "text": "subagent work" },
+        { "id": "child-agent", "type": "agentMessage", "text": "must not export", "phase": "final_answer" }
+      ]
+    }
+  ]
+}

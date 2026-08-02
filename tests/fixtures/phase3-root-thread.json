@@ -1,0 +1,23 @@
+{
+  "id": "phase3-root-thread",
+  "sessionId": "phase3-root-thread",
+  "cwd": "C:/phase3-workspace",
+  "turns": [
+    {
+      "id": "turn-z-anchor",
+      "status": "completed",
+      "items": [
+        { "id": "anchor-user", "type": "userMessage", "text": "anchor" },
+        { "id": "anchor-agent", "type": "agentMessage", "text": "anchor result", "phase": "final_answer" }
+      ]
+    },
+    {
+      "id": "turn-a-desktop",
+      "status": "completed",
+      "items": [
+        { "id": "desktop-user", "type": "userMessage", "text": "desktop work" },
+        { "id": "desktop-agent", "type": "agentMessage", "text": "desktop result", "phase": "final_answer" }
+      ]
+    }
+  ]
+}
