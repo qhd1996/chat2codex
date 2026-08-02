@@ -71,13 +71,47 @@ async function inspectKeys(files: string[]): Promise<NonNullable<DistributionDoc
 function roleFor(filePath: string): string { const name = path.basename(filePath).toLocaleLowerCase(); return name.includes("prompt") ? "prompt_hook" : name.includes("stop") ? "stop_hook" : name.includes("mcp") ? "desktop_mcp" : "unknown"; }
 
 async function countWriters(entrypoint: string): Promise<number> {
-  const script = "Get-CimInstance Win32_Process | Select-Object CommandLine | ConvertTo-Json -Compress";
+  const script = "Get-CimInstance Win32_Process | Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress";
   try {
     const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-    const parsed = JSON.parse(stdout || "[]") as { CommandLine?: string } | Array<{ CommandLine?: string }>;
+    const parsed = JSON.parse(stdout || "[]") as WindowsProcessCommand | WindowsProcessCommand[];
     const rows = Array.isArray(parsed) ? parsed : [parsed];
-    return rows.filter((row) => row.CommandLine?.toLocaleLowerCase().includes(entrypoint.toLocaleLowerCase())).length;
+    return countWindowsChat2CodexWriters(rows, entrypoint, process.pid);
   } catch { return -1; }
+}
+
+export interface WindowsProcessCommand { ProcessId?: number; CommandLine?: string }
+
+export function countWindowsChat2CodexWriters(rows: readonly WindowsProcessCommand[], entrypoint: string, currentPid: number): number {
+  return rows.filter((row) => isWindowsChat2CodexWriter(row, entrypoint, currentPid)).length;
+}
+
+export function isWindowsChat2CodexWriter(row: WindowsProcessCommand, entrypoint: string, currentPid: number): boolean {
+  if (!Number.isSafeInteger(row.ProcessId) || Number(row.ProcessId) <= 0 || row.ProcessId === currentPid || typeof row.CommandLine !== "string") return false;
+  const tokens = tokenizeWindowsCommandLine(row.CommandLine);
+  if (!tokens) return false;
+  const expected = path.win32.normalize(entrypoint).toLocaleLowerCase();
+  const index = tokens.findIndex((token) => path.win32.normalize(token).toLocaleLowerCase() === expected);
+  return index >= 0 && tokens[index + 1]?.toLocaleLowerCase() === "start";
+}
+
+function tokenizeWindowsCommandLine(source: string): string[] | null {
+  const tokens: string[] = [];
+  let token = "";
+  let quoted = false;
+  let started = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index]!;
+    if (character === '"') { quoted = !quoted; started = true; continue; }
+    if (!quoted && /\s/u.test(character)) {
+      if (started) { tokens.push(token); token = ""; started = false; }
+      continue;
+    }
+    token += character; started = true;
+  }
+  if (quoted) return null;
+  if (started) tokens.push(token);
+  return tokens;
 }
 async function inspectLock(statePath: string): Promise<boolean> {
   const info = await fs.stat(statePath + ".lock").catch(() => null);
