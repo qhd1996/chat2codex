@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateNoviceEvidence } from "./verify-novice-evidence.mjs";
+import { runRealUpgradeProbe } from "./novice-real-upgrade-probe.mjs";
 
 const qualifyingKinds = new Set(["clean_windows_vm", "equivalent_isolated_windows"]);
 
@@ -85,7 +86,9 @@ export async function runNoviceArchiveAcceptance(input) {
     archive: { version: packageVersion, size: (await lstat(plan.archive)).size, sha256: plan.archiveSha256 },
     versions: input.versions,
     expectedScenarioIds, expectedScenarioDefinitions: JSON.parse(await readFile(path.join(installedRoot, "quality", "scenarios", "novice-daily-use.json"), "utf8")),
-    attestation,
+    attestation, realUpgrade: await runRealUpgradeProbe({
+      root: path.join(plan.ownedRoot, "real-upgrade"), oldArchive: input.oldArchive, candidateArchive: plan.archive, oldArchiveSha256: input.oldArchiveSha256, oldRepositoryCommit: input.oldRepositoryCommit, candidateArchiveSha256: plan.archiveSha256, oldVersion: input.oldVersion, candidateVersion: packageVersion, ownedEnvironmentHash: workerEvidence.ownedEnvironmentHash, runIdentityHash: workerEvidence.runIdentityHash, npmCommand: node, npmArgsPrefix: [await resolveNpmCli(process.env.PATH)],
+    }),
   }) : undefined;
   return { plan, qualifying: plan.qualifyingEnvironment, verdict: plan.qualifyingEnvironment ? "pass" : "package_smoke", install: { command: [npm, ...installArgs].map(redactPart), exitCode: install.status }, worker: workerEvidence, evidence };
 }
@@ -161,7 +164,7 @@ export function buildQualifyingNoviceEvidence(input) {
       { repetition: 1, code: "preinstall_archive_eol_drift", fixedByCommit: "d3c214f9fdda44f7e06f8fe1170e6076f4506f1e" },
       { repetition: 1, code: "preinstall_qualification_runtime_gaps", fixedByCommit: input.repositoryCommit },
     ],
-    attestation: input.attestation,
+    attestation: input.attestation, realUpgrade: input.realUpgrade,
   };
   validateNoviceEvidence(manifest, { scenarioIds: input.worker.scenarioIds, scenarioDefinitions: input.expectedScenarioDefinitions });
   return manifest;
@@ -189,7 +192,9 @@ async function main() {
   const reportPath = read("--report");
   const runIdentity = read("--run-identity");
   const codexBin = read("--codex-bin");
-  if (qualifying && (!repositoryCommit || !reportPath || !runIdentity || !codexBin || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, run identity, Codex binary, and all fresh-environment flags.");
+  const oldArchive = read("--old-archive"); const oldArchiveSha256 = read("--old-sha256"); const oldVersion = read("--old-version"); const oldRepositoryCommit = read("--old-commit");
+  if (qualifying && !oldRepositoryCommit) throw new Error("Qualifying novice run requires the supported old repository commit.");
+  if (qualifying && (!repositoryCommit || !reportPath || !runIdentity || !codexBin || !oldArchive || !oldArchiveSha256 || !oldVersion || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, run identity, Codex binary, old package, and all fresh-environment flags.");
   if (!qualifying && (repositoryCommit || reportPath || args.includes("--fresh-profile") || args.includes("--repository-absent") || args.includes("--prior-package-absent"))) throw new Error("Package smoke cannot claim qualifying environment metadata.");
   const npmVersion = runVersion(node, [await resolveNpmCli(process.env.PATH), "--version"]);
   const codexVersion = runVersion("codex", ["--version"]);
@@ -198,7 +203,7 @@ async function main() {
     archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot,
     environmentKind, qualification: qualifying ? { freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true } : undefined,
     repositoryCommit, versions: { windows: os.release(), node: process.versions.node, npm: npmVersion, bun: bunVersion, package: JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8")).version, codexCli: codexVersion },
-    runIdentity, codexBin,
+    runIdentity, codexBin, oldArchive, oldArchiveSha256, oldVersion, oldRepositoryCommit,
     dryRun: args.includes("--dry-run"),
   });
   process.stdout.write(JSON.stringify({

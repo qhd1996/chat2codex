@@ -23,6 +23,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
     for (const value of ["needs: novice-acceptance", "actions/download-artifact@v4", "@openai/codex@0.146.0", "C2C_RUNNER_ENVIRONMENT", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--run-identity", "--codex-bin", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
     for (const value of ["$environmentRoot", "--environment-root $environmentRoot", "--sha256 $metadata.sha256", "--repository-commit $metadata.repositoryCommit", "--run-identity $runIdentity", "CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT", "CHAT2CODEX_NOVICE_RUN_IDENTITY"]) expect(cleanJob).toContain(value);
+    for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);
+    for (const value of ["old package frozen install failed", "old package build failed", "old package pack failed", "--old-commit $oldMetadata.repositoryCommit"]) expect(workflow).toContain(value);
     expect(cleanJob).not.toContain("novice-attestation-owned");
     expect(cleanJob).toContain("$needle = 'novice-owned-environment'");
     expect(cleanJob).not.toContain("actions/checkout");

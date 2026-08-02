@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Set up Node
         uses: actions/setup-node@v7
         with:
@@ -55,6 +57,31 @@ jobs:
             .tmp/package/candidate-metadata.json
           if-no-files-found: error
           retention-days: 14
+      - name: Build supported old package from pinned commit
+        shell: pwsh
+        run: |
+          git worktree add --detach .tmp/old-source 47c2272faf764904a5c8cba903b05b679b20a0cb
+          Push-Location .tmp/old-source
+          try {
+            bun install --frozen-lockfile
+            if ($LASTEXITCODE -ne 0) { throw 'old package frozen install failed' }
+            bun run build
+            if ($LASTEXITCODE -ne 0) { throw 'old package build failed' }
+            bun pm pack --destination ../old-package
+            if ($LASTEXITCODE -ne 0) { throw 'old package pack failed' }
+          } finally { Pop-Location }
+          $oldArchive = Get-ChildItem .tmp/old-package/*.tgz | Select-Object -First 1
+          $oldMetadata = [ordered]@{ repositoryCommit = '47c2272faf764904a5c8cba903b05b679b20a0cb'; version = '0.8.0-orchestrator.4'; archiveName = $oldArchive.Name; archiveSize = $oldArchive.Length; sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $oldArchive.FullName).Hash.ToLowerInvariant() }
+          $oldMetadata | ConvertTo-Json | Set-Content -LiteralPath .tmp/old-package/old-metadata.json -Encoding utf8
+      - name: Upload supported old package
+        uses: actions/upload-artifact@v4
+        with:
+          name: novice-supported-old-package
+          path: |
+            .tmp/old-package/*.tgz
+            .tmp/old-package/old-metadata.json
+          if-no-files-found: error
+          retention-days: 14
 
   clean-package-acceptance:
     needs: novice-acceptance
@@ -76,6 +103,11 @@ jobs:
         with:
           name: novice-reviewed-package
           path: candidate
+      - name: Download supported old package without repository checkout
+        uses: actions/download-artifact@v4
+        with:
+          name: novice-supported-old-package
+          path: old-package
       - name: Run package-only clean Windows novice acceptance
         shell: pwsh
         env:
@@ -83,8 +115,11 @@ jobs:
         run: |
           $metadata = Get-Content -LiteralPath candidate/candidate-metadata.json -Raw | ConvertFrom-Json
           $archive = Get-Item -LiteralPath (Join-Path candidate $metadata.archiveName)
+          $oldMetadata = Get-Content -LiteralPath old-package/old-metadata.json -Raw | ConvertFrom-Json
+          $oldArchive = Get-Item -LiteralPath (Join-Path old-package $oldMetadata.archiveName)
           if ($archive.Length -ne $metadata.archiveSize) { throw 'archive size mismatch' }
           if ((Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'archive hash mismatch' }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $oldArchive.FullName).Hash.ToLowerInvariant() -ne $oldMetadata.sha256) { throw 'old archive hash mismatch' }
           New-Item -ItemType Directory -Path candidate/extracted | Out-Null
           tar -xf $archive.FullName -C candidate/extracted
           node candidate/extracted/package/scripts/verify-distribution-package.mjs candidate/extracted/package
@@ -100,7 +135,7 @@ jobs:
           $runIdentity = 'github-' + '${{ github.run_id }}' + '-' + '${{ github.run_attempt }}'
           $env:CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT = $environmentRoot
           $env:CHAT2CODEX_NOVICE_RUN_IDENTITY = $runIdentity
-          node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
+          node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
           node candidate/extracted/package/scripts/verify-novice-evidence.mjs --external $report
           $needle = 'novice-owned-environment'
           $matching = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })

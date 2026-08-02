@@ -64,6 +64,7 @@ describe("novice acceptance evidence", () => {
     value.environment.repositoryAbsent = false;
     value.environment.priorPackageAbsent = false;
     value.attestation = null;
+    value.realUpgrade = null;
     for (const repetition of value.repetitions) repetition.processProof = null;
     expect(validateNoviceEvidence(value, validationOptions)).toEqual({ qualifying: false, repetitions: 30, scenarios: scenarioIds.length, verdict: "repository_pass" });
   });
@@ -104,9 +105,10 @@ function validComplete() {
     archive: { version: "0.8.0-novice.1", size: 1234, sha256: "c".repeat(64) },
     versions: { windows: "11.0.26100", node: "24.14.0", npm: "11.0.0", bun: "1.3.14", package: "0.8.0-novice.1", codexCli: "0.146.0" },
     scenarioIds: [...scenarioIds], repetitions, failureHistory: [{ repetition: 1, code: "historical_failure", fixedByCommit: "a".repeat(40) }],
-    attestation: validAttestation(),
+    attestation: validAttestation(), realUpgrade: { ...validRealUpgrade(), configSha256: "9".repeat(64), finalConfigSha256: "9".repeat(64), oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb" },
   };
 }
+function validRealUpgrade() { return { oldArchiveSha256: "d".repeat(64), candidateArchiveSha256: "c".repeat(64), oldVersion: "0.8.0-orchestrator.4", candidateVersion: "0.8.0-novice.1", ownedEnvironmentHash: "6".repeat(64), runIdentityHash: "5".repeat(64), installAttempts: 2, upgradeAttempts: 2, rollbackAttempts: 2, uninstallAttempts: 2, reinstallAttempts: 2, sourceSchema: 5, migratedSchema: 6, rollbackSchema: 5, finalSchema: 6, sourceStateSha256: "1".repeat(64), backupStateSha256: "1".repeat(64), rollbackStateSha256: "1".repeat(64), taskIds: ["task-existing"], deliveredIds: ["out-delivered"], pendingIds: ["out-pending"], finalTaskIds: ["task-existing"], finalDeliveredIds: ["out-delivered"], finalPendingIds: ["out-pending"], finalPackageVersion: "0.8.0-novice.1", userDataPreserved: true, commands: ["install old","install candidate","uninstall"], residualProcesses: 0 }; }
 
 function validAttestation() {
   const value = {

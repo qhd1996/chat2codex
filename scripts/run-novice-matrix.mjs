@@ -75,7 +75,7 @@ try {
     environment: { kind: "repository_worktree", os: process.platform, arch: process.arch, freshProfile: false, repositoryAbsent: false, priorPackageAbsent: false, realUserCodexHomeUntouched: true, productionUntouched: true },
     archive: { version: packageJson.version, size: 0, sha256: "0".repeat(64) },
     versions: { windows: os.release(), node: process.versions.node, npm: npmVersion(), bun: process.versions.bun, package: packageJson.version, codexCli: codexVersion() },
-    scenarioIds, repetitions: records, failureHistory, attestation: null,
+    scenarioIds, repetitions: records, failureHistory, attestation: null, realUpgrade: null,
   };
   if (repetitions === 30) validateNoviceEvidence(report, { scenarioIds, scenarioDefinitions: scenarioInventory });
   await writeFile(reportPath, JSON.stringify(report, null, 2) + "\n");

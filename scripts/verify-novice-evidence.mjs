@@ -2,9 +2,10 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { validateRealUpgradeEvidence } from "./novice-real-upgrade-probe.mjs";
 
 const authorityCommit = "01e827bbdc6584136627d9f1f137e8051f0a8c97";
-const manifestKeys = ["archive", "attestation", "authorityCommit", "environment", "evidenceLevel", "failureHistory", "generatedAt", "repetitions", "repositoryCommit", "scenarioIds", "schemaVersion", "verdict", "versions"];
+const manifestKeys = ["archive", "attestation", "authorityCommit", "environment", "evidenceLevel", "failureHistory", "generatedAt", "realUpgrade", "repetitions", "repositoryCommit", "scenarioIds", "schemaVersion", "verdict", "versions"];
 const environmentKeys = ["arch", "freshProfile", "kind", "os", "priorPackageAbsent", "productionUntouched", "realUserCodexHomeUntouched", "repositoryAbsent"];
 const archiveKeys = ["sha256", "size", "version"];
 const versionKeys = ["bun", "codexCli", "node", "npm", "package", "windows"];
@@ -29,7 +30,7 @@ export function validateNoviceEvidence(value, options) {
     if (!Array.isArray(manifest.repetitions) || manifest.repetitions.length !== 0) throw new Error("Unproven novice template cannot contain repetitions.");
     if (!Array.isArray(manifest.scenarioIds) || manifest.scenarioIds.length !== 0) throw new Error("Unproven novice template cannot claim scenario coverage.");
     validateEnvironment(manifest.environment, false); validateArchive(manifest.archive, false); validateVersions(manifest.versions);
-    if (!Array.isArray(manifest.failureHistory) || manifest.attestation !== null) throw new Error("Unproven novice evidence cannot contain a Windows attestation.");
+    if (!Array.isArray(manifest.failureHistory) || manifest.attestation !== null || manifest.realUpgrade !== null) throw new Error("Unproven novice evidence cannot contain Windows or real-upgrade evidence.");
     assertNoviceOutputSafe(manifest);
     return { qualifying: false, repetitions: 0, scenarios: expectedScenarioIds.length, verdict: "unproven" };
   }
@@ -46,8 +47,9 @@ export function validateNoviceEvidence(value, options) {
     const binding = object(manifest.attestation, "attestation");
     if (binding.archiveSha256 !== manifest.archive.sha256 || binding.repositoryCommit !== manifest.repositoryCommit) throw new Error("Novice attestation binding differs from the archive or repository commit.");
     hash(binding.runIdentityHash, "attestation run identity"); hash(binding.ownedEnvironmentHash, "attestation owned environment");
+    validateRealUpgradeEvidence(manifest.realUpgrade, { oldArchiveSha256: manifest.realUpgrade?.oldArchiveSha256, oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb", candidateArchiveSha256: manifest.archive.sha256, oldVersion: "0.8.0-orchestrator.4", candidateVersion: manifest.archive.version, ownedEnvironmentHash: binding.ownedEnvironmentHash, runIdentityHash: binding.runIdentityHash });
   }
-  if (qualifying) { const identities=new Set(manifest.repetitions.map((item)=>item.processProof.pid+"|"+item.processProof.createdAt)); if(identities.size!==30) throw new Error("Qualifying novice process proofs must be unique for all repetitions."); if(!manifest.failureHistory.length||manifest.failureHistory.some((item)=>item.fixedByCommit===null)) throw new Error("Qualifying novice evidence must retain fixed failure history."); validateAttestation(manifest.attestation, manifest); } else if (manifest.attestation !== null) throw new Error("Repository novice evidence cannot contain a qualifying Windows attestation.");
+  if (qualifying) { const identities=new Set(manifest.repetitions.map((item)=>item.processProof.pid+"|"+item.processProof.createdAt)); if(identities.size!==30) throw new Error("Qualifying novice process proofs must be unique for all repetitions."); if(!manifest.failureHistory.length||manifest.failureHistory.some((item)=>item.fixedByCommit===null)) throw new Error("Qualifying novice evidence must retain fixed failure history."); validateAttestation(manifest.attestation, manifest); } else if (manifest.attestation !== null || manifest.realUpgrade !== null) throw new Error("Repository novice evidence cannot contain qualifying Windows or real-upgrade evidence.");
   assertNoviceOutputSafe(manifest);
   return { qualifying, repetitions: 30, scenarios: expectedScenarioIds.length, verdict: manifest.verdict };
 }
