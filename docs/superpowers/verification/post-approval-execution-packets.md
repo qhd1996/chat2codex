@@ -7,10 +7,10 @@ action-time confirmation. Approval of one packet never authorizes another.
 
 ## Immutable candidate inputs
 
-- Source: `0466e126d0d0d6d4b639a66e3e4932ba001d00f5`.
-- Package: `chat2codex-0.8.0-novice.2.tgz`.
-- Size: 387,190 bytes; files: 131.
-- SHA-256: `5949cdc7dfd76575928eab9d6bfa3f007359f2a5c4ff5a243ab073c0da186e84`.
+- Source: `01cf6019b8d47cedcf412374e5c76119a0305002`.
+- Package: `chat2codex-0.8.0-novice.3.tgz`.
+- Size: 387,404 bytes; files: 131.
+- SHA-256: `7ac689a3058ae7d64c785630a34768341ad8934e70c70ac755cc1b7054d97ac8`.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements ledger: `3c2af05`.
 - Task 11 handoff: `3b0698c`.
@@ -93,7 +93,7 @@ send is implied.
 Separate confirmation: **remote push/PR/workflow dispatch or an equivalent clean
 Windows environment**, plus any real login/Desktop actions required there.
 
-Use the exact candidate and fixed old package. Require schema-v3 bound attestation,
+Use the exact candidate and fixed old package. Require schema-v4 bound attestation,
 same owned environment, Scheduled Task lifecycle, another-user ACL denial, real
 old/new upgrade chain, 30 unique stopped process identities, 30×19 executions,
 and zero residual task/user/process/root. This can promote `NOVICE-*` and

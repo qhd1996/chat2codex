@@ -6,6 +6,10 @@ Verdict: **Tasks 0–11 are complete at the repository/pre-install level on the
 unified candidate. Task 12 and every installed, production, Desktop, Computer
 Use, and real-Weixin behavior row remain unexecuted.**
 
+Superseded: security hardening commit `01cf601` and the schema-v4 report replace
+this `.2` archive for future approvals. This document remains the historical Task
+11 merge/gate record.
+
 ## Bound candidate
 
 - Product source commit: `0466e126d0d0d6d4b639a66e3e4932ba001d00f5`.
