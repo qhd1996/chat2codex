@@ -4,7 +4,7 @@ export interface PublicNativeLifecycleEvidence {
   schemaVersion: 1;
   verdict: "pass" | "fail";
   failure: null | { stage: string; code: string };
-  cleanup: { attempted: boolean; succeeded: boolean; residualUsers?: number; residualProcesses?: number; profileExists?: boolean; ownedRootExists?: boolean };
+  cleanup: { attempted: boolean; succeeded: boolean; residualTasks?: number; residualUsers?: number; residualProcesses?: number; profileExists?: boolean; ownedRootExists?: boolean };
 }
 
 const safeStage = /^[a-z0-9_]+(?:\/[a-z0-9_]+){0,3}$/u;
@@ -28,8 +28,10 @@ export function publicNativeLifecycleEvidence(value: unknown, invalidStage: Para
   if (source.verdict === "fail" && !stage) return fallback(invalidStage);
   const rawCleanup = source.cleanup && typeof source.cleanup === "object" ? source.cleanup as Record<string, unknown> : {};
   const cleanup: PublicNativeLifecycleEvidence["cleanup"] = { attempted: rawCleanup.attempted === true, succeeded: rawCleanup.succeeded === true };
+  const residualTasks = boundedCount(rawCleanup.residualTasks);
   const residualUsers = boundedCount(rawCleanup.residualUsers);
   const residualProcesses = boundedCount(rawCleanup.residualProcesses);
+  if (residualTasks !== undefined) cleanup.residualTasks = residualTasks;
   if (residualUsers !== undefined) cleanup.residualUsers = residualUsers;
   if (residualProcesses !== undefined) cleanup.residualProcesses = residualProcesses;
   if (typeof rawCleanup.profileExists === "boolean") cleanup.profileExists = rawCleanup.profileExists;
@@ -51,6 +53,7 @@ export function publicNativeLifecycleEvidence(value: unknown, invalidStage: Para
       && cleanup.attempted === true
       && cleanup.succeeded === true
       && rawCleanup.failure === null
+      && cleanup.residualTasks === 0
       && cleanup.residualUsers === 0
       && cleanup.residualProcesses === 0
       && cleanup.profileExists === false

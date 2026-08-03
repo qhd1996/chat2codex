@@ -17,10 +17,11 @@ describe("native lifecycle workflow evidence", () => {
   test("fails closed when a pass report lacks qualifying summary or cleanup", () => {
     const invalid = "workflow_enforcement/report_invalid" as const;
     const qualifyingSummary = { installAttempts: 2, uninstallAttempts: 2, uninstallNoopCount: 1, createdKeyCount: 3, preservedKeyCount: 3, distinctKeyFingerprints: 3, taskCreateCount: 2, taskDeleteCount: 1, userDataPreserved: true, residualOwnedFiles: 0 };
-    const cleanup = { attempted: true, succeeded: true, failure: null, residualUsers: 0, residualProcesses: 0, profileExists: false, ownedRootExists: false };
-    const publicCleanup = { attempted: true, succeeded: true, residualUsers: 0, residualProcesses: 0, profileExists: false, ownedRootExists: false };
+    const cleanup = { attempted: true, succeeded: true, failure: null, residualTasks: 0, residualUsers: 0, residualProcesses: 0, profileExists: false, ownedRootExists: false };
+    const publicCleanup = { attempted: true, succeeded: true, residualTasks: 0, residualUsers: 0, residualProcesses: 0, profileExists: false, ownedRootExists: false };
     expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: null, failure: null, cleanup }, invalid).verdict).toBe("fail");
     expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: qualifyingSummary, failure: null, cleanup: { ...cleanup, residualUsers: 1 } }, invalid).verdict).toBe("fail");
+    expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: qualifyingSummary, failure: null, cleanup: { ...cleanup, residualTasks: 1 } }, invalid).verdict).toBe("fail");
     expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: qualifyingSummary, failure: { stage: "journey", code: "EACCES" }, cleanup }, invalid).verdict).toBe("fail");
     expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: qualifyingSummary, failure: null, cleanup: { ...cleanup, failure: "profile_cleanup" } }, invalid).verdict).toBe("fail");
     expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "pass", summary: qualifyingSummary, failure: null, cleanup }, invalid)).toEqual({ schemaVersion: 1, verdict: "pass", failure: null, cleanup: publicCleanup });

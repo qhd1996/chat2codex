@@ -1,61 +1,34 @@
 param([Parameter(Mandatory=$true)][string]$NodeBin,[Parameter(Mandatory=$true)][string]$ReportPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
-class LaunchFailure : System.Exception {
-  [string]$Code
-  LaunchFailure([string]$code) : base('Standard-user process launch failed.') { $this.Code = $code }
-}
 $identity = $env:GITHUB_SHA
 if ($identity -notmatch '^[a-f0-9]{40}$') { $identity = 'local' + ([Guid]::NewGuid().ToString('N')) }
 $userName = 'C2CN' + $identity.Substring(0,8)
+$taskName = 'C2C-Native-' + $identity.Substring(0,8)
 $profileRoot = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -Name ProfilesDirectory -ErrorAction Stop).ProfilesDirectory)
 $profilePath = Join-Path $profileRoot $userName
 $ownedRoot = Join-Path $profilePath ('AppData\Local\Temp\C2C-Native-' + $identity.Substring(0,8))
 $childReport = Join-Path $ownedRoot 'native-lifecycle-status.json'
+$worker = Join-Path $PSScriptRoot 'novice-native-lifecycle-worker.ps1'
+$lifecycleScript = Join-Path $PSScriptRoot 'novice-native-lifecycle-built.mjs'
 $created = $false
 $createdSid = $null
 $failure = $null
 $stage = 'preflight'
 $childExit = -1
-$stdout = ''
-$stderr = ''
 $value = $null
 function New-Password([string]$source) {
   $bytes = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($source + [Guid]::NewGuid().ToString('N')))
   return 'Aa1!' + [Convert]::ToBase64String($bytes).Replace('+','A').Replace('/','B').Replace('=','C')
 }
-function Start-AsUser([string]$file,[string]$arguments,[hashtable]$environment) {
-  $info = New-Object Diagnostics.ProcessStartInfo
-  $info.FileName = $file
-  $info.Arguments = $arguments
-  $info.UserName = $userName
-  $info.Domain = $env:COMPUTERNAME
-  $info.Password = $secure
-  $info.UseShellExecute = $false
-  $info.CreateNoWindow = $true
-  $info.LoadUserProfile = $true
-  $info.RedirectStandardOutput = $true
-  $info.RedirectStandardError = $true
-  foreach($item in $environment.GetEnumerator()) { $info.EnvironmentVariables[$item.Key] = [string]$item.Value }
-  $process = New-Object Diagnostics.Process
-  $process.StartInfo = $info
-  try {
-    if (-not $process.Start()) { throw [LaunchFailure]::new('unavailable') }
-  } catch {
-    if ($_.Exception -is [LaunchFailure]) { throw }
-    $candidate = $_.Exception
-    while ($candidate.InnerException) { $candidate = $candidate.InnerException }
-    $code = if ($candidate -is [ComponentModel.Win32Exception]) { 'win32_' + [int]$candidate.NativeErrorCode } elseif ($candidate.HResult) { 'hresult_' + [int]$candidate.HResult } else { 'unavailable' }
-    throw [LaunchFailure]::new($code)
-  }
-  $out = $process.StandardOutput.ReadToEnd()
-  $err = $process.StandardError.ReadToEnd()
-  if (-not $process.WaitForExit(15000)) { $process.Kill(); $process.WaitForExit(); throw 'Standard-user process exceeded the fixed diagnostic bound.' }
-  return [ordered]@{ ExitCode=$process.ExitCode; Stdout=$out; Stderr=$err }
+function Quote-TaskArgument([string]$value) {
+  if ($value.Contains('"')) { throw 'Scheduled Task argument contains a quote.' }
+  return '"' + $value + '"'
 }
 try {
   $stage = 'preflight'
   if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Exact diagnostic user already exists.' }
+  if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Exact diagnostic task already exists.' }
   if (Test-Path -LiteralPath $profilePath) { throw 'Exact diagnostic profile already exists.' }
   if (Test-Path -LiteralPath $ownedRoot) { throw 'Exact diagnostic root already exists.' }
   $stage = 'user_create'
@@ -64,40 +37,48 @@ try {
   New-LocalUser -Name $userName -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
   $created = $true
   $createdSid = (Get-LocalUser -Name $userName -ErrorAction Stop).SID.Value
-  $stage = 'root_create'
-  $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
-  $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{ USERPROFILE=$profilePath; HOME=$profilePath }
-  if ($make.ExitCode -ne 0) {
-    $failure = [ordered]@{stage='standard_user_wrapper/root_create/exit';exceptionType='ProcessFailure';code=('exit_' + $make.ExitCode);errno=$null;hResult=$null}
-    throw 'Standard-user root creation failed.'
+  $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Quote-TaskArgument $worker),'-NodeBin',(Quote-TaskArgument $NodeBin),'-LifecycleScript',(Quote-TaskArgument $lifecycleScript),'-OwnedRoot',(Quote-TaskArgument $ownedRoot),'-ProfilePath',(Quote-TaskArgument $profilePath),'-ReportPath',(Quote-TaskArgument $childReport)) -join ' '
+  $stage = 'scheduled_task/register'
+  $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $PSScriptRoot
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(1)) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -User ($env:COMPUTERNAME + '\' + $userName) -Password $plain -RunLevel Limited | Out-Null
+  $registeredXml = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop
+  if ($registeredXml -notmatch '<LogonType>Password</LogonType>' -or $registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') { throw 'Scheduled Task principal is not password-logon least-privilege.' }
+  if ($registeredXml -match [Regex]::Escape($plain)) { throw 'Scheduled Task action exposes the password.' }
+  $stage = 'scheduled_task/start'
+  Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
+  $taskDeadline = [DateTime]::UtcNow.AddSeconds(15)
+  do {
+    $task = @(Get-ScheduledTask -TaskName $taskName -ErrorAction Stop | Where-Object TaskName -EQ $taskName | Select-Object -First 1)
+    if ($task.Count -eq 1 -and $task[0].State -ne 'Running' -and (Test-Path -LiteralPath $childReport -PathType Leaf)) { break }
+    Start-Sleep -Milliseconds 50
+  } while ([DateTime]::UtcNow -lt $taskDeadline)
+  $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction Stop
+  $childExit = [int]$taskInfo.LastTaskResult
+  if ($childExit -ne 0) {
+    $failure = [ordered]@{stage='standard_user_wrapper/scheduled_task/exit';exceptionType='ProcessFailure';code=('exit_' + $childExit);errno=$null;hResult=$null}
+    throw 'Scheduled Task lifecycle worker failed.'
   }
-  if (-not (Test-Path -LiteralPath $ownedRoot -PathType Container)) {
-    $failure = [ordered]@{stage='standard_user_wrapper/root_create/missing';exceptionType='ProcessFailure';code='unavailable';errno=$null;hResult=$null}
-    throw 'Standard-user root creation failed.'
-  }
-  $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   $stage = 'owner_check'
+  $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   if ($owner.Value -ne $createdSid) { throw 'Standard-user root owner differs.' }
-  $environment = @{ TEMP=$ownedRoot; TMP=$ownedRoot; USERPROFILE=$profilePath; HOME=$profilePath; C2C_NATIVE_LIFECYCLE_REPORT=$childReport }
-  $script = Join-Path $PSScriptRoot 'novice-native-lifecycle-built.mjs'
-  $stage = 'process_start'
-  $run = Start-AsUser $NodeBin ('"' + $script + '"') $environment
-  $childExit = $run.ExitCode
-  $stdout = $run.Stdout
-  $stderr = $run.Stderr
   $stage = 'report_read'
-  if (-not (Test-Path -LiteralPath $childReport -PathType Leaf)) { throw 'Standard-user lifecycle report is missing.' }
+  if (-not (Test-Path -LiteralPath $childReport -PathType Leaf)) {
+    $failure = [ordered]@{stage='standard_user_wrapper/scheduled_task/report_missing';exceptionType='ProcessFailure';code='unavailable';errno=$null;hResult=$null}
+    throw 'Standard-user lifecycle report is missing.'
+  }
   $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json
   if ($childExit -ne 0 -or $value.verdict -ne 'pass') { $failure = $value.failure }
 } catch {
-  if (-not $failure) {
-    if ($_.Exception -is [LaunchFailure]) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage+'/process_start');exceptionType='LaunchFailure';code=$_.Exception.Code;errno=$null;hResult=[int]$_.Exception.HResult} }
-    else { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} }
-  }
+  if (-not $failure) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} }
 }
 finally {
   $cleanupFailure = $null
-  try { if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction Stop } } catch { $cleanupFailure = 'user_cleanup' }
+  try {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task) { if ($task.State -eq 'Running') { Stop-ScheduledTask -TaskName $taskName -ErrorAction Stop }; Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop }
+  } catch { $cleanupFailure = 'task_cleanup' }
+  try { if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction Stop } } catch { if (-not $cleanupFailure) { $cleanupFailure = 'user_cleanup' } }
   try {
     if ($created -and $createdSid) {
       $profileDeadline = [DateTime]::UtcNow.AddSeconds(10)
@@ -113,13 +94,13 @@ finally {
     }
   } catch { if (-not $cleanupFailure) { $cleanupFailure = 'profile_cleanup' } }
   if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  try { $residualTasks = @(Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue | Where-Object TaskName -EQ $taskName).Count } catch { $residualTasks = -1; if (-not $cleanupFailure) { $cleanupFailure = 'task_query' } }
   try { $residualUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName).Count } catch { $residualUsers = -1; if (-not $cleanupFailure) { $cleanupFailure = 'user_query' } }
   try { $residualProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine -like ('*C2C-Native-' + $identity.Substring(0,8) + '*') }).Count } catch { $residualProcesses = -1; if (-not $cleanupFailure) { $cleanupFailure = 'process_query' } }
   $profileExists = Test-Path -LiteralPath $profilePath
   $ownedRootExists = Test-Path -LiteralPath $ownedRoot
-  $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and-not$cleanupFailure-and$childExit-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=-not$cleanupFailure-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists;failure=$cleanupFailure;residualUsers=$residualUsers;residualProcesses=$residualProcesses;profileExists=$profileExists;ownedRootExists=$ownedRootExists}}
+  $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and-not$cleanupFailure-and$childExit-eq0-and$residualTasks-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=-not$cleanupFailure-and$residualTasks-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists;failure=$cleanupFailure;residualTasks=$residualTasks;residualUsers=$residualUsers;residualProcesses=$residualProcesses;profileExists=$profileExists;ownedRootExists=$ownedRootExists}}
   [IO.Directory]::CreateDirectory((Split-Path $ReportPath -Parent)) | Out-Null
   [IO.File]::WriteAllText($ReportPath,(($report|ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 }
-$stdout | Write-Host
 if ($report.verdict -ne 'pass') { Write-Host ('NATIVE_LIFECYCLE_FAIL ' + ($report|ConvertTo-Json -Compress -Depth 8)); exit 1 }
