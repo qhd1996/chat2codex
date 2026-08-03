@@ -256,14 +256,23 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
   product source `972d678` produced byte-equal 412,247-byte archives, SHA-256
   `85432737A75439FDCB8BF8218B8588F3F863A909D500F5889BE92C428F19F101`,
   131 files. Workflow binding commit is `546a293`. Local-only product head `9936f7d`
-  changes package bytes and is not yet frozen as a release candidate.
+  changes package bytes and is not yet frozen as a release candidate. Two detached
+  clean checkouts at `9936f7d` produced byte-equal 412,271-byte archives, SHA-256
+  `C7D137A70607F2E7D91DF68CF6572E75DCD9B18CC2AA71BAD58058C914444652`,
+  131 files.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
   `plugin/list`; config SHA-256
   `A86CE3499F0EB64984C187AE594427D04C1D9662DBD931C717546BFEC1124526`.
-- Latest local stable suite: 906 pass, 8 documented platform-conditional skips,
+- Latest local stable suite at `9936f7d`: 908 pass, 8 documented platform-conditional skips,
   0 fail across 87 files; typecheck/contracts/build passed.
+- Exact `9936f7d` archive package worker ran 30 installed-package repetitions with
+  19 scenarios each, 30 independent canonical process proofs, 0 residual process,
+  package/CLI version equality, and no repository import. Summary SHA-256
+  `924000162D1ED83806AB685475AC14E732F39F045211D6C56C95AC46A2A5DB84`.
+  This proves the corrected process-proof branch but not the separate elevated
+  another-user ACL and lifecycle attestation.
 - Latest complete local matrix at final product `f490e6a`: 30 × 19, 570 scenario executions,
   1,980 test passes, 0 fail/skip/timeout/residual; report SHA-256
   `282F1C80660673C7B557361ECE10088D8CDC06BE18E3286D011625142C416439`.
@@ -300,13 +309,16 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: the final package-matrix timestamp branch at `9936f7d` has local
-RED→GREEN but no direct equivalent-isolated clean-Windows pass. The GitHub route has
-reached the declared stop-loss: one targeted run plus one final full run. No more push
-or hosted rerun will occur on that path. Next step is a package-bound equivalent
-isolated Windows execution under a disposable local user/environment, then one reviewed
-release freeze only if it passes. Estimated 15–25 minutes; if the environment cannot
-qualify, status remains blocked/unknown rather than weakening the requirement.
+Current blocker: the final package-matrix timestamp branch at `9936f7d` now has direct
+package-bound 30-repetition local-isolation proof, but no complete qualifying
+clean-Windows pass combining the elevated another-user ACL, lifecycle attestation,
+worker, real upgrade and evidence verifier. The GitHub route reached the declared
+stop-loss: one targeted run plus one final full run. No more push or hosted rerun will
+occur on that path. Next step is a qualifying elevated equivalent-isolated Windows
+execution using the exact `C7D137...4652` package, then one reviewed release freeze
+only if it passes. The current non-elevated token cannot create the required temporary
+local user; if no elevated isolation runner is available, status remains unknown rather
+than weakening the requirement.
 
 Rollback is commit-scoped: revert only the offending fix/rebind pair and return the
 candidate branch to the last reviewed SHA. No production files were changed by this
@@ -357,7 +369,8 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 - Latest failed clean job `30798631293` zero-residual artifact: inspection complete,
   cleanup error codes empty, owned root false, environment root false, matching
   processes 0, residual users 0, residual task false.
-  environment root false, matching processes 0, residual users 0, residual task
-  false.
+- Final local `9936f7d` package-only evidence: 30 repetitions, 570 scenario
+  executions, 30 process proofs, 0 residual, plus stable suite 908 pass / 8 documented
+  platform skips / 0 fail.
 - Final counts and the terminal run conclusion will be appended after the first full
   green repository + clean-package run.
