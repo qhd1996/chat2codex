@@ -8,6 +8,7 @@ import {
   checkCodexProtocolCompatibility,
   createGracefulShutdownController,
   createUncaughtExceptionHandler,
+  formatDistributionDoctorCheck,
   requestSupervisorRestart,
   parseCommand,
   runCli,
@@ -44,6 +45,12 @@ describe("CLI", () => {
 
   test("portable help does not require bridge configuration", async () => {
     await runCli(["portable", "--help"]);
+  });
+
+  test("renders Windows distribution errors as actionable redacted steps", () => {
+    const check = formatDistributionDoctorCheck({ label: "Portable rollback", status: "error", code: "DIST_ROLLBACK_PENDING", detail: "An interrupted transaction requires recovery.", recovery: "Resume the named receipt.", what_happened: "An interrupted transaction requires recovery.", safe_state: "No mutation was performed.", next_action: "Resume the named receipt." });
+    expect(check.detail).toBe("What happened: An interrupted transaction requires recovery. Safe state: No mutation was performed. Next action: Resume the named receipt.");
+    expect(check.label).toBe("Portable rollback [DIST_ROLLBACK_PENDING]");
   });
 
   test("start help does not require bridge configuration", async () => {

@@ -21,7 +21,7 @@ import {
   type BridgeRuntime,
 } from "./runtime/bridge-runtime.js";
 import { createPlatformAdapterBundle } from "./runtime/platform.js";
-import { diagnoseWindowsDistribution } from "./setup/distribution-doctor.js";
+import { diagnoseWindowsDistribution, type DistributionDoctorCheck } from "./setup/distribution-doctor.js";
 import { inspectInstalledWindowsDistribution } from "./setup/windows-distribution-inspector.js";
 
 type CliCommand =
@@ -496,7 +496,7 @@ Options:
     if (process.platform === "win32") {
       try {
         const snapshot = await inspectInstalledWindowsDistribution(config.chat2codexHome);
-        if (snapshot) checks.push(...diagnoseWindowsDistribution(snapshot).map((check) => ({ label: `${check.label} [${check.code}]`, status: check.status, detail: check.recovery ? `${check.detail} Recovery: ${check.recovery}` : check.detail })));
+        if (snapshot) checks.push(...diagnoseWindowsDistribution(snapshot).map(formatDistributionDoctorCheck));
       } catch (error) {
         checks.push({ label: "Windows distribution", status: "error", detail: `DIST_INSPECTION_FAILED: ${formatError(error)}` });
       }
@@ -507,6 +507,9 @@ Options:
   if (checks.some((check) => check.status === "error")) {
     process.exitCode = 1;
   }
+}
+export function formatDistributionDoctorCheck(check: DistributionDoctorCheck): DoctorCheck {
+  return { label: `${check.label} [${check.code}]`, status: check.status, detail: check.status === "error" && check.what_happened && check.safe_state && check.next_action ? `What happened: ${check.what_happened} Safe state: ${check.safe_state} Next action: ${check.next_action}` : check.recovery ? `${check.detail} Recovery: ${check.recovery}` : check.detail };
 }
 
 async function runSmoke(args: string[]): Promise<void> {
