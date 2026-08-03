@@ -1,7 +1,7 @@
 import path from "node:path";
 
 export type PortableReceiptAction = "install" | "upgrade" | "rollback" | "uninstall" | "reinstall" | "doctor";
-export type PortableReceiptStatus = "prepared" | "applying" | "committed" | "rolling_back" | "rolled_back" | "rollback_failed" | "aborted";
+export type PortableReceiptStatus = "prepared" | "applying" | "awaiting_setup" | "committed" | "rolling_back" | "rolled_back" | "rollback_failed" | "aborted";
 export type PortableInstallStep = "backup_prior" | "quiesce_service" | "install_package" | "configure" | "migrate_state" | "install_service" | "start_service" | "doctor";
 export type PortableRollbackStep = "stop_current_writer" | "uninstall_windows_user_task" | "restore_state" | "restore_configuration" | "restore_package" | "restore_windows_user_task" | "old_doctor" | "verify_restored";
 export interface PortablePrerequisiteSnapshot {
@@ -9,7 +9,7 @@ export interface PortablePrerequisiteSnapshot {
   codexCliVersion: string; desktopVersion: string | null;
 }
 export interface PortableOwnedHashes { package: string | null; config: string | null; state: string | null; task: string | null }
-export interface PortableBackupReference { backupId: string; hashes: PortableOwnedHashes }
+export interface PortableBackupReference { backupId: string; hashes: PortableOwnedHashes; wasOnline: boolean }
 export interface PortableReceiptV1 {
   schemaVersion: 1; receiptId: string; action: PortableReceiptAction; status: PortableReceiptStatus;
   archiveSha256?: string; home: string; npmPrefix: string; receiptRoot: string; createdAt: string; updatedAt: string;
@@ -19,7 +19,7 @@ export interface PortableReceiptV1 {
 export interface PortableUninstallManifestV1 { schemaVersion: 1; home: string; npmPrefix: string; ownedPackageFiles: string[] }
 const keys = ["action", "archiveSha256", "backup", "completed", "createdAt", "home", "installedHashes", "npmPrefix", "pendingStep", "prerequisites", "receiptId", "receiptRoot", "rollbackCompleted", "rollbackFailures", "schemaVersion", "status", "updatedAt"];
 const actions = ["install", "upgrade", "rollback", "uninstall", "reinstall", "doctor"];
-const statuses = ["prepared", "applying", "committed", "rolling_back", "rolled_back", "rollback_failed", "aborted"];
+const statuses = ["prepared", "applying", "awaiting_setup", "committed", "rolling_back", "rolled_back", "rollback_failed", "aborted"];
 const installSteps = ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service", "start_service", "doctor"];
 const rollbackSteps = ["stop_current_writer", "uninstall_windows_user_task", "restore_state", "restore_configuration", "restore_package", "restore_windows_user_task", "old_doctor", "verify_restored"];
 export function serializePortableReceipt(value: PortableReceiptV1): string { return JSON.stringify(parsePortableReceipt(value), null, 2) + "\n"; }
@@ -60,9 +60,10 @@ function parsePrerequisites(value: unknown): PortablePrerequisiteSnapshot {
 }
 function parseBackup(value: unknown): PortableBackupReference | null {
   if (value === null) return null;
-  object(value); exact(value, ["backupId", "hashes"]);
+  object(value); exact(value, ["backupId", "hashes", "wasOnline"]);
   if (typeof value.backupId !== "string" || !/^[A-Za-z0-9._-]{1,100}$/u.test(value.backupId)) throw new Error("Portable backup identity is invalid.");
-  return { backupId: value.backupId, hashes: parseHashes(value.hashes) };
+  if (typeof value.wasOnline !== "boolean") throw new Error("Portable backup online state is invalid.");
+  return { backupId: value.backupId, hashes: parseHashes(value.hashes), wasOnline: value.wasOnline };
 }
 function parseHashes(value: unknown): PortableOwnedHashes {
   object(value); exact(value, ["config", "package", "state", "task"]);
@@ -83,13 +84,23 @@ function validateState(status: PortableReceiptStatus, completed: PortableInstall
   if (status === "prepared" && (completed.length || pending || backup || installedHashes || rollbackCompleted.length || rollbackFailures.length)) throw new Error("Portable receipt prepared state is inconsistent.");
   if (status === "aborted" && (completed.length || pending || backup || installedHashes || rollbackCompleted.length || rollbackFailures.length)) throw new Error("Portable receipt aborted state is inconsistent.");
   if (status === "committed" && (completed.length !== installSteps.length || pending || !installedHashes || !completeHashes(installedHashes) || rollbackCompleted.length || rollbackFailures.length)) throw new Error("Portable receipt committed state is inconsistent.");
-  if (status !== "committed" && installedHashes) throw new Error("Portable receipt non-committed state contains installed hashes.");
+  if (status === "awaiting_setup" && (JSON.stringify(completed) !== JSON.stringify(installSteps.slice(0, 6)) || pending || !installedHashes || !completeHashes(installedHashes) || rollbackCompleted.length || rollbackFailures.length || backup?.wasOnline !== false)) throw new Error("Portable receipt awaiting-setup state is inconsistent.");
+  if (!["committed", "awaiting_setup"].includes(status) && installedHashes) throw new Error("Portable receipt non-terminal state contains installed hashes.");
   if (["prepared", "applying"].includes(status) && (rollbackCompleted.length || rollbackFailures.length)) throw new Error("Portable receipt active state contains rollback results.");
   if (status === "rolling_back" && (!backup || pending)) throw new Error("Portable receipt rolling-back state is inconsistent.");
   if (["rolled_back", "rollback_failed"].includes(status) && !backup) throw new Error("Portable receipt rollback state lacks a backup.");
   if (["rolled_back", "rollback_failed"].includes(status) && pending) throw new Error("Portable receipt rollback state retains a pending step.");
-  if (status === "rolled_back" && (rollbackFailures.length || rollbackCompleted.at(-1) !== "verify_restored")) throw new Error("Portable receipt rolled-back state lacks exact restoration proof.");
+  if (status === "rolled_back" && (rollbackFailures.length || rollbackCompleted.at(-1) !== "verify_restored" || requiredRollbackSteps(completed, backup!).some((step) => !rollbackCompleted.includes(step)))) throw new Error("Portable receipt rolled-back state lacks exact restoration proof.");
   if (status === "rollback_failed" && rollbackFailures.length === 0) throw new Error("Portable receipt rollback-failed state lacks failures.");
+}
+function requiredRollbackSteps(completed: PortableInstallStep[], backup: PortableBackupReference): PortableRollbackStep[] {
+  const required: PortableRollbackStep[] = ["stop_current_writer"];
+  if (backup.hashes.task === null && completed.includes("install_service")) required.push("uninstall_windows_user_task");
+  required.push("restore_state", "restore_configuration", "restore_package");
+  if (backup.hashes.task !== null) required.push("restore_windows_user_task");
+  if (Object.values(backup.hashes).some((value) => value !== null)) required.push("old_doctor");
+  required.push("verify_restored");
+  return required;
 }
 function completeHashes(value: PortableOwnedHashes): boolean { return (["package", "config", "state", "task"] as const).every((name) => typeof value[name] === "string"); }
 function object(value: unknown): asserts value is Record<string, unknown> { if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Portable receipt must be an object."); }

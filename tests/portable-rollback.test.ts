@@ -1,15 +1,49 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  executePersonalPortableReinstall, executePersonalPortableRollback, executePersonalPortableUninstall,
+  executePersonalPortableReinstall, executePersonalPortableRollback, executePersonalPortableUninstall, parseBoundPortableUninstallManifest,
   PersonalPortableTransactionError, type PersonalPortableReinstallIo, type PersonalPortableRollbackIo, type PersonalPortableUninstallIo,
 } from "../src/setup/personal-portable.js";
-import type { PortableReceiptV1, PortableUninstallManifestV1 } from "../src/setup/portable-receipt.js";
+import { parsePortableReceipt, type PortableReceiptV1, type PortableUninstallManifestV1 } from "../src/setup/portable-receipt.js";
 
 const home = "C:\\Users\\Alice\\AppData\\Local\\Chat2Codex";
 const npmPrefix = home + "\\npm";
 const oldHashes = { package: "1".repeat(64), config: "2".repeat(64), state: "3".repeat(64), task: "4".repeat(64) };
 const candidateHashes = { package: "9".repeat(64), config: "8".repeat(64), state: "7".repeat(64), task: "6".repeat(64) };
+
+test("rejects a rolled-back receipt that only claims the final verification step", () => {
+  const receipt = committedReceipt();
+  receipt.status = "rolled_back";
+  receipt.installedHashes = null;
+  receipt.rollbackCompleted = ["verify_restored"];
+
+  expect(() => parsePortableReceipt(receipt)).toThrow("exact restoration proof");
+});
+
+test("rejects rolled-back receipts that omit any restoration required by completed mutation steps", () => {
+  const receipt = committedReceipt();
+  receipt.status = "rolled_back";
+  receipt.installedHashes = null;
+  for (const rollbackCompleted of [
+    ["stop_current_writer", "verify_restored"],
+    ["stop_current_writer", "restore_state", "restore_configuration", "restore_windows_user_task", "old_doctor", "verify_restored"],
+    ["stop_current_writer", "restore_state", "restore_configuration", "restore_package", "restore_windows_user_task", "verify_restored"],
+  ]) {
+    expect(() => parsePortableReceipt({ ...receipt, rollbackCompleted })).toThrow("exact restoration proof");
+  }
+});
+
+test("requires conservative restoration proof even when failure happened immediately after backup", () => {
+  const receipt = committedReceipt();
+  receipt.status = "rolled_back"; receipt.installedHashes = null; receipt.completed = ["backup_prior"];
+  receipt.rollbackCompleted = ["stop_current_writer", "restore_windows_user_task", "old_doctor", "verify_restored"];
+  expect(() => parsePortableReceipt(receipt)).toThrow("exact restoration proof");
+});
+
+test("binds a parsed uninstall manifest to trusted plan paths", () => {
+  const forgedHome = "C:\\Users\\Alice\\Documents\\Personal";
+  expect(() => parseBoundPortableUninstallManifest({ schemaVersion: 1, home: forgedHome, npmPrefix: forgedHome + "\\npm", ownedPackageFiles: [forgedHome + "\\npm\\sentinel"] }, home, npmPrefix)).toThrow(/bound|installation|manifest/i);
+});
 
 describe("personal portable named rollback", () => {
   test("restores exact old package config state task and old doctor from a named receipt", async () => {
@@ -20,12 +54,21 @@ describe("personal portable named rollback", () => {
     expect(fixture.events).toEqual(["read:receipt-upgrade", "assert_quiescent", "owned_hashes:candidate", "receipt:rolling_back", "stop_current_writer", "receipt:rolling_back", "restore_state", "receipt:rolling_back", "restore_configuration", "receipt:rolling_back", "restore_package", "receipt:rolling_back", "restore_windows_user_task", "receipt:rolling_back", "old_doctor", "receipt:rolling_back", "owned_hashes:old", "receipt:rolling_back", "receipt:rolled_back"]);
   });
 
+  test("rolls back an awaiting-setup install after verifying candidate hashes", async () => {
+    const fixture = rollbackFixture();
+    fixture.receipt.status = "awaiting_setup" as never;
+    fixture.receipt.backup!.wasOnline = false;
+    fixture.receipt.completed = ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service"];
+    await expect(executePersonalPortableRollback("receipt-upgrade", fixture.io)).resolves.toMatchObject({ status: "rolled_back" });
+    expect(fixture.events).toContain("owned_hashes:candidate");
+  });
+
   test("rejects drift obligations incompatible schema and a consumed receipt before mutation", async () => {
     for (const [change, code] of [
       [(fixture: ReturnType<typeof rollbackFixture>) => { fixture.currentHashes.package = "0".repeat(64); }, "PORTABLE_ROLLBACK_HASH_DRIFT"],
       [(fixture: ReturnType<typeof rollbackFixture>) => { fixture.failQuiescent = true; }, "PORTABLE_ROLLBACK_OBLIGATIONS_ACTIVE"],
       [(fixture: ReturnType<typeof rollbackFixture>) => { fixture.receipt = { schemaVersion: 999 } as never; }, "PORTABLE_ROLLBACK_RECEIPT_INVALID"],
-      [(fixture: ReturnType<typeof rollbackFixture>) => { fixture.receipt.status = "rolled_back"; fixture.receipt.installedHashes = null; fixture.receipt.rollbackCompleted = ["verify_restored"]; }, "PORTABLE_ROLLBACK_RECEIPT_CONSUMED"],
+      [(fixture: ReturnType<typeof rollbackFixture>) => { fixture.receipt.status = "rolled_back"; fixture.receipt.installedHashes = null; fixture.receipt.rollbackCompleted = ["stop_current_writer", "restore_state", "restore_configuration", "restore_package", "restore_windows_user_task", "old_doctor", "verify_restored"]; }, "PORTABLE_ROLLBACK_RECEIPT_CONSUMED"],
     ] as const) {
       const fixture = rollbackFixture(); change(fixture);
       await expect(executePersonalPortableRollback("receipt-upgrade", fixture.io)).rejects.toMatchObject({ code });
@@ -37,6 +80,21 @@ describe("personal portable named rollback", () => {
     const fixture = rollbackFixture(); fixture.oldDoctorHealthy = false;
     await expect(executePersonalPortableRollback("receipt-upgrade", fixture.io)).rejects.toMatchObject({ code: "PORTABLE_ROLLBACK_INCOMPLETE" });
     expect(fixture.receipts.at(-1)).toMatchObject({ status: "rollback_failed", rollbackFailures: ["old_doctor"] });
+  });
+
+  test("restores a fresh-install all-null backup without invoking a nonexistent old doctor", async () => {
+    const fixture = rollbackFixture();
+    fixture.receipt.action = "install";
+    fixture.receipt.backup = { backupId: "backup-fresh", hashes: { package: null, config: null, state: null, task: null }, wasOnline: false };
+    fixture.io.restoreState = async () => { fixture.events.push("restore_state"); fixture.currentHashes.state = null as never; };
+    fixture.io.restoreConfiguration = async () => { fixture.events.push("restore_configuration"); fixture.currentHashes.config = null as never; };
+    fixture.io.restorePackage = async () => { fixture.events.push("restore_package"); fixture.currentHashes.package = null as never; };
+    fixture.io.uninstallWindowsUserTask = async () => { fixture.events.push("uninstall_windows_user_task"); fixture.currentHashes.task = null as never; };
+    fixture.io.oldDoctor = async () => { throw new Error("fresh install has no old doctor"); };
+
+    await expect(executePersonalPortableRollback("receipt-upgrade", fixture.io)).resolves.toMatchObject({ status: "rolled_back" });
+    expect(fixture.events).not.toContain("old_doctor");
+    expect(fixture.receipts.at(-1)?.rollbackCompleted).toEqual(["stop_current_writer", "uninstall_windows_user_task", "restore_state", "restore_configuration", "restore_package", "verify_restored"]);
   });
 
   test("resumes an interrupted applying transaction without trusting partial candidate hashes", async () => {
@@ -88,6 +146,7 @@ describe("personal portable uninstall and reinstall", () => {
     const preserved = { state: "a".repeat(64), credentials: "b".repeat(64), deliverables: "c".repeat(64), backups: "d".repeat(64) };
     let installed = true;
     const io: PersonalPortableUninstallIo = {
+      expectedHome: home, expectedNpmPrefix: npmPrefix,
       readUninstallManifest: async () => installed ? manifest : null, assertQuiescent: async () => undefined,
       uninstallWindowsUserTask: async () => ({ removed: installed }),
       removeOwnedFiles: async (paths) => { for (const file of paths) files.delete(file); installed = false; return paths.length; },
@@ -101,16 +160,31 @@ describe("personal portable uninstall and reinstall", () => {
   test("rejects escaping or duplicate manifest ownership before deletion", async () => {
     for (const ownedPackageFiles of [["C:\\outside.txt"], [npmPrefix], [npmPrefix + "\\same", npmPrefix + "\\same"], [npmPrefix + "\\line\nfeed"]]) {
       let mutations = 0;
-      const io: PersonalPortableUninstallIo = { readUninstallManifest: async () => ({ schemaVersion: 1, home, npmPrefix, ownedPackageFiles }), assertQuiescent: async () => { mutations += 1; }, uninstallWindowsUserTask: async () => { mutations += 1; return { removed: true }; }, removeOwnedFiles: async () => { mutations += 1; return 0; }, preservedDataHashes: async () => ({ state: null, credentials: null, deliverables: null, backups: null }) };
+      const io: PersonalPortableUninstallIo = { expectedHome: home, expectedNpmPrefix: npmPrefix, readUninstallManifest: async () => ({ schemaVersion: 1, home, npmPrefix, ownedPackageFiles }), assertQuiescent: async () => { mutations += 1; }, uninstallWindowsUserTask: async () => { mutations += 1; return { removed: true }; }, removeOwnedFiles: async () => { mutations += 1; return 0; }, preservedDataHashes: async () => ({ state: null, credentials: null, deliverables: null, backups: null }) };
       await expect(executePersonalPortableUninstall(io)).rejects.toMatchObject({ code: "PORTABLE_UNINSTALL_MANIFEST_INVALID" });
       expect(mutations).toBe(0);
     }
+  });
+
+  test("binds uninstall manifest home and npm prefix to the trusted plan before mutation", async () => {
+    let mutations = 0;
+    const forgedHome = "C:\\Users\\Alice\\Documents\\Personal";
+    const forgedPrefix = forgedHome + "\\npm";
+    const io: PersonalPortableUninstallIo = {
+      expectedHome: home, expectedNpmPrefix: npmPrefix,
+      readUninstallManifest: async () => ({ schemaVersion: 1, home: forgedHome, npmPrefix: forgedPrefix, ownedPackageFiles: [forgedPrefix + "\\sentinel.txt"] }),
+      assertQuiescent: async () => { mutations += 1; }, uninstallWindowsUserTask: async () => { mutations += 1; return { removed: true }; },
+      removeOwnedFiles: async () => { mutations += 1; return 1; }, preservedDataHashes: async () => ({ state: null, credentials: null, deliverables: null, backups: null }),
+    };
+    await expect(executePersonalPortableUninstall(io)).rejects.toMatchObject({ code: "PORTABLE_UNINSTALL_MANIFEST_INVALID" });
+    expect(mutations).toBe(0);
   });
 
   test("fails closed when uninstall changes preserved user data", async () => {
     let reads = 0;
     const manifest: PortableUninstallManifestV1 = { schemaVersion: 1, home, npmPrefix, ownedPackageFiles: [npmPrefix + "\\node_modules\\chat2codex\\dist\\index.js"] };
     const io: PersonalPortableUninstallIo = {
+      expectedHome: home, expectedNpmPrefix: npmPrefix,
       readUninstallManifest: async () => manifest, assertQuiescent: async () => undefined, uninstallWindowsUserTask: async () => ({ removed: true }), removeOwnedFiles: async () => 1,
       preservedDataHashes: async () => ({ state: (reads++ ? "f" : "a").repeat(64), credentials: "b".repeat(64), deliverables: "c".repeat(64), backups: "d".repeat(64) }),
     };
@@ -119,7 +193,7 @@ describe("personal portable uninstall and reinstall", () => {
 
   test("fails closed when any manifest-owned package file remains", async () => {
     const manifest: PortableUninstallManifestV1 = { schemaVersion: 1, home, npmPrefix, ownedPackageFiles: [npmPrefix + "\\one", npmPrefix + "\\two"] };
-    const io: PersonalPortableUninstallIo = { readUninstallManifest: async () => manifest, assertQuiescent: async () => undefined, uninstallWindowsUserTask: async () => ({ removed: true }), removeOwnedFiles: async () => 1, preservedDataHashes: async () => ({ state: null, credentials: null, deliverables: null, backups: null }) };
+    const io: PersonalPortableUninstallIo = { expectedHome: home, expectedNpmPrefix: npmPrefix, readUninstallManifest: async () => manifest, assertQuiescent: async () => undefined, uninstallWindowsUserTask: async () => ({ removed: true }), removeOwnedFiles: async () => 1, preservedDataHashes: async () => ({ state: null, credentials: null, deliverables: null, backups: null }) };
     await expect(executePersonalPortableUninstall(io)).rejects.toMatchObject({ code: "PORTABLE_UNINSTALL_RESIDUAL_OWNED_FILES" });
   });
 
@@ -168,5 +242,5 @@ function rollbackFixture() {
 }
 
 function committedReceipt(): PortableReceiptV1 {
-  return { schemaVersion: 1, receiptId: "receipt-upgrade", action: "upgrade", status: "committed", archiveSha256: "f".repeat(64), home, npmPrefix, receiptRoot: home + "\\receipts", createdAt: "2026-08-04T00:00:00.000Z", updatedAt: "2026-08-04T00:01:00.000Z", prerequisites: { windowsVersion: "11", architecture: "x64", powershellVersion: "5.1", nodeVersion: "24.14.0", npmVersion: "11.0.0", codexCliVersion: "0.146.0", desktopVersion: null }, backup: { backupId: "backup-old", hashes: { ...oldHashes } }, installedHashes: { ...candidateHashes }, pendingStep: null, completed: ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service", "start_service", "doctor"], rollbackCompleted: [], rollbackFailures: [] };
+  return { schemaVersion: 1, receiptId: "receipt-upgrade", action: "upgrade", status: "committed", archiveSha256: "f".repeat(64), home, npmPrefix, receiptRoot: home + "\\receipts", createdAt: "2026-08-04T00:00:00.000Z", updatedAt: "2026-08-04T00:01:00.000Z", prerequisites: { windowsVersion: "11", architecture: "x64", powershellVersion: "5.1", nodeVersion: "24.14.0", npmVersion: "11.0.0", codexCliVersion: "0.146.0", desktopVersion: null }, backup: { backupId: "backup-old", hashes: { ...oldHashes }, wasOnline: true }, installedHashes: { ...candidateHashes }, pendingStep: null, completed: ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service", "start_service", "doctor"], rollbackCompleted: [], rollbackFailures: [] };
 }

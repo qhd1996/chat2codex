@@ -192,7 +192,7 @@ async function installService(options: ServiceOptions): Promise<void> {
       taskXmlPath: path.join(serviceRoot, "task.xml"), manifestPath: path.join(serviceRoot, "installation.json"),
       nodeBin: options.nodeBin, entrypoint: options.entrypoint, logFile: options.stderrPath,
       pathEnv: options.pathEnv, taskName: options.windowsTaskName, statePath: path.join(home, ".data", "state.json"),
-    }, windowsServiceIo(home));
+    }, createWindowsServiceIo(home));
     console.log(`Installed Windows user task: ${result.taskPath}`);
     console.log(`Manifest: ${path.join(serviceRoot, "installation.json")}`);
     return;
@@ -208,7 +208,7 @@ async function uninstallService(options: ServiceOptions): Promise<void> {
   if (options.target === "windows-task") {
     assertPlatform("win32", "windows-task");
     const home = path.resolve(options.projectDir);
-    await uninstallWindowsUserTask(path.join(home, ".service", "windows", "installation.json"), windowsServiceIo(home));
+    await uninstallWindowsUserTask(path.join(home, ".service", "windows", "installation.json"), createWindowsServiceIo(home));
     console.log(`Uninstalled Windows user task: ${windowsTaskPath(options.windowsTaskName)}`);
     return;
   }
@@ -442,7 +442,7 @@ function run(
   }
 }
 
-function windowsServiceIo(home: string): WindowsServiceIo {
+export function createWindowsServiceIo(home: string): WindowsServiceIo {
   const processRows = async () => {
     const script = "Get-CimInstance Win32_Process | ForEach-Object {[pscustomobject]@{ProcessId=[int]$_.ProcessId;CreationDate=$_.CreationDate.ToUniversalTime().ToString('o');CommandLine=[string]$_.CommandLine}} | ConvertTo-Json -Compress";
     const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });

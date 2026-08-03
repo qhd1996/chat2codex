@@ -43,11 +43,12 @@ function safeVersion(value: string | undefined): string | undefined { const matc
 function compareVersions(left: string, right: string): number { const a = left.split(/[.+-]/u).slice(0, 3).map(Number); const b = right.split(/[.+-]/u).slice(0, 3).map(Number); for (let index = 0; index < 3; index += 1) { const result = (a[index] ?? 0) - (b[index] ?? 0); if (result) return result; } return 0; }
 function bounded(value: string): string { return value.replace(/[\u0000-\u001f]/gu, "").slice(0, 100); }
 
-export async function inspectInstalledWindowsDistribution(home: string): Promise<DistributionDoctorSnapshot | null> {
-  return inspectPersonalWindowsEnvironment(home, defaultPersonalWindowsInspectionIo);
+export async function inspectInstalledWindowsDistribution(home: string, installedPackageRoot = packageRoot()): Promise<DistributionDoctorSnapshot | null> {
+  const io: PersonalWindowsInspectionIo = { ...defaultPersonalWindowsInspectionIo, packageVersion: () => readPackageVersionAt(installedPackageRoot), installation: (target) => inspectInstalledWindowsCore(target, installedPackageRoot), hooks: () => inspectInstalledHookReadiness(installedPackageRoot) };
+  return inspectPersonalWindowsEnvironment(home, io);
 }
 
-async function inspectInstalledWindowsCore(home: string): Promise<DistributionDoctorSnapshot | null> {
+async function inspectInstalledWindowsCore(home: string, installedPackageRoot = packageRoot()): Promise<DistributionDoctorSnapshot | null> {
   const manifestPath = path.join(home, ".service", "windows", "installation.json");
   const source = await fs.readFile(manifestPath, "utf8").catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
   if (source === null) return null;
@@ -58,10 +59,10 @@ async function inspectInstalledWindowsCore(home: string): Promise<DistributionDo
   const observedLauncher = launcherFromTaskXml(taskXml);
   const [stateSchemaVersion, keys, writers, lockHealthy, hooks, desktop] = await Promise.all([
     readStateSchema(manifest.statePath), inspectKeys(manifest.keyFiles), countWriters(manifest.entrypoint),
-    inspectLock(manifest.statePath), inspectHookHashes(), inspectDesktop(),
+    inspectLock(manifest.statePath), inspectHookHashes(installedPackageRoot), inspectDesktop(),
   ]);
   return {
-    platform: process.platform, arch: process.arch, windowsVersion: os.release(), packageVersion: await readPackageVersion(),
+    platform: process.platform, arch: process.arch, windowsVersion: os.release(), packageVersion: await readPackageVersionAt(installedPackageRoot),
     manifest: { packageVersion: manifest.packageVersion, schemaVersion: manifest.schemaVersion, taskName: manifest.taskName, launcherPath: manifest.launcherPath },
     task: { exists: true, taskName: manifest.taskName, launcherPath: observedLauncher },
     process: { writers, lockHealthy }, stateSchemaVersion, loopbackHost: "127.0.0.1", keys, hooks, desktop,
@@ -70,16 +71,25 @@ async function inspectInstalledWindowsCore(home: string): Promise<DistributionDo
 
 const defaultPersonalWindowsInspectionIo: PersonalWindowsInspectionIo = {
   platform: () => process.platform, architecture: () => process.arch, windowsVersion: () => os.release(), packageVersion: readPackageVersion,
-  commandVersion: inspectCommandVersion, expectedNodeRange: () => ">=20.19.0", expectedCodexVersion: () => "0.146.0",
+  commandVersion: inspectWindowsCommandVersion, expectedNodeRange: () => ">=20.19.0", expectedCodexVersion: () => "0.146.0",
   installation: inspectInstalledWindowsCore,
-  weixin: inspectWeixinReadiness, hooks: inspectInstalledHookReadiness, rollbackReceipt: inspectPendingReceipt,
+  weixin: inspectWeixinReadiness, hooks: inspectInstalledHookReadiness, rollbackReceipt: inspectPendingPortableReceipt,
 };
+async function readPackageVersionAt(root: string): Promise<string> { const value = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8")) as { version?: unknown }; if (typeof value.version !== "string" || !value.version) throw new Error("Installed package version is invalid."); return value.version; }
 
-async function inspectCommandVersion(name: "powershell" | "node" | "npm" | "codex"): Promise<{ available: boolean; version?: string }> {
+export async function inspectWindowsCommandVersion(name: "powershell" | "node" | "npm" | "codex"): Promise<{ available: boolean; version?: string }> {
   try {
     if (name === "node") return { available: true, version: process.versions.node };
     if (name === "powershell") {
       const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "$PSVersionTable.PSVersion.ToString()"], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
+      return versionResult(stdout);
+    }
+    const npmCli = name === "npm" ? process.env.CHAT2CODEX_NPM_CLI?.trim() : undefined;
+    if (npmCli) {
+      if (!path.isAbsolute(npmCli)) return { available: false };
+      const info = await fs.lstat(npmCli).catch(() => null);
+      if (!info?.isFile() || info.isSymbolicLink() || path.resolve(await fs.realpath(npmCli)).toLocaleLowerCase() !== path.resolve(npmCli).toLocaleLowerCase()) return { available: false };
+      const { stdout } = await execFileAsync(process.execPath, [npmCli, "--version"], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
       return versionResult(stdout);
     }
     const command = name === "npm" && process.platform === "win32" ? "npm.cmd" : name === "codex" ? process.env.CODEX_BIN?.trim() || "codex" : name;
@@ -99,11 +109,11 @@ async function inspectWeixinReadiness(home: string): Promise<NonNullable<Distrib
   return { configured, credentialReadable, privateChatBoundary };
 }
 
-async function inspectInstalledHookReadiness(): Promise<NonNullable<DistributionDoctorSnapshot["hooks"]>> {
-  const packaged = await inspectHookHashes();
+async function inspectInstalledHookReadiness(installedPackageRoot = packageRoot()): Promise<NonNullable<DistributionDoctorSnapshot["hooks"]>> {
+  const packaged = await inspectHookHashes(installedPackageRoot);
   const codexHome = path.resolve(process.env.CODEX_HOME?.trim() || path.join(os.homedir(), ".codex"));
   const source = await fs.readFile(path.join(codexHome, "config.toml"), "utf8").catch(() => "");
-  const references = inspectCodexConfigReferences(source, packageRoot());
+  const references = inspectCodexConfigReferences(source, installedPackageRoot);
   const installedHashesMatch = packaged.expectedHashesMatch && references.installedHashesMatch;
   const mcpConfigured = references.mcpConfigured;
   return { expectedHashesMatch: packaged.expectedHashesMatch, installedHashesMatch, mcpConfigured };
@@ -114,16 +124,16 @@ export function inspectCodexConfigReferences(source: string, reviewedPackageRoot
   return { installedHashesMatch: source.includes("hooks.UserPromptSubmit") && source.includes("hooks.Stop") && has("scripts/codex-hooks/user-prompt-submit.mjs") && has("scripts/codex-hooks/stop-wake.mjs"), mcpConfigured: source.includes("mcp_servers.chat2codex_desktop_gateway") && has("dist/desktop-gateway/mcp.js") };
 }
 
-async function inspectPendingReceipt(home: string): Promise<NonNullable<DistributionDoctorSnapshot["rollbackReceipt"]>> {
+export async function inspectPendingPortableReceipt(home: string): Promise<NonNullable<DistributionDoctorSnapshot["rollbackReceipt"]>> {
   const root = path.join(home, "receipts");
   const entries = await fs.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error));
   let status: string | undefined;
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".json")) continue;
-    try { const receipt = parsePortableReceipt(JSON.parse(await fs.readFile(path.join(root, entry.name), "utf8"))); if (!["committed", "rolled_back", "aborted"].includes(receipt.status)) { status = receipt.status; break; } }
+    try { const receipt = parsePortableReceipt(JSON.parse(await fs.readFile(path.join(root, entry.name), "utf8"))); if (!["committed", "awaiting_setup", "rolled_back", "aborted"].includes(receipt.status)) { status = receipt.status; break; } else if (receipt.status === "awaiting_setup") status ??= receipt.status; }
     catch { status = "invalid"; break; }
   }
-  return status ? { pending: true, status } : { pending: false };
+  return status && status !== "awaiting_setup" ? { pending: true, status } : status ? { pending: false, status } : { pending: false };
 }
 function csv(value: string | undefined): string[] { return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean); }
 function booleanValue(value: string | undefined, fallback: boolean): boolean { if (value === undefined) return fallback; return value.trim().toLocaleLowerCase() === "true"; }
@@ -213,11 +223,11 @@ async function inspectLock(statePath: string): Promise<boolean> {
   const info = await fs.stat(statePath + ".lock").catch(() => null);
   return Boolean(info && Date.now() - info.mtimeMs <= 60_000);
 }
-async function inspectHookHashes(): Promise<{ expectedHashesMatch: boolean }> {
+async function inspectHookHashes(installedPackageRoot = packageRoot()): Promise<{ expectedHashesMatch: boolean }> {
   try {
-    const manifest = JSON.parse(await fs.readFile(path.join(packageRoot(), "docs", "phase3", "hook-sha256.json"), "utf8")) as { files?: Record<string, string> };
+    const manifest = JSON.parse(await fs.readFile(path.join(installedPackageRoot, "docs", "phase3", "hook-sha256.json"), "utf8")) as { files?: Record<string, string> };
     for (const [relative, expected] of Object.entries(manifest.files ?? {})) {
-      const actual = createHash("sha256").update(await fs.readFile(path.join(packageRoot(), relative))).digest("hex");
+      const actual = createHash("sha256").update(await fs.readFile(path.join(installedPackageRoot, relative))).digest("hex");
       if (actual !== expected) return { expectedHashesMatch: false };
     }
     return { expectedHashesMatch: Object.keys(manifest.files ?? {}).length === 3 };

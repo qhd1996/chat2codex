@@ -1,6 +1,9 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "bun:test";
 
-import { inspectCodexConfigReferences, inspectPersonalWindowsEnvironment, type PersonalWindowsInspectionIo } from "../src/setup/windows-distribution-inspector.js";
+import { inspectCodexConfigReferences, inspectPendingPortableReceipt, inspectPersonalWindowsEnvironment, inspectWindowsCommandVersion, type PersonalWindowsInspectionIo } from "../src/setup/windows-distribution-inspector.js";
 
 describe("personal Windows environment inspector", () => {
   test("builds a redacted dependency Weixin Hook MCP and pending-receipt snapshot", async () => {
@@ -33,6 +36,35 @@ describe("personal Windows environment inspector", () => {
     expect(JSON.stringify(result)).not.toContain("not-a-version");
     expect(result.dependencies?.npm).toEqual({ available: false, compatible: false });
     expect(result.dependencies?.codexCli).toEqual({ available: false, compatible: false });
+  });
+
+  test("uses the explicit canonical npm CLI with the running Node and rejects invalid overrides", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "c2c-npm-inspector-"));
+    const npmCli = path.join(root, "npm-cli.mjs");
+    const prior = process.env.CHAT2CODEX_NPM_CLI;
+    try {
+      await writeFile(npmCli, 'process.stdout.write("11.9.0\\n");');
+      process.env.CHAT2CODEX_NPM_CLI = npmCli;
+      expect(await inspectWindowsCommandVersion("npm")).toEqual({ available: true, version: "11.9.0" });
+      process.env.CHAT2CODEX_NPM_CLI = root;
+      expect(await inspectWindowsCommandVersion("npm")).toEqual({ available: false });
+      process.env.CHAT2CODEX_NPM_CLI = "relative/npm-cli.js";
+      expect(await inspectWindowsCommandVersion("npm")).toEqual({ available: false });
+    } finally {
+      if (prior === undefined) delete process.env.CHAT2CODEX_NPM_CLI; else process.env.CHAT2CODEX_NPM_CLI = prior;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("treats awaiting-setup receipts as a terminal onboarding state rather than pending rollback", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "c2c-awaiting-setup-receipt-"));
+    const home = path.join(root, "home");
+    try {
+      await (await import("node:fs/promises")).mkdir(path.join(home, "receipts"), { recursive: true });
+      const receipt = { schemaVersion: 1, receiptId: "receipt-awaiting", action: "install", status: "awaiting_setup", archiveSha256: "a".repeat(64), home, npmPrefix: path.join(home, "npm"), receiptRoot: path.join(home, "receipts"), createdAt: "2026-08-04T00:00:00.000Z", updatedAt: "2026-08-04T00:01:00.000Z", prerequisites: { windowsVersion: "11", architecture: "x64", powershellVersion: "5.1", nodeVersion: "24.14.0", npmVersion: "11.0.0", codexCliVersion: "0.146.0", desktopVersion: null }, backup: { backupId: "backup-fresh", hashes: { package: null, config: null, state: null, task: null }, wasOnline: false }, installedHashes: { package: "b".repeat(64), config: "c".repeat(64), state: "d".repeat(64), task: "e".repeat(64) }, pendingStep: null, completed: ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service"], rollbackCompleted: [], rollbackFailures: [] };
+      await writeFile(path.join(home, "receipts", "receipt-awaiting.json"), JSON.stringify(receipt));
+      expect(await inspectPendingPortableReceipt(home)).toEqual({ pending: false, status: "awaiting_setup" });
+    } finally { await rm(root, { recursive: true, force: true }); }
   });
 
   test("accepts only exact reviewed package Hook and MCP references", () => {

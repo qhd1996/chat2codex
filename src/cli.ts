@@ -545,8 +545,19 @@ async function runPortable(args: string[]): Promise<void> {
   const portable = await import("./setup/personal-portable.js");
   const options = portable.parsePersonalPortableArgs(args);
   const plan = portable.planPersonalPortableAction(options);
-  if (!options.dryRun) throw new portable.PersonalPortableError("PORTABLE_EXECUTION_NOT_AVAILABLE", "Run with --dry-run until the transactional executor is installed.");
-  console.log(options.json ? JSON.stringify(plan) : JSON.stringify(plan, null, 2));
+  if (options.dryRun) { console.log(options.json ? JSON.stringify(plan) : JSON.stringify(plan, null, 2)); return; }
+  const { runPersonalPortableNativeAction } = await import("./setup/personal-portable-native.js");
+  let result;
+  try {
+    result = await runPersonalPortableNativeAction(plan, { nodeBin: process.execPath, codexBin: process.env.CODEX_BIN, npmCommand: process.env.CHAT2CODEX_NPM_CLI, taskName: process.env.CHAT2CODEX_PORTABLE_TASK_NAME, pathEnv: process.env.PATH });
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error && typeof error.code === "string" && /^PORTABLE_[A-Z0-9_]+$/u.test(error.code) ? error.code : "PORTABLE_NATIVE_EXECUTION_FAILED";
+    const stage = error && typeof error === "object" && "stage" in error && typeof error.stage === "string" && /^[a-z_]+$/u.test(error.stage) ? error.stage : "native_boundary";
+    const failureCodes = error && typeof error === "object" && "failureCodes" in error && Array.isArray(error.failureCodes) ? error.failureCodes.filter((item): item is string => typeof item === "string" && /^DIST_[A-Z0-9_]+$/u.test(item)).slice(0, 20) : [];
+    console.log(JSON.stringify({ code, stage, status: "error", ...(failureCodes.length ? { failureCodes } : {}) })); process.exitCode = 1; return;
+  }
+  console.log(options.json ? JSON.stringify(result) : JSON.stringify(result, null, 2));
+  if (result.status === "error") process.exitCode = 1;
 }
 
 function normalizeSmokeArgs(args: string[]): string[] {
