@@ -10,7 +10,9 @@ if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Novice
 
 $created = $false
 try {
-  $secure = ConvertTo-SecureString $passwordText -AsPlainText -Force
+  $secure = [Security.SecureString]::new()
+  foreach ($character in $passwordText.ToCharArray()) { $secure.AppendChar($character) }
+  $secure.MakeReadOnly()
   New-LocalUser -Name $userName -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
   $created = $true
   $credential = [Management.Automation.PSCredential]::new(".\$userName", $secure)

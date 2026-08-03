@@ -57,6 +57,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(attestation).toContain("protectedGlobalNpmRootBefore");
     expect(attestation).toContain(`Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr)`);
     expect(anotherUserAcl).not.toContain("IsPathFullyQualified");
+    expect(anotherUserAcl).not.toContain("ConvertTo-SecureString");
+    expect(anotherUserAcl).toContain("$secure.AppendChar($character)");
+    expect(anotherUserAcl).toContain("$secure.MakeReadOnly()");
     expect(anotherUserAcl).toContain("$keyPath -notmatch '^[A-Za-z]:");
     expect(acceptance).toContain("spawnSync(node, [npmCli, \"root\", \"-g\"]");
     for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);
