@@ -201,12 +201,15 @@ async function main() {
   const reportPath = read("--report");
   const runIdentity = read("--run-identity");
   const codexBin = read("--codex-bin");
-  const protectedGlobalNpmRoot = (spawnSync("npm", ["root", "-g"], { encoding: "utf8", windowsHide: true }).stdout ?? "").trim();
   const oldArchive = read("--old-archive"); const oldArchiveSha256 = read("--old-sha256"); const oldVersion = read("--old-version"); const oldRepositoryCommit = read("--old-commit");
   if (qualifying && !oldRepositoryCommit) throw new Error("Qualifying novice run requires the supported old repository commit.");
   if (qualifying && (!repositoryCommit || !reportPath || !runIdentity || !codexBin || !oldArchive || !oldArchiveSha256 || !oldVersion || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, run identity, Codex binary, old package, and all fresh-environment flags.");
   if (!qualifying && (repositoryCommit || reportPath || args.includes("--fresh-profile") || args.includes("--repository-absent") || args.includes("--prior-package-absent"))) throw new Error("Package smoke cannot claim qualifying environment metadata.");
-  const npmVersion = runVersion(node, [await resolveNpmCli(process.env.PATH), "--version"]);
+  const npmCli = await resolveNpmCli(process.env.PATH);
+  const protectedGlobalNpmProbe = spawnSync(node, [npmCli, "root", "-g"], { encoding: "utf8", windowsHide: true });
+  const protectedGlobalNpmRoot = String(protectedGlobalNpmProbe.stdout ?? "").trim();
+  if (protectedGlobalNpmProbe.status !== 0 || !path.isAbsolute(protectedGlobalNpmRoot)) throw new Error("Protected global npm root could not be identified.");
+  const npmVersion = runVersion(node, [npmCli, "--version"]);
   const codexVersion = runVersion("codex", ["--version"]);
   const bunVersion = runVersion("bun", ["--version"]);
   const result = await runNoviceArchiveAcceptance({
