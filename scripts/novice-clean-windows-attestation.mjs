@@ -142,7 +142,7 @@ function verifyAnotherUserDenied(keyPath, sourceName) {
   const password = "Aa1!" + createHash("sha256").update(sourceName + process.pid).digest("base64url").slice(0, 20);
   const scriptPath = path.join(packageRoot, "scripts", "novice-another-user-acl.ps1");
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { encoding: "utf8", windowsHide: true, env: { ...process.env, C2C_TEST_USER: userName, C2C_TEST_PASSWORD: password, C2C_TEST_KEY: keyPath } });
-  if (result.status !== 0) throw new Error("Another-interactive-user ACL denial probe failed.");
+  if (result.status !== 0) throw new Error("Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr));
   return true;
 }
 function slash(value) { return value.replaceAll("\\", "/"); }

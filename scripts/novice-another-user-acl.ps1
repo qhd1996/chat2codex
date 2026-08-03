@@ -5,7 +5,7 @@ $passwordText = $env:C2C_TEST_PASSWORD
 $keyPath = $env:C2C_TEST_KEY
 
 if ($userName -notmatch '^C2CN[a-f0-9]{8}$') { throw 'Invalid novice ACL test user name.' }
-if (-not [IO.Path]::IsPathFullyQualified($keyPath)) { throw 'Invalid novice ACL key path.' }
+if ($keyPath -notmatch '^[A-Za-z]:[\\/]') { throw 'Invalid novice ACL key path.' }
 if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Novice ACL test user already exists.' }
 
 $created = $false
