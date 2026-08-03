@@ -32,11 +32,13 @@ test("uses direct .NET ACL APIs without PowerShell module discovery", async () =
   }
 });
 
-test("uses schtasks query exit codes instead of Task Scheduler COM discovery", async () => {
+test("uses successful full schtasks enumeration and fails launch or parse uncertainty closed", async () => {
   const source = await readFile(path.join(repositoryRoot, "src/setup/service.ts"), "utf8");
-  expect(source).toContain('spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]');
-  expect(source).toContain('?.code === "ENOENT"');
-  expect(source).toContain('result.status === -1073741510');
+  expect(source).toContain('spawnSync("schtasks.exe", ["/Query", "/FO", "CSV", "/NH"]');
+  expect(source).toContain('if (result.error || result.status !== 0) throw new Error("Windows task state is uncertain."');
+  expect(source).toContain("parseWindowsTaskNames(result.stdout)");
+  expect(source).not.toContain('?.code === "ENOENT"');
+  expect(source).not.toContain('result.status === -1073741510');
   expect(source).not.toContain("Schedule.Service");
 });
 

@@ -7,6 +7,7 @@ import {
   renderLaunchdPlist,
   renderSystemdUnit,
   parseWindowsWhoamiSid,
+  parseWindowsTaskNames,
   systemdUnitPath,
 } from "../src/setup/service.js";
 
@@ -85,5 +86,12 @@ describe("service setup", () => {
     expect(() => parseWindowsWhoamiSid("")).toThrow(/SID/i);
     expect(() => parseWindowsWhoamiSid("S-1-5-18 S-1-5-32-544")).toThrow(/SID/i);
     expect(() => parseWindowsWhoamiSid("S-1-bad")).toThrow(/SID/i);
+  });
+
+  test("parses exact task names from successful schtasks CSV and fails malformed or ambiguous output closed", () => {
+    expect(parseWindowsTaskNames(`"\\Chat2Codex\\Chat2Codex","N/A","Ready"\r\n"\\Microsoft\\Windows\\Task","N/A","Ready"\r\n`)).toEqual(["\\Chat2Codex\\Chat2Codex", "\\Microsoft\\Windows\\Task"]);
+    expect(parseWindowsTaskNames("")).toEqual([]);
+    expect(() => parseWindowsTaskNames("ERROR: access denied\r\n")).toThrow(/enumeration|malformed/i);
+    expect(() => parseWindowsTaskNames(`"\\Chat2Codex\\Chat2Codex"\r\n"\\chat2codex\\chat2codex"\r\n`)).toThrow(/ambiguous/i);
   });
 });

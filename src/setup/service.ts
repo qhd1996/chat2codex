@@ -477,10 +477,9 @@ function windowsServiceIo(home: string): WindowsServiceIo {
       return writers.length;
     },
     taskExists: async (taskPath) => {
-      const result = spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"], { encoding: "utf8", windowsHide: true });
-      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || result.status === 1 || result.status === -1073741510) return false;
-      if (result.status === 0) return true;
-      throw new Error("Windows task state is uncertain.", { cause: result.error });
+      const result = spawnSync("schtasks.exe", ["/Query", "/FO", "CSV", "/NH"], { encoding: "utf8", windowsHide: true });
+      if (result.error || result.status !== 0) throw new Error("Windows task state is uncertain.", { cause: result.error });
+      return parseWindowsTaskNames(result.stdout).some((name) => name.toLocaleLowerCase() === taskPath.toLocaleLowerCase());
     },
     ensureGatewayKeys: () => ensureWindowsGatewayKeys({
       root: path.join(home, ".secrets", "desktop-gateway"),
@@ -503,6 +502,20 @@ export function parseWindowsWhoamiSid(source: string): string {
   if (matches.length !== 1) throw new Error("Could not determine the current Windows user SID.");
   return matches[0]!;
 }
+
+export function parseWindowsTaskNames(source: string): string[] {
+  const rows = source.split(/\r?\n/u).map((line) => line.trim()).filter(Boolean);
+  const names = rows.map((line) => {
+    const match = line.match(/^"((?:[^"]|"")*)"(?:,|$)/u);
+    if (!match) throw new Error("Windows task enumeration is malformed.");
+    const name = match[1].replace(/""/gu, '"');
+    if (!name.startsWith("\\")) throw new Error("Windows task enumeration is malformed.");
+    return name;
+  });
+  if (new Set(names.map((name) => name.toLocaleLowerCase())).size !== names.length) throw new Error("Windows task enumeration is ambiguous.");
+  return names;
+}
+
 
 function assertPlatform(expected: NodeJS.Platform, target: ServiceTarget): void {
   if (process.platform !== expected) {
