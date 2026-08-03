@@ -52,6 +52,10 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
   const entrypoint = windowsAbsolute(input.entrypoint, "Chat2Codex entrypoint");
   const envFile = windowsAbsolute(input.envFile, "Chat2Codex env file");
   const logFile = windowsAbsolute(input.logFile, "Chat2Codex log file");
+  const logExtension = path.win32.extname(logFile) || ".log";
+  const logName = path.win32.parse(logFile).name;
+  const launcherStdout = path.win32.join(path.win32.dirname(logFile), `${logName}.launcher.stdout${logExtension}`);
+  const launcherStderr = path.win32.join(path.win32.dirname(logFile), `${logName}.launcher.stderr${logExtension}`);
   const workingDirectory = windowsAbsolute(input.workingDirectory, "Chat2Codex working directory");
   boundedText(input.pathEnv, "Windows service PATH", 32_768);
   return [
@@ -61,9 +65,11 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
     "$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'",
     "$env:NODE_ENV = 'production'",
     `$env:PATH = ${psQuote(input.pathEnv)}`,
+    `$launcherStdout = ${psQuote(launcherStdout)}`,
+    `$launcherStderr = ${psQuote(launcherStderr)}`,
     `[IO.Directory]::CreateDirectory(${psQuote(path.win32.dirname(logFile))}) | Out-Null`,
     `Set-Location -LiteralPath ${psQuote(workingDirectory)}`,
-    `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} start *>> ${psQuote(logFile)}`,
+    `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} start 1>> $launcherStdout 2>> $launcherStderr`,
     "exit $LASTEXITCODE",
     "",
   ].join("\r\n");

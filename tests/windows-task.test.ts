@@ -52,8 +52,11 @@ describe("Windows launcher rendering", () => {
     expect(source).toContain("[IO.Directory]::CreateDirectory('C:\\Users\\O''Brien\\.chat2codex\\.data\\logs') | Out-Null");
     expect(source).toContain("Set-Location -LiteralPath 'C:\\Users\\O''Brien\\.chat2codex'");
     expect(source).toContain("& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\O''Brien\\AppData");
-    expect(source).toContain("\\dist\\index.js' start *>>");
-    expect(source).toContain("*>> 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.log'");
+    expect(source).toContain("$launcherStdout = 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.launcher.stdout.log'");
+    expect(source).toContain("$launcherStderr = 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.launcher.stderr.log'");
+    expect(source).toContain("\\dist\\index.js' start 1>> $launcherStdout 2>> $launcherStderr");
+    expect(source).not.toContain("*>> 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.log'");
+    expect(source).toContain("$env:CHAT2CODEX_LOG_FILE = 'C:\\Users\\O''Brien\\.chat2codex\\.data\\logs\\service.log'");
     expect(source).not.toContain("Invoke-Expression");
   });
 
