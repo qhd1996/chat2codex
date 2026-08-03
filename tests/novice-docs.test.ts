@@ -21,7 +21,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(matrix).toContain("tests/novice-package-matrix.test.ts");
     expect(matrix).toContain(`path.join(os.tmpdir(), ".novice-matrix-" + process.pid)`);
     expect(matrix).not.toContain(`path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid)`);
-    for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
+    for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-standard-user-lifecycle.ps1", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
     for (const value of ["Upload novice repetition evidence", ".tmp/novice-repository-30.json", "if: always()"]) expect(workflow).toContain(value);
     expect(workflow).not.toContain("Select-Object -Single");
     expect(workflow).toContain("Select-Object -First 1");
@@ -41,6 +41,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic"]);
     expect(JSON.stringify(nativeOnly)).not.toContain("Run thirty repetitions");
     expect(JSON.stringify(nativeOnly)).not.toContain("Pack reviewed candidate");
+    expect(nativeOnly?.steps?.find((step: any) => step.name === "Run native temporary lifecycle diagnostic")?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
     expect(parsed?.on?.workflow_dispatch?.inputs?.gate?.options).toEqual(["full", "clean-package"]);
     expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("inputs.gate == 'clean-package'");
     expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("contains(github.event.head_commit.message, '[clean-package-only]')");
@@ -54,6 +55,10 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeStep?.run).toContain("::error::");
     expect(nativeStep?.run).toContain("native_lifecycle_diagnostic_missing");
     expect(nativeStep?.env?.C2C_NATIVE_LIFECYCLE_REPORT).toBe(".tmp/native-lifecycle-status.json");
+    expect(nativeStep?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
+    const standardUserScript = await readFile(path.join(root, "scripts", "novice-standard-user-lifecycle.ps1"), "utf8");
+    for (const value of ["New-LocalUser", "ProcessStartInfo", ".UserName", "novice-native-lifecycle-built.mjs", "Remove-LocalUser", "residualUsers", "residualProcesses", "ownedRootExists"]) expect(standardUserScript).toContain(value);
+    expect(standardUserScript).not.toContain("-Timeout");
     const nativeUpload = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload native lifecycle evidence");
     expect(nativeUpload?.if).toBe("always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");
     expect(nativeUpload?.with?.path).toBe(".tmp/native-lifecycle-status.json");
@@ -153,7 +158,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(buildIndex).toBeLessThan(fastIndex);
     expect(repositorySteps[buildIndex]?.run).toBe("bun run build");
     const nativeLifecycleRun = repositorySteps.find((step: any) => step.name === "Run native temporary lifecycle gate")?.run;
-    expect(nativeLifecycleRun).toContain("bun scripts/novice-native-lifecycle-probe.mjs");
+    expect(nativeLifecycleRun).toContain("scripts/novice-standard-user-lifecycle.ps1");
     expect(nativeLifecycleRun).toContain("NATIVE_LIFECYCLE_FAIL");
     expect(nativeLifecycleRun).toContain("exit $exitCode");
   });

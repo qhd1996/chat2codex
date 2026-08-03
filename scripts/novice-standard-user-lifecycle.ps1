@@ -1,0 +1,81 @@
+param([Parameter(Mandatory=$true)][string]$NodeBin,[Parameter(Mandatory=$true)][string]$ReportPath)
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+$identity = $env:GITHUB_SHA
+if ($identity -notmatch '^[a-f0-9]{40}$') { $identity = 'local' + ([Guid]::NewGuid().ToString('N')) }
+$userName = 'C2CN' + $identity.Substring(0,8)
+$ownedRoot = Join-Path 'C:\Windows\Temp' ('C2C-Native-' + $identity.Substring(0,8))
+$profilePath = Join-Path 'C:\Users' $userName
+$childReport = Join-Path $ownedRoot 'native-lifecycle-status.json'
+$created = $false
+$failure = $null
+$stage = 'preflight'
+$childExit = -1
+$stdout = ''
+$stderr = ''
+$value = $null
+function New-Password([string]$source) {
+  $bytes = [Security.Cryptography.SHA256]::Create().ComputeHash([Text.Encoding]::UTF8.GetBytes($source + [Guid]::NewGuid().ToString('N')))
+  return 'Aa1!' + [Convert]::ToBase64String($bytes).Replace('+','A').Replace('/','B').Replace('=','C')
+}
+function Start-AsUser([string]$file,[string]$arguments,[hashtable]$environment) {
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = $file
+  $info.Arguments = $arguments
+  $info.UserName = $userName
+  $info.Domain = $env:COMPUTERNAME
+  $info.Password = $secure
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.LoadUserProfile = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  foreach($item in $environment.GetEnumerator()) { $info.EnvironmentVariables[$item.Key] = [string]$item.Value }
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $info
+  if (-not $process.Start()) { throw 'Standard-user process did not start.' }
+  $out = $process.StandardOutput.ReadToEnd()
+  $err = $process.StandardError.ReadToEnd()
+  if (-not $process.WaitForExit(15000)) { $process.Kill(); $process.WaitForExit(); throw 'Standard-user process exceeded the fixed diagnostic bound.' }
+  return [ordered]@{ ExitCode=$process.ExitCode; Stdout=$out; Stderr=$err }
+}
+if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Exact diagnostic user already exists.' }
+if (Test-Path -LiteralPath $ownedRoot) { throw 'Exact diagnostic root already exists.' }
+try {
+  $stage = 'user_create'
+  $plain = New-Password $identity
+  $secure = ConvertTo-SecureString $plain -AsPlainText -Force
+  New-LocalUser -Name $userName -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
+  $created = $true
+  $stage = 'root_create'
+  $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
+  $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{}
+  if ($make.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $ownedRoot -PathType Container)) { throw 'Standard-user root creation failed.' }
+  $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
+  $stage = 'owner_check'
+  $createdUser = Get-LocalUser -Name $userName
+  if ($owner.Value -ne $createdUser.SID.Value) { throw 'Standard-user root owner differs.' }
+  $environment = @{ TEMP=$ownedRoot; TMP=$ownedRoot; USERPROFILE=$profilePath; HOME=$profilePath; C2C_NATIVE_LIFECYCLE_REPORT=$childReport }
+  $script = Join-Path $PSScriptRoot 'novice-native-lifecycle-built.mjs'
+  $stage = 'process_start'
+  $run = Start-AsUser $NodeBin ('"' + $script + '"') $environment
+  $childExit = $run.ExitCode
+  $stdout = $run.Stdout
+  $stderr = $run.Stderr
+  $stage = 'report_read'
+  if (-not (Test-Path -LiteralPath $childReport -PathType Leaf)) { throw 'Standard-user lifecycle report is missing.' }
+  $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json
+  if ($childExit -ne 0 -or $value.verdict -ne 'pass') { $failure = $value.failure }
+} catch { if (-not $failure) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} } }
+finally {
+  if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $profilePath) { Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue }
+  if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  $residualUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName).Count
+  $residualProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine -like ('*C2C-Native-' + $identity.Substring(0,8) + '*') }).Count
+  $ownedRootExists = Test-Path -LiteralPath $ownedRoot
+  $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and$childExit-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists;residualUsers=$residualUsers;residualProcesses=$residualProcesses;ownedRootExists=$ownedRootExists}}
+  [IO.File]::WriteAllText($ReportPath,(($report|ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
+}
+$stdout | Write-Host
+if ($failure) { Write-Host ('NATIVE_LIFECYCLE_FAIL ' + ($report|ConvertTo-Json -Compress -Depth 8)); exit 1 }

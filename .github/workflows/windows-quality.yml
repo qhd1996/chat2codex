@@ -57,7 +57,7 @@ jobs:
         env:
           C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
         run: |
-          $output = @(& bun scripts/novice-native-lifecycle-probe.mjs 2>&1)
+          $output = @(& pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin (Get-Command node).Source -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT 2>&1)
           $exitCode = $LASTEXITCODE
           $output | ForEach-Object { Write-Host ([string]$_) }
           if ($exitCode -ne 0) {
@@ -172,9 +172,10 @@ jobs:
       - name: Build candidate
         run: bun run build
       - name: Run native temporary lifecycle diagnostic
+        shell: pwsh
         env:
           C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
-        run: bun scripts/novice-native-lifecycle-probe.mjs
+        run: pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin (Get-Command node).Source -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT
       - name: Upload native lifecycle diagnostic
         if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
