@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomBytes as cryptoRandomBytes } from "node:crypto";
-import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
@@ -87,6 +87,7 @@ export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> 
 async function ensureCanonicalRoot(candidate: string): Promise<string> {
   if (!path.isAbsolute(candidate)) throw new Error("Gateway key root must be absolute.");
   const resolved = path.resolve(candidate);
+  await assertNoExplicitReparseAncestor(resolved);
   await mkdir(resolved, { recursive: true, mode: 0o700 });
   const info = await lstat(resolved);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Gateway key root must be a non-symlink directory.");
@@ -101,7 +102,24 @@ export function canonicalizeWindowsGatewayKeyRoot(
 ): string {
   if (platform !== "win32" && !samePath(canonical, requested, platform))
     throw new Error("Gateway key root must not traverse a symbolic link.");
-  return canonical;
+  return platform === "win32" ? requested : canonical;
+}
+
+async function assertNoExplicitReparseAncestor(candidate: string): Promise<void> {
+  const root = path.parse(candidate).root;
+  const components = path.relative(root, candidate).split(path.sep).filter(Boolean);
+  let current = root;
+  for (const component of components) {
+    current = path.join(current, component);
+    const linkInfo = await lstat(current).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+    if (!linkInfo) break;
+    if (linkInfo.isSymbolicLink()) throw new Error("Gateway key root must not traverse a symbolic link or reparse point.");
+    if (process.platform === "win32") {
+      const followed = await stat(current);
+      if (linkInfo.dev !== followed.dev || linkInfo.ino !== followed.ino)
+        throw new Error("Gateway key root must not traverse a symbolic link or reparse point.");
+    }
+  }
 }
 
 async function readKey(filePath: string): Promise<string> {

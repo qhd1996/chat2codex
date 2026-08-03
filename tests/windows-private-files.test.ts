@@ -8,7 +8,19 @@ import { canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKey
 
 describe("Windows Gateway private files", () => {
   test("accepts a Windows temp alias when it resolves to the requested key root", () => {
-    expect(canonicalizeWindowsGatewayKeyRoot("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys", "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys", "win32")).toBe("C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys");
+    expect(canonicalizeWindowsGatewayKeyRoot("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys", "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys", "win32")).toBe("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys");
+  });
+
+  test("rejects a key root below an explicit directory junction", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-key-root-junction-"));
+    const target = path.join(parent, "target");
+    const alias = path.join(parent, "alias");
+    try {
+      await writeFile(path.join(parent, "placeholder"), "x");
+      await (await import("node:fs/promises")).mkdir(target);
+      await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
+      await expect(ensureWindowsGatewayKeys({ root: path.join(alias, "keys"), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/symbolic|reparse|symlink/i);
+    } finally { await rm(parent, { recursive: true, force: true }); }
   });
 
   test("creates three distinct bounded keys and verifies every ACL", async () => {
