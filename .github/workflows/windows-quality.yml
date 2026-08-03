@@ -82,21 +82,26 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish native lifecycle evidence
-        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        if: always()
         shell: pwsh
         run: |
-          $source = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw
-          $value = $source | ConvertFrom-Json
-          $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
-          if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle evidence::' + $message) }
-          else { Write-Host ('::notice title=Native lifecycle evidence::' + $message) }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ('Native lifecycle evidence:' + [Environment]::NewLine + $source.Trim())
+          $output = @(& node scripts/publish-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -eq 0) { $output | ForEach-Object { Write-Host ([string]$_) }; exit 0 }
+          $fallback = '{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
+          Write-Host ('::error title=Native lifecycle evidence::' + $fallback)
+          try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Native lifecycle evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}' }
+          exit 0
       - name: Enforce native lifecycle evidence
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         shell: pwsh
         run: |
-          $value = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw | ConvertFrom-Json
-          if ($value.verdict -ne 'pass') { exit 1 }
+          $output = @(& node scripts/enforce-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
+          $exitCode = $LASTEXITCODE
+          $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_ENFORCE *' } | Select-Object -Last 1)
+          if ($marker.Count -eq 1) { Write-Host ([string]$marker[0]); exit $exitCode }
+          Write-Host 'NATIVE_LIFECYCLE_ENFORCE {"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_enforcement/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
+          exit 1
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30
@@ -207,20 +212,25 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish native lifecycle diagnostic
-        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        if: always()
         shell: pwsh
         run: |
-          $source = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw
-          $value = $source | ConvertFrom-Json
-          $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
-          if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle diagnostic::' + $message) }
-          else { Write-Host ('::notice title=Native lifecycle diagnostic::' + $message) }
-          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ('Native lifecycle evidence:' + [Environment]::NewLine + $source.Trim())
+          $output = @(& node scripts/publish-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -eq 0) { $output | ForEach-Object { Write-Host ([string]$_) }; exit 0 }
+          $fallback = '{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
+          Write-Host ('::error title=Native lifecycle evidence::' + $fallback)
+          try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Native lifecycle evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}' }
+          exit 0
       - name: Enforce native lifecycle diagnostic
         shell: pwsh
         run: |
-          $value = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw | ConvertFrom-Json
-          if ($value.verdict -ne 'pass') { exit 1 }
+          $output = @(& node scripts/enforce-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
+          $exitCode = $LASTEXITCODE
+          $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_ENFORCE *' } | Select-Object -Last 1)
+          if ($marker.Count -eq 1) { Write-Host ([string]$marker[0]); exit $exitCode }
+          Write-Host 'NATIVE_LIFECYCLE_ENFORCE {"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_enforcement/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
+          exit 1
 
   clean-package-acceptance:
     needs: novice-acceptance

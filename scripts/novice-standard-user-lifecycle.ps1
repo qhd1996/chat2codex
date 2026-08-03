@@ -4,8 +4,9 @@ Set-StrictMode -Version Latest
 $identity = $env:GITHUB_SHA
 if ($identity -notmatch '^[a-f0-9]{40}$') { $identity = 'local' + ([Guid]::NewGuid().ToString('N')) }
 $userName = 'C2CN' + $identity.Substring(0,8)
-$ownedRoot = Join-Path 'C:\Windows\Temp' ('C2C-Native-' + $identity.Substring(0,8))
-$profilePath = Join-Path 'C:\Users' $userName
+$profileRoot = [Environment]::ExpandEnvironmentVariables((Get-ItemProperty -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList' -Name ProfilesDirectory -ErrorAction Stop).ProfilesDirectory)
+$profilePath = Join-Path $profileRoot $userName
+$ownedRoot = Join-Path $profilePath ('AppData\Local\Temp\C2C-Native-' + $identity.Substring(0,8))
 $childReport = Join-Path $ownedRoot 'native-lifecycle-status.json'
 $created = $false
 $failure = $null
@@ -42,6 +43,7 @@ function Start-AsUser([string]$file,[string]$arguments,[hashtable]$environment) 
 try {
   $stage = 'preflight'
   if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Exact diagnostic user already exists.' }
+  if (Test-Path -LiteralPath $profilePath) { throw 'Exact diagnostic profile already exists.' }
   if (Test-Path -LiteralPath $ownedRoot) { throw 'Exact diagnostic root already exists.' }
   $stage = 'user_create'
   $plain = New-Password $identity
@@ -50,8 +52,12 @@ try {
   $created = $true
   $stage = 'root_create'
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
-  $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{}
-  if ($make.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $ownedRoot -PathType Container)) { throw 'Standard-user root creation failed.' }
+  $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{ USERPROFILE=$profilePath; HOME=$profilePath }
+  if ($make.ExitCode -ne 0) {
+    $failure = [ordered]@{stage='standard_user_wrapper/root_create';exceptionType='ProcessFailure';code=('exit_' + $make.ExitCode);errno=$null;hResult=$null}
+    throw 'Standard-user root creation failed.'
+  }
+  if (-not (Test-Path -LiteralPath $ownedRoot -PathType Container)) { throw 'Standard-user root creation failed.' }
   $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   $stage = 'owner_check'
   $createdUser = Get-LocalUser -Name $userName
@@ -71,12 +77,13 @@ try {
 finally {
   $cleanupFailure = $null
   try { if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction Stop } } catch { $cleanupFailure = 'user_cleanup' }
-  if (Test-Path -LiteralPath $profilePath) { Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue }
+  try { if ($created -and (Test-Path -LiteralPath $profilePath)) { Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction Stop } } catch { if (-not $cleanupFailure) { $cleanupFailure = 'profile_cleanup' } }
   if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction SilentlyContinue }
   try { $residualUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName).Count } catch { $residualUsers = -1; if (-not $cleanupFailure) { $cleanupFailure = 'user_query' } }
   try { $residualProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine -like ('*C2C-Native-' + $identity.Substring(0,8) + '*') }).Count } catch { $residualProcesses = -1; if (-not $cleanupFailure) { $cleanupFailure = 'process_query' } }
+  $profileExists = Test-Path -LiteralPath $profilePath
   $ownedRootExists = Test-Path -LiteralPath $ownedRoot
-  $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and-not$cleanupFailure-and$childExit-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=-not$cleanupFailure-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists;failure=$cleanupFailure;residualUsers=$residualUsers;residualProcesses=$residualProcesses;ownedRootExists=$ownedRootExists}}
+  $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and-not$cleanupFailure-and$childExit-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=-not$cleanupFailure-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$profileExists-and-not$ownedRootExists;failure=$cleanupFailure;residualUsers=$residualUsers;residualProcesses=$residualProcesses;profileExists=$profileExists;ownedRootExists=$ownedRootExists}}
   [IO.Directory]::CreateDirectory((Split-Path $ReportPath -Parent)) | Out-Null
   [IO.File]::WriteAllText($ReportPath,(($report|ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 }
