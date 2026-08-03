@@ -171,7 +171,7 @@ function windowsLifecycleIo(input: WindowsServiceInstallInput, home: string) {
     readText: async (file) => await readFile(file, "utf8").catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error)),
     writeTextAtomic: async (file, content) => { await mkdir(path.dirname(file), { recursive: true }); await writeFile(file, content); },
     removeFile: async (file) => { await rm(file, { force: true }); },
-    assertOwnedPath: async () => undefined, protectPrivateFile: async () => undefined, stopWriters: async () => 0,
+    assertOwnedPath: async () => undefined, protectPrivateFile: async () => undefined, stopWriters: async () => 0, countWriters: async () => 0, restartTask: async () => undefined,
     taskExists: async (taskPath) => taskXml.has(taskPath),
     ensureGatewayKeys: async () => {
       const existing = await Promise.all(Object.values(keyPaths).map(async (file) => await stat(file).then(() => true).catch(() => false)));

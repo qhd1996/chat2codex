@@ -25,6 +25,8 @@ export interface WindowsServiceIo {
   assertOwnedPath(filePath: string): Promise<void>;
   protectPrivateFile(filePath: string): Promise<void>;
   stopWriters(entrypoint: string): Promise<number>;
+  countWriters(entrypoint: string): Promise<number>;
+  restartTask(taskPath: string, entrypoint: string): Promise<void>;
   taskExists(taskPath: string): Promise<boolean>;
   ensureGatewayKeys(): Promise<{ created: string[]; preserved: string[]; paths: Record<GatewayKeyRole, string> }>;
   runFile(command: string, args: string[]): Promise<string>;
@@ -55,7 +57,10 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
       throw new Error("Prior Windows task launcher differs from the installation manifest; ownership is uncertain.");
     }
   }
-  if (priorManifest) await io.stopWriters(priorManifest.entrypoint);
+  const priorWriterCount = priorManifest ? await io.countWriters(priorManifest.entrypoint) : 0;
+  if (priorWriterCount > 1) throw new Error("Prior Windows writer state is ambiguous.");
+  if (priorManifest && priorWriterCount === 1 && !priorTaskExisted) throw new Error("An orphaned prior Windows writer exists without a managed task for recovery.");
+  if (priorManifest && priorWriterCount === 1) await io.stopWriters(priorManifest.entrypoint);
   let createdKeys: string[] = [];
   let registrationAttempted = false;
   try {
@@ -131,6 +136,9 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
           if (!source.trim() || taskLauncherPath(source).toLocaleLowerCase() !== priorManifest.launcherPath.toLocaleLowerCase()) throw new Error("restored task verification failed");
         }).catch((failure) => rollbackFailures.push(message(failure)));
       }
+    }
+    if (priorManifest && priorWriterCount === 1 && priorTaskExisted && rollbackFailures.length === 0) {
+      await io.restartTask(taskPath, priorManifest.entrypoint).catch((failure) => rollbackFailures.push(`Windows prior writer restart failed: ${message(failure)}`));
     }
     if (rollbackFailures.length > 0) throw new Error(`Windows installation failed and rollback is incomplete: ${rollbackFailures.join("; ")}`, { cause: error });
     throw error;

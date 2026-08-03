@@ -141,14 +141,28 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.events[stopped]).toEqual(["stop-writers", manifest.entrypoint]);
   });
 
-  test("stops an exact orphaned old writer even when the managed task is already absent", async () => {
+  test("rejects an orphaned old writer before mutation when no managed task can restart it", async () => {
     const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
     const manifest = priorManifestFor("old launcher", priorTask);
     const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest) });
     fixture.setTaskExists(false);
     fixture.setWriters(1);
-    await installWindowsUserTask(input, fixture.io);
-    expect(fixture.events).toContainEqual(["stop-writers", manifest.entrypoint]);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/orphan|writer|task/i);
+    expect(fixture.events.some((event) => event[0] === "stop-writers" || event[0] === "write")).toBe(false);
+  });
+
+  test("restores and restarts the exact prior writer when upgrade mutation fails", async () => {
+    const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
+    const manifest = priorManifestFor("old launcher", priorTask);
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest) });
+    fixture.setQueryXml(priorTask);
+    fixture.setWriters(1);
+    fixture.failWriteOnce(input.envFile);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/write failed/i);
+    expect(fixture.events).toContainEqual(["restart-task", "\\Chat2Codex\\Chat2Codex", manifest.entrypoint]);
+    expect(fixture.writerCount()).toBe(1);
+    expect(fixture.files.get(input.launcherPath)).toBe("old launcher");
+    expect(fixture.files.get(input.taskXmlPath)).toBe(priorTask);
   });
 
   test("refuses an unmanaged same-name task and a drifted managed task before mutation", async () => {
@@ -314,6 +328,7 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
   let keyMode = initialKeyMode;
   let queryXml: string | undefined;
   const removeFailures = new Set<string>();
+  const writeFailures = new Set<string>();
   const rejectedOwnedPaths = new Set<string>();
   let writers = 0;
   let stopWritersFails = false;
@@ -324,11 +339,13 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
   const io: WindowsServiceIo = {
     currentUserSid: async () => "S-1-5-21-1-2-3-1001", now: () => new Date("2026-08-02T14:00:00.000Z"), packageVersion: async () => "0.8.0-desktop.2",
     readText: async (file) => { events.push(["read", file]); return files.get(file) ?? null; },
-    writeTextAtomic: async (file, content) => { events.push(["write", file]); files.set(file, content); },
+    writeTextAtomic: async (file, content) => { events.push(["write", file]); if (writeFailures.delete(file)) throw new Error("write failed"); files.set(file, content); },
     removeFile: async (file) => { events.push(["remove", file]); if (removeFailures.delete(file)) throw new Error("remove failed"); files.delete(file); },
     assertOwnedPath: async (file) => { events.push(["assert-owned", file]); if (rejectedOwnedPaths.has(file)) throw new Error("owned path traverses a reparse point"); },
     protectPrivateFile: async (file) => { events.push(["protect", file]); },
     stopWriters: async (entrypoint) => { events.push(["stop-writers", entrypoint]); if (stopWritersFails) throw new Error("writer stop failed"); const stopped = writers; writers = 0; return stopped; },
+    countWriters: async (entrypoint) => { events.push(["count-writers", entrypoint]); return writers; },
+    restartTask: async (taskPath, entrypoint) => { events.push(["restart-task", taskPath, entrypoint]); if (!taskExists || writers !== 0) throw new Error("writer restart failed"); writers = 1; },
     taskExists: async (taskPath) => { events.push(["task-exists", taskPath]); if (taskQueryFails) throw new Error("task state uncertain"); return taskExists; },
     ensureGatewayKeys: async () => {
       if (keyMode === "created") for (const file of Object.values(keyPaths)) files.set(file, "generated-key");
@@ -336,7 +353,7 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
     },
     runFile: async (command, args) => { events.push(["run", command, args]); const error = failRun(args); if (error) throw error; if (args[0] === "/Create") taskExists = true; if (args[0] === "/Delete" && !keepDeletedTask) taskExists = false; return args[0] === "/Query" ? queryXml ?? files.get(input.taskXmlPath) ?? "" : ""; },
   };
-  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; }, failRemoveOnce(file: string) { removeFailures.add(file); }, setWriters(value: number) { writers = value; }, failStopWriters() { stopWritersFails = true; }, setTaskExists(value: boolean) { taskExists = value; }, failTaskQuery() { taskQueryFails = true; }, keepTaskAfterDelete() { keepDeletedTask = true; }, rejectOwnedPath(file: string) { rejectedOwnedPaths.add(file); } };
+  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; }, failRemoveOnce(file: string) { removeFailures.add(file); }, failWriteOnce(file: string) { writeFailures.add(file); }, setWriters(value: number) { writers = value; }, writerCount() { return writers; }, failStopWriters() { stopWritersFails = true; }, setTaskExists(value: boolean) { taskExists = value; }, failTaskQuery() { taskQueryFails = true; }, keepTaskAfterDelete() { keepDeletedTask = true; }, rejectOwnedPath(file: string) { rejectedOwnedPaths.add(file); } };
 }
 
 function priorManifest() {

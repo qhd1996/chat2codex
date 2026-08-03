@@ -443,6 +443,13 @@ function run(
 }
 
 function windowsServiceIo(home: string): WindowsServiceIo {
+  const processRows = async () => {
+    const script = "Get-CimInstance Win32_Process | ForEach-Object {[pscustomobject]@{ProcessId=[int]$_.ProcessId;CreationDate=$_.CreationDate.ToUniversalTime().ToString('o');CommandLine=[string]$_.CommandLine}} | ConvertTo-Json -Compress";
+    const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
+    const raw = JSON.parse(stdout || "[]");
+    return Array.isArray(raw) ? raw : [raw];
+  };
+  const countWriters = async (entrypoint: string) => (await processRows()).filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid)).length;
   return {
     currentUserSid: async () => {
       const { stdout } = await execFileAsync("whoami.exe", ["/user", "/fo", "csv", "/nh"],
@@ -463,18 +470,27 @@ function windowsServiceIo(home: string): WindowsServiceIo {
     assertOwnedPath: (filePath) => assertCanonicalWindowsOwnedPath(home, filePath),
     protectPrivateFile: async (filePath) => { await applyOwnerOnlyWindowsAcl(filePath); const report = await inspectWindowsTokenAcl(filePath); requireOwnerOnlyWindowsTokenAcl(report); },
     stopWriters: async (entrypoint) => {
-      const script = "Get-CimInstance Win32_Process | ForEach-Object {[pscustomobject]@{ProcessId=[int]$_.ProcessId;CreationDate=$_.CreationDate.ToUniversalTime().ToString('o');CommandLine=[string]$_.CommandLine}} | ConvertTo-Json -Compress";
-      const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-      const raw = JSON.parse(stdout || "[]"); const rows = Array.isArray(raw) ? raw : [raw];
+      const rows = await processRows();
       const writers = rows.filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid));
       for (const writer of writers) {
         const stopScript = "$p=Get-CimInstance Win32_Process -Filter ('ProcessId=' + $env:C2C_PID); if(!$p){exit 0}; if($p.CreationDate.ToUniversalTime().ToString('o') -ne $env:C2C_CREATED){throw 'writer identity changed'}; Stop-Process -Id ([int]$env:C2C_PID) -Force -ErrorAction Stop";
         await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", stopScript], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true, env: { ...process.env, C2C_PID: String(writer.ProcessId), C2C_CREATED: String(writer.CreationDate) } });
       }
-      const { stdout: remainingSource } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 10_000, maxBuffer: 4 * 1024 * 1024, windowsHide: true });
-      const remainingRaw = JSON.parse(remainingSource || "[]"); const remaining = (Array.isArray(remainingRaw) ? remainingRaw : [remainingRaw]).filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid));
+      const remaining = (await processRows()).filter((row) => isWindowsChat2CodexWriter(row, entrypoint, process.pid));
       if (remaining.length > 0) throw new Error("Windows writer remained after stop.");
       return writers.length;
+    },
+    countWriters,
+    restartTask: async (taskPath, entrypoint) => {
+      const { stdout } = await execFileAsync("schtasks.exe", ["/Run", "/TN", taskPath], { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const count = await countWriters(entrypoint);
+        if (count === 1) return;
+        if (count > 1) throw new Error("Windows prior writer restart created multiple writers.");
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`Windows prior writer did not restart: ${stdout.trim()}`);
     },
     taskExists: async (taskPath) => {
       const result = spawnSync("schtasks.exe", ["/Query", "/FO", "CSV", "/NH"], { encoding: "utf8", windowsHide: true });
