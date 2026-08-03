@@ -531,3 +531,25 @@ or cross-user boundary was weakened. Routing stayed gpt-5.6-sol / ultra. Remaini
 blockers are the hosted Windows conclusion, production deployment, real Codex Home
 Hook/MCP trust, Desktop restart and seven installed primitives, real Weixin E2E,
 and qualifying second-Windows DIST-003. Goal remains active.
+
+### 22:06–22:20 final stop-loss snapshot
+
+- Task 12 Phase B ultimately passed under accepted UAC PID 50252. Result SHA-256
+  DAA3ACB9...0F49B records three key hashes and nine direct denial facts: read,
+  delete, and replacement denied for each key. The temporary user and profile were
+  absent afterward. Phase C then preserved state, rotated all three keys, performed
+  final uninstall, kept production hashes unchanged, and proved zero task/root/
+  process residual.
+- Candidate .17 / d18936e froze 133 files, 397,496 bytes, SHA-256
+  D2BE7C3BA6CE3CD6373E75664F5E8CDF7391E045425E0AC4E5F662D21E74EF43;
+  three independent archives were byte-identical. Full stable was 924 pass, 8
+  documented platform skips, 0 fail.
+- Runs 30821095614, 30821666226, and 30822112628 still failed only in the hosted
+  native lifecycle step. The last run uploaded bounded evidence artifact
+  8859284678 (312 bytes); artifact 8859136099 from the prior run is also retained.
+  This thread cannot authenticate artifact download, so the inner hosted-only field
+  values remain unknown. Local exact Bun 1.3.9 and 1.3.14 both pass the same step.
+- Remote reruns are stopped. No further full run is allowed until the retained
+  artifact is read or an equivalent local RED is obtained. Production dry-run for
+  .17 passed with script SHA-256 35FB994B...FCA9, but production write is withheld
+  while this CI blocker remains open.
