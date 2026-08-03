@@ -156,7 +156,7 @@ jobs:
             $npmRoot = Join-Path $env:RUNNER_TEMP 'novice-codex-cli'
             npm install --ignore-scripts --no-audit --no-fund --prefix $npmRoot '@openai/codex@0.146.0'
             if ($LASTEXITCODE -ne 0) { throw 'codex_cli_install_failed' }
-            $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai/codex') -Recurse -File | Where-Object Name -Like 'codex*.exe' | Select-Object -First 1
+            $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai') -Recurse -File | Where-Object Name -EQ 'codex.exe' | Select-Object -First 1
             if (-not $codexBin) { throw 'codex_cli_binary_missing' }
             $env:Path = $codexBin.DirectoryName + ';' + $env:Path
             node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
