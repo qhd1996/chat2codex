@@ -66,9 +66,15 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).not.toContain("Join-Path 'C:\\Users'");
     expect(standardUserScript).toContain("code=('exit_' + $make.ExitCode)");
     expect(standardUserScript).toContain("if (Test-Path -LiteralPath $profilePath) { throw 'Exact diagnostic profile already exists.' }");
-    expect(standardUserScript).toContain("if ($created -and (Test-Path -LiteralPath $profilePath))");
-    expect(standardUserScript).not.toContain("if (Test-Path -LiteralPath $profilePath) { Remove-Item");
+    expect(standardUserScript).toContain("if ($created -and $createdSid)");
     expect(standardUserScript).not.toContain("Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue");
+    expect(standardUserScript).toContain("$profileDeadline = [DateTime]::UtcNow.AddSeconds(10)");
+    expect(standardUserScript).toContain("Get-CimInstance Win32_UserProfile");
+    expect(standardUserScript).toContain("$_.SID -eq $createdSid");
+    expect(standardUserScript).toContain("-not $profile[0].Loaded");
+    expect(standardUserScript).toContain("Remove-CimInstance -ErrorAction Stop");
+    expect(standardUserScript).toContain("if ($report.verdict -ne 'pass')");
+    expect(standardUserScript).not.toContain("if ($failure) { Write-Host ('NATIVE_LIFECYCLE_FAIL '");
     expect(standardUserScript).not.toContain("-Timeout");
     const nativeUpload = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload native lifecycle evidence");
     expect(nativeUpload?.if).toBe("always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");

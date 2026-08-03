@@ -9,6 +9,7 @@ $profilePath = Join-Path $profileRoot $userName
 $ownedRoot = Join-Path $profilePath ('AppData\Local\Temp\C2C-Native-' + $identity.Substring(0,8))
 $childReport = Join-Path $ownedRoot 'native-lifecycle-status.json'
 $created = $false
+$createdSid = $null
 $failure = $null
 $stage = 'preflight'
 $childExit = -1
@@ -50,6 +51,7 @@ try {
   $secure = ConvertTo-SecureString $plain -AsPlainText -Force
   New-LocalUser -Name $userName -Password $secure -AccountNeverExpires -PasswordNeverExpires | Out-Null
   $created = $true
+  $createdSid = (Get-LocalUser -Name $userName -ErrorAction Stop).SID.Value
   $stage = 'root_create'
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
   $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{ USERPROFILE=$profilePath; HOME=$profilePath }
@@ -60,8 +62,7 @@ try {
   if (-not (Test-Path -LiteralPath $ownedRoot -PathType Container)) { throw 'Standard-user root creation failed.' }
   $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   $stage = 'owner_check'
-  $createdUser = Get-LocalUser -Name $userName
-  if ($owner.Value -ne $createdUser.SID.Value) { throw 'Standard-user root owner differs.' }
+  if ($owner.Value -ne $createdSid) { throw 'Standard-user root owner differs.' }
   $environment = @{ TEMP=$ownedRoot; TMP=$ownedRoot; USERPROFILE=$profilePath; HOME=$profilePath; C2C_NATIVE_LIFECYCLE_REPORT=$childReport }
   $script = Join-Path $PSScriptRoot 'novice-native-lifecycle-built.mjs'
   $stage = 'process_start'
@@ -77,7 +78,20 @@ try {
 finally {
   $cleanupFailure = $null
   try { if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction Stop } } catch { $cleanupFailure = 'user_cleanup' }
-  try { if ($created -and (Test-Path -LiteralPath $profilePath)) { Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction Stop } } catch { if (-not $cleanupFailure) { $cleanupFailure = 'profile_cleanup' } }
+  try {
+    if ($created -and $createdSid) {
+      $profileDeadline = [DateTime]::UtcNow.AddSeconds(10)
+      do {
+        $profile = @(Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $createdSid } | Select-Object -First 1)
+        if ($profile.Count -eq 0) { break }
+        if (-not $profile[0].Loaded) { $profile[0] | Remove-CimInstance -ErrorAction Stop; break }
+        Start-Sleep -Milliseconds 50
+      } while ([DateTime]::UtcNow -lt $profileDeadline)
+      $remainingProfile = @(Get-CimInstance Win32_UserProfile -ErrorAction Stop | Where-Object { $_.SID -eq $createdSid })
+      if ($remainingProfile.Count -ne 0) { throw 'Exact diagnostic profile remained loaded.' }
+      if (Test-Path -LiteralPath $profilePath) { Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction Stop }
+    }
+  } catch { if (-not $cleanupFailure) { $cleanupFailure = 'profile_cleanup' } }
   if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction SilentlyContinue }
   try { $residualUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName).Count } catch { $residualUsers = -1; if (-not $cleanupFailure) { $cleanupFailure = 'user_query' } }
   try { $residualProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine -like ('*C2C-Native-' + $identity.Substring(0,8) + '*') }).Count } catch { $residualProcesses = -1; if (-not $cleanupFailure) { $cleanupFailure = 'process_query' } }
@@ -88,4 +102,4 @@ finally {
   [IO.File]::WriteAllText($ReportPath,(($report|ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 }
 $stdout | Write-Host
-if ($failure) { Write-Host ('NATIVE_LIFECYCLE_FAIL ' + ($report|ConvertTo-Json -Compress -Depth 8)); exit 1 }
+if ($report.verdict -ne 'pass') { Write-Host ('NATIVE_LIFECYCLE_FAIL ' + ($report|ConvertTo-Json -Compress -Depth 8)); exit 1 }
