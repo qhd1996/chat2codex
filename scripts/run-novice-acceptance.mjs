@@ -165,6 +165,7 @@ export function buildQualifyingNoviceEvidence(input) {
       { repetition: 1, code: "preinstall_windows_npm_spawn", fixedByCommit: "ea0bab240a13f0fa841c370f5458efddd2c4cf00" },
       { repetition: 1, code: "preinstall_archive_eol_drift", fixedByCommit: "d3c214f9fdda44f7e06f8fe1170e6076f4506f1e" },
       { repetition: 1, code: "preinstall_qualification_runtime_gaps", fixedByCommit: input.repositoryCommit },
+      { repetition: 6, code: "preinstall_restart_probe_shell_polling", fixedByCommit: "7b0d1e0f213572eaebb98d7688ea5aeced8f5195" },
     ],
     attestation: input.attestation, realUpgrade: input.realUpgrade,
   };

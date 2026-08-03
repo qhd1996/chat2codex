@@ -88,6 +88,9 @@ describe("novice archive isolation", () => {
     const value = buildQualifyingNoviceEvidence({ ...input, worker });
     expect(value).toMatchObject({ evidenceLevel: "isolated_package", verdict: "pass" });
     expect(value.repetitions).toHaveLength(30);
+    expect(value.failureHistory).toContainEqual({
+      repetition: 6, code: "preinstall_restart_probe_shell_polling", fixedByCommit: "7b0d1e0f213572eaebb98d7688ea5aeced8f5195",
+    });
     for (const change of [
       { probes: { ...worker.probes, doctor: false } },
       { scenarioIds: worker.scenarioIds.slice(1) },
