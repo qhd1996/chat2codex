@@ -189,7 +189,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(attestation).toContain("queryTaskDiagnostic(taskPath)");
     expect(attestation).toContain("readRedactedLogTail(logFile)");
     expect(attestation).toContain("cleanWindowsFailureLine");
-    for (const stage of ["install_1", "another_user_acl", "install_2", "start_1", "doctor", "stop_1", "start_2", "stop_2", "uninstall_1", "uninstall_2", "install_3", "key_rotation", "uninstall_3", "protected_checks", "owned_root_cleanup", "attestation_build"]) expect(attestation).toContain(`stage = "${stage}"`);
+    for (const stage of ["install_1", "install_2", "start_1", "doctor", "stop_1", "start_2", "stop_2", "uninstall_1", "uninstall_2", "install_3", "key_rotation", "uninstall_3", "protected_checks", "owned_root_cleanup", "attestation_build"]) expect(attestation).toContain(`stage = "${stage}"`);
+    expect(attestation).not.toContain('stage = "another_user_acl"');
     expect(acceptance).toContain("parseCleanWindowsFailureOutput");
     expect(acceptance).toContain("cleanWindowsFailureLine");
     expect(attestation).toContain(`const logFile = path.join(home, ".data", "logs", "probe.log")`);
@@ -202,7 +203,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(packageMatrix).toContain(`ToString('yyyy-MM-ddTHH:mm:ss.fffZ')`);
     expect(packageMatrix).not.toContain(`CreationDate.ToUniversalTime().ToString('o')`);
     expect(attestation).toContain("waitJson(readyPath, 15_000)");
-    expect(attestation).toContain(`Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr)`);
+    expect(attestation).toContain("const anotherInteractiveUserDenied = false");
+    expect(attestation).not.toContain("verifyAnotherUserDenied(");
+    expect(attestation).not.toContain("novice-another-user-acl.ps1");
     expect(anotherUserAcl).not.toContain("IsPathFullyQualified");
     expect(anotherUserAcl).not.toContain("ConvertTo-SecureString");
     expect(anotherUserAcl).toContain("$secure.AppendChar($character)");

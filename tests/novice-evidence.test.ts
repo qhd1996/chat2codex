@@ -84,6 +84,15 @@ describe("novice acceptance evidence", () => {
     expect(validateNoviceEvidence(value, validationOptions)).toEqual({ qualifying: false, repetitions: 30, scenarios: scenarioIds.length, verdict: "repository_pass" });
   });
 
+  test("does not let the P1 same-machine other-user diagnostic decide personal P0", () => {
+    const value = validComplete();
+    value.attestation.anotherInteractiveUserDenied = false;
+    const hashInput = { ...value.attestation };
+    delete hashInput.attestationHash;
+    value.attestation.attestationHash = new Bun.CryptoHasher("sha256").update(JSON.stringify(hashInput)).digest("hex");
+    expect(() => validateNoviceEvidence(value, validationOptions)).not.toThrow();
+  });
+
   for (const [name, mutate, pattern] of [
     ["repository-only promotion", (v: any) => { v.evidenceLevel = "repository"; }, /isolated.package|qualifying/i],
     ["only 29 repetitions", (v: any) => { v.repetitions.pop(); }, /30|repetition/i],

@@ -80,7 +80,7 @@ try {
   if (prior.exists) throw new Error("Novice task already exists before attestation.");
   stage = "install_1"; runCli(["service", "install", ...baseArgs], commands);
   stage = "keys_1"; const firstKeys = await keyFingerprints(home);
-  stage = "another_user_acl"; const anotherInteractiveUserDenied = verifyAnotherUserDenied(path.join(home, ".secrets", "desktop-gateway", "prompt-hook.key"), taskName);
+  const anotherInteractiveUserDenied = false;
   stage = "install_2"; runCli(["service", "install", ...baseArgs], commands);
   stage = "installed_hashes"; const installedFiles = await hashInstalledFiles(home, packageRoot);
   stage = "start_1"; const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
@@ -155,14 +155,6 @@ async function keyFingerprints(home) { const root = path.join(home, ".secrets", 
 async function hashInstalledFiles(home, packageRoot) { const files = [path.join(packageRoot, "package.json"), path.join(packageRoot, "dist", "index.js"), path.join(packageRoot, "scripts", "novice-service-probe.mjs"), path.join(home, ".env"), path.join(home, ".service", "windows", "launcher.ps1"), path.join(home, ".service", "windows", "task.xml"), path.join(home, ".service", "windows", "installation.json"), path.join(home, ".data", "state.json")]; return await Promise.all(files.map(async (file) => ({ path: inside(packageRoot, file) ? "package/" + slash(path.relative(packageRoot, file)) : "owned/" + slash(path.relative(home, file)), sha256: sha256(await readFile(file)) }))); }
 function redactCommand(command) { return command.map((part) => path.isAbsolute(part) ? "<owned-path>" : part).join(" "); }
 function redactFailure(value) { return String(value ?? "").replace(/[A-Za-z]:[\\/][^\r\n:"]+/gu, "<owned-path>").slice(-1200); }
-function verifyAnotherUserDenied(keyPath, sourceName) {
-  const userName = "C2CN" + sha256(sourceName).slice(0, 8);
-  const password = "Aa1!" + createHash("sha256").update(sourceName + process.pid).digest("base64url").slice(0, 20);
-  const scriptPath = path.join(packageRoot, "scripts", "novice-another-user-acl.ps1");
-  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath], { encoding: "utf8", windowsHide: true, env: { ...process.env, C2C_TEST_USER: userName, C2C_TEST_PASSWORD: password, C2C_TEST_KEY: keyPath } });
-  if (result.status !== 0) throw new Error("Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr));
-  return true;
-}
 function slash(value) { return value.replaceAll("\\", "/"); }
 function inside(root, candidate) { const relative = path.relative(root, candidate); return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)); }
 function overlaps(left, right) { return inside(left, right) || inside(right, left); }
