@@ -42,6 +42,12 @@ test("uses successful full schtasks enumeration and fails launch or parse uncert
   expect(source).not.toContain("Schedule.Service");
 });
 
+test("treats the proper-lockfile directory lease as the Windows writer lock", async () => {
+  const source = await readFile(path.join(repositoryRoot, "src/setup/service.ts"), "utf8");
+  expect(source).toContain("lock?.isDirectory()");
+  expect(source).not.toContain("lock?.isFile()");
+});
+
 describe("Windows private-file ACL policy", () => {
   test("accepts only the current owner, SYSTEM, and Administrators", () => {
     expect(assertPrivateWindowsAcl({ ownerSid: user, currentUserSid: user, aces: [allow(user), allow(system), allow(administrators)] })).toEqual({ ownerSid: user, aceCount: 3 });

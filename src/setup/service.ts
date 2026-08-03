@@ -481,16 +481,20 @@ function windowsServiceIo(home: string): WindowsServiceIo {
       return writers.length;
     },
     countWriters,
-    restartTask: async (taskPath, entrypoint) => {
+    startAndVerifyTask: async (taskPath, entrypoint, statePath) => {
       const { stdout } = await execFileAsync("schtasks.exe", ["/Run", "/TN", taskPath], { encoding: "utf8", timeout: 30_000, maxBuffer: 1024 * 1024, windowsHide: true });
       const deadline = Date.now() + 15_000;
       while (Date.now() < deadline) {
         const count = await countWriters(entrypoint);
-        if (count === 1) return;
+        const lock = await fs.stat(statePath + ".lock").catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+        if (count === 1 && lock?.isDirectory()) {
+          const state = await fs.readFile(statePath, "utf8").then((source) => JSON.parse(source) as { schemaVersion?: unknown }).catch(() => null);
+          if (Number.isSafeInteger(state?.schemaVersion)) return;
+        }
         if (count > 1) throw new Error("Windows prior writer restart created multiple writers.");
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
-      throw new Error(`Windows prior writer did not restart: ${stdout.trim()}`);
+      throw new Error(`Windows task did not reach one healthy writer with a state lock: ${stdout.trim()}`);
     },
     taskExists: async (taskPath) => {
       const result = spawnSync("schtasks.exe", ["/Query", "/FO", "CSV", "/NH"], { encoding: "utf8", windowsHide: true });

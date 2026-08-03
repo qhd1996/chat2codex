@@ -130,7 +130,7 @@ describe("Windows service lifecycle executor", () => {
   test("stops the exact old writer before the first upgrade mutation", async () => {
     const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
     const manifest = priorManifestFor("old launcher", priorTask);
-    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest) });
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest), [input.statePath]: '{"schemaVersion":6}' });
     fixture.setQueryXml(priorTask);
     fixture.setWriters(1);
     await installWindowsUserTask(input, fixture.io);
@@ -141,10 +141,22 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.events[stopped]).toEqual(["stop-writers", manifest.entrypoint]);
   });
 
+  test("starts and verifies the replacement writer after an online upgrade succeeds", async () => {
+    const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
+    const manifest = priorManifestFor("old launcher", priorTask);
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest), [input.statePath]: '{"schemaVersion":6}' });
+    fixture.setQueryXml(priorTask);
+    fixture.setWriters(1);
+    await installWindowsUserTask(input, fixture.io);
+    expect(fixture.events).toContainEqual(["start-and-verify-task", "\\Chat2Codex\\Chat2Codex", input.entrypoint, input.statePath]);
+    expect(fixture.writerCount()).toBe(1);
+    expect(fixture.writerEntrypoint()).toBe(input.entrypoint);
+  });
+
   test("rejects an orphaned old writer before mutation when no managed task can restart it", async () => {
     const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
     const manifest = priorManifestFor("old launcher", priorTask);
-    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest) });
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest), [input.statePath]: '{"schemaVersion":6}' });
     fixture.setTaskExists(false);
     fixture.setWriters(1);
     await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/orphan|writer|task/i);
@@ -154,15 +166,32 @@ describe("Windows service lifecycle executor", () => {
   test("restores and restarts the exact prior writer when upgrade mutation fails", async () => {
     const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
     const manifest = priorManifestFor("old launcher", priorTask);
-    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest) });
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest), [input.statePath]: '{"schemaVersion":6}' });
     fixture.setQueryXml(priorTask);
     fixture.setWriters(1);
     fixture.failWriteOnce(input.envFile);
     await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/write failed/i);
-    expect(fixture.events).toContainEqual(["restart-task", "\\Chat2Codex\\Chat2Codex", manifest.entrypoint]);
+    expect(fixture.events).toContainEqual(["start-and-verify-task", "\\Chat2Codex\\Chat2Codex", manifest.entrypoint, manifest.statePath]);
     expect(fixture.writerCount()).toBe(1);
     expect(fixture.files.get(input.launcherPath)).toBe("old launcher");
     expect(fixture.files.get(input.taskXmlPath)).toBe(priorTask);
+  });
+
+  test("stops an unhealthy replacement and verifies the restored prior writer", async () => {
+    const priorTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
+    const manifest = priorManifestFor("old launcher", priorTask);
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: priorTask, [input.manifestPath]: JSON.stringify(manifest), [input.statePath]: '{"schemaVersion":6}' });
+    fixture.setQueryXml(priorTask);
+    fixture.setWriters(1);
+    fixture.failStartOnce(input.entrypoint);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/replacement writer unhealthy/i);
+    const failedStart = fixture.events.findIndex((event) => event[0] === "start-and-verify-task" && event[2] === input.entrypoint);
+    const stoppedReplacement = fixture.events.findIndex((event, index) => index > failedStart && event[0] === "stop-writers" && event[1] === input.entrypoint);
+    const restoredStart = fixture.events.findIndex((event, index) => index > stoppedReplacement && event[0] === "start-and-verify-task" && event[2] === manifest.entrypoint);
+    expect(failedStart).toBeGreaterThan(-1);
+    expect(stoppedReplacement).toBeGreaterThan(failedStart);
+    expect(restoredStart).toBeGreaterThan(stoppedReplacement);
+    expect(fixture.writerEntrypoint()).toBe(manifest.entrypoint);
   });
 
   test("refuses an unmanaged same-name task and a drifted managed task before mutation", async () => {
@@ -329,8 +358,10 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
   let queryXml: string | undefined;
   const removeFailures = new Set<string>();
   const writeFailures = new Set<string>();
+  const startFailures = new Set<string>();
   const rejectedOwnedPaths = new Set<string>();
   let writers = 0;
+  let activeWriterEntrypoint: string | undefined;
   let stopWritersFails = false;
   let taskExists = files.has(input.manifestPath);
   let taskQueryFails = false;
@@ -343,9 +374,9 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
     removeFile: async (file) => { events.push(["remove", file]); if (removeFailures.delete(file)) throw new Error("remove failed"); files.delete(file); },
     assertOwnedPath: async (file) => { events.push(["assert-owned", file]); if (rejectedOwnedPaths.has(file)) throw new Error("owned path traverses a reparse point"); },
     protectPrivateFile: async (file) => { events.push(["protect", file]); },
-    stopWriters: async (entrypoint) => { events.push(["stop-writers", entrypoint]); if (stopWritersFails) throw new Error("writer stop failed"); const stopped = writers; writers = 0; return stopped; },
-    countWriters: async (entrypoint) => { events.push(["count-writers", entrypoint]); return writers; },
-    restartTask: async (taskPath, entrypoint) => { events.push(["restart-task", taskPath, entrypoint]); if (!taskExists || writers !== 0) throw new Error("writer restart failed"); writers = 1; },
+    stopWriters: async (entrypoint) => { events.push(["stop-writers", entrypoint]); if (stopWritersFails) throw new Error("writer stop failed"); const stopped = activeWriterEntrypoint === entrypoint ? writers : 0; if (stopped) { writers = 0; activeWriterEntrypoint = undefined; } return stopped; },
+    countWriters: async (entrypoint) => { events.push(["count-writers", entrypoint]); return activeWriterEntrypoint === entrypoint ? writers : 0; },
+    startAndVerifyTask: async (taskPath, entrypoint, statePath) => { events.push(["start-and-verify-task", taskPath, entrypoint, statePath]); if (!taskExists || writers !== 0 || !files.has(statePath)) throw new Error("writer health verification failed"); writers = 1; activeWriterEntrypoint = entrypoint; if (startFailures.delete(entrypoint)) throw new Error("replacement writer unhealthy"); },
     taskExists: async (taskPath) => { events.push(["task-exists", taskPath]); if (taskQueryFails) throw new Error("task state uncertain"); return taskExists; },
     ensureGatewayKeys: async () => {
       if (keyMode === "created") for (const file of Object.values(keyPaths)) files.set(file, "generated-key");
@@ -353,7 +384,7 @@ function ioFixture(initial: Record<string, string>, failRun: (args: string[]) =>
     },
     runFile: async (command, args) => { events.push(["run", command, args]); const error = failRun(args); if (error) throw error; if (args[0] === "/Create") taskExists = true; if (args[0] === "/Delete" && !keepDeletedTask) taskExists = false; return args[0] === "/Query" ? queryXml ?? files.get(input.taskXmlPath) ?? "" : ""; },
   };
-  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; }, failRemoveOnce(file: string) { removeFailures.add(file); }, failWriteOnce(file: string) { writeFailures.add(file); }, setWriters(value: number) { writers = value; }, writerCount() { return writers; }, failStopWriters() { stopWritersFails = true; }, setTaskExists(value: boolean) { taskExists = value; }, failTaskQuery() { taskQueryFails = true; }, keepTaskAfterDelete() { keepDeletedTask = true; }, rejectOwnedPath(file: string) { rejectedOwnedPaths.add(file); } };
+  return { io, files, events, keyPaths, setKeyMode(value: "created" | "preserved") { keyMode = value; }, setQueryXml(value: string) { queryXml = value; }, failRemoveOnce(file: string) { removeFailures.add(file); }, failWriteOnce(file: string) { writeFailures.add(file); }, failStartOnce(entrypoint: string) { startFailures.add(entrypoint); }, setWriters(value: number, entrypoint = input.entrypoint) { writers = value; activeWriterEntrypoint = value ? entrypoint : undefined; }, writerCount() { return writers; }, writerEntrypoint() { return activeWriterEntrypoint; }, failStopWriters() { stopWritersFails = true; }, setTaskExists(value: boolean) { taskExists = value; }, failTaskQuery() { taskQueryFails = true; }, keepTaskAfterDelete() { keepDeletedTask = true; }, rejectOwnedPath(file: string) { rejectedOwnedPaths.add(file); } };
 }
 
 function priorManifest() {

@@ -26,7 +26,7 @@ export interface WindowsServiceIo {
   protectPrivateFile(filePath: string): Promise<void>;
   stopWriters(entrypoint: string): Promise<number>;
   countWriters(entrypoint: string): Promise<number>;
-  restartTask(taskPath: string, entrypoint: string): Promise<void>;
+  startAndVerifyTask(taskPath: string, entrypoint: string, statePath: string): Promise<void>;
   taskExists(taskPath: string): Promise<boolean>;
   ensureGatewayKeys(): Promise<{ created: string[]; preserved: string[]; paths: Record<GatewayKeyRole, string> }>;
   runFile(command: string, args: string[]): Promise<string>;
@@ -63,6 +63,7 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   if (priorManifest && priorWriterCount === 1) await io.stopWriters(priorManifest.entrypoint);
   let createdKeys: string[] = [];
   let registrationAttempted = false;
+  let replacementStartAttempted = false;
   try {
     for (const filePath of [...owned, input.statePath]) await io.assertOwnedPath(filePath);
     const keys = await io.ensureGatewayKeys();
@@ -111,9 +112,16 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
     if (!queried.trim()) throw new Error("Windows task query returned no definition.");
     const queriedLauncher = taskLauncherPath(queried);
     if (queriedLauncher.toLocaleLowerCase() !== input.launcherPath.toLocaleLowerCase()) throw new Error("Windows task query launcher differs from the installation manifest.");
+    if (priorWriterCount === 1) {
+      replacementStartAttempted = true;
+      await io.startAndVerifyTask(taskPath, input.entrypoint, statePath);
+    }
     return { taskPath, manifest, createdKeys: createdKeys.length };
   } catch (error) {
     const rollbackFailures: string[] = [];
+    if (replacementStartAttempted) {
+      await io.stopWriters(input.entrypoint).catch((failure) => rollbackFailures.push(`Windows replacement writer stop failed: ${message(failure)}`));
+    }
     if (registrationAttempted) {
       let deleteFailure: unknown;
       await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch((failure) => { deleteFailure = failure; });
@@ -138,7 +146,7 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
       }
     }
     if (priorManifest && priorWriterCount === 1 && priorTaskExisted && rollbackFailures.length === 0) {
-      await io.restartTask(taskPath, priorManifest.entrypoint).catch((failure) => rollbackFailures.push(`Windows prior writer restart failed: ${message(failure)}`));
+      await io.startAndVerifyTask(taskPath, priorManifest.entrypoint, priorManifest.statePath).catch((failure) => rollbackFailures.push(`Windows prior writer restart failed: ${message(failure)}`));
     }
     if (rollbackFailures.length > 0) throw new Error(`Windows installation failed and rollback is incomplete: ${rollbackFailures.join("; ")}`, { cause: error });
     throw error;
