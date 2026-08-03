@@ -1,5 +1,10 @@
 # Reusable Windows Distribution Implementation Plan
 
+> Scope update (2026-08-04): accepted CR-0010 and ADR-0006 supersede the
+> same-machine multi-user P0 interpretation. Continue P0 through
+> `docs/superpowers/plans/2026-08-04-personal-portable-installer.md`; retain this
+> plan and its evidence as historical implementation provenance.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn the Phase 3 npm candidate into a path-neutral, versioned Windows

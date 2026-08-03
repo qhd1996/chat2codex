@@ -1,5 +1,11 @@
 # Reusable Windows Distribution Design
 
+> Scope update (2026-08-04): accepted requirements-ledger CR-0010 and ADR-0006
+> supersede the P0 same-machine multi-user interpretation in this document.
+> The current P0 product is the personal portable installer defined by
+> docs/superpowers/specs/2026-08-04-personal-portable-installer-design.md.
+> Existing other-user ACL evidence remains P1 hardening and is not deleted.
+
 **Status:** Approved for overnight repository execution by accepted CR-0007.
 
 **Authority:** Requirements ledger commit
