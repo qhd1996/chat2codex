@@ -82,6 +82,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).toContain("$limitedIdentity.administrator -ne $false");
     expect(standardUserScript).toContain("$limitedIdentity.sidHash -ne $currentSidHash");
     expect(standardUserScript).toContain("profileMode='disposable_env'");
+    const childRead = standardUserScript.indexOf("$value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json");
+    const taskExit = standardUserScript.indexOf("if ($childExit -ne 0)");
+    expect(childRead).toBeGreaterThan(-1);
+    expect(childRead).toBeLessThan(taskExit);
+    expect(standardUserScript).toContain("if ($value -and $value.verdict -ne 'pass' -and $value.failure) { $failure = $value.failure }");
     expect(standardUserScript).toContain("if ($report.verdict -ne 'pass')");
     expect(standardUserScript).not.toContain("if ($failure) { Write-Host ('NATIVE_LIFECYCLE_FAIL '");
     expect(standardUserScript).not.toContain("-Timeout");

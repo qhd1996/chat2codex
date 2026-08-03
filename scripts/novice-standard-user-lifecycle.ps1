@@ -50,6 +50,10 @@ try {
   } while ([DateTime]::UtcNow -lt $taskDeadline)
   $taskInfo = Get-ScheduledTaskInfo -TaskName $taskName -ErrorAction Stop
   $childExit = [int]$taskInfo.LastTaskResult
+  $stage = 'report_read'
+  if (Test-Path -LiteralPath $childReport -PathType Leaf) { $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json }
+  if ($value -and $value.verdict -ne 'pass' -and $value.failure) { $failure = $value.failure }
+  if ($failure) { throw 'Limited-token lifecycle worker reported a failure.' }
   if ($childExit -ne 0) {
     $failure = [ordered]@{stage='standard_user_wrapper/scheduled_task/exit';exceptionType='ProcessFailure';code=('exit_' + $childExit);errno=$null;hResult=$null}
     throw 'Scheduled Task lifecycle worker failed.'
@@ -62,13 +66,11 @@ try {
   $stage = 'owner_check'
   $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   if ($owner.Value -ne $currentSid) { throw 'Limited-token root owner differs.' }
-  $stage = 'report_read'
   if (-not (Test-Path -LiteralPath $childReport -PathType Leaf)) {
     $failure = [ordered]@{stage='standard_user_wrapper/scheduled_task/report_missing';exceptionType='ProcessFailure';code='unavailable';errno=$null;hResult=$null}
     throw 'Limited-token lifecycle report is missing.'
   }
-  $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json
-  if ($value.verdict -ne 'pass') { $failure = $value.failure }
+  if (-not $value) { $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json }
 } catch {
   if (-not $failure) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} }
 }
