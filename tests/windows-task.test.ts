@@ -11,7 +11,8 @@ const taskInput = {
 describe("Windows user task rendering", () => {
   test("renders a least-privilege current-user logon task with restart and no overlap", () => {
     const xml = renderWindowsTaskXml(taskInput);
-    expect(xml).toStartWith('<?xml version="1.0" encoding="UTF-8"?>');
+    expect(xml).toStartWith("<Task ");
+    expect(xml).not.toContain("<?xml");
     expect(xml).toContain("<UserId>S-1-5-21-1000-1000-1000-1001</UserId>");
     expect(xml).toContain("<LogonType>InteractiveToken</LogonType>");
     expect(xml).toContain("<RunLevel>LeastPrivilege</RunLevel>");
