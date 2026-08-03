@@ -46,8 +46,11 @@ try {
   Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -User ($env:COMPUTERNAME + '\' + $userName) -Password $plain -RunLevel Limited | Out-Null
   $stage = 'scheduled_task/export'
   $registeredXml = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop
-  $stage = 'scheduled_task/verify'
-  if ($registeredXml -notmatch '<LogonType>Password</LogonType>' -or $registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') { throw 'Scheduled Task principal is not password-logon least-privilege.' }
+  $stage = 'scheduled_task/verify_logon'
+  if ($registeredXml -notmatch '<LogonType>Password</LogonType>') { throw 'Scheduled Task principal is not password-logon.' }
+  $stage = 'scheduled_task/verify_runlevel'
+  if ($registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') { throw 'Scheduled Task principal is not least-privilege.' }
+  $stage = 'scheduled_task/verify_password'
   if ($registeredXml -match [Regex]::Escape($plain)) { throw 'Scheduled Task action exposes the password.' }
   $stage = 'scheduled_task/start'
   Start-ScheduledTask -TaskName $taskName -ErrorAction Stop
