@@ -21,7 +21,7 @@ permissions:
 
 env:
   C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.20
-  C2C_EXPECTED_CANDIDATE_SHA256: d30cea14703a313445a8d56d0d8d090a392f2c6282c6a711e2848d1f2d15844c
+  C2C_EXPECTED_CANDIDATE_SHA256: 301e09fa69b199f254aa2112c7803918f8840b58e66caec852f9a73a021b178e
   C2C_CLEAN_PACKAGE_ONLY: ${{ (github.event_name == 'workflow_dispatch' && inputs.gate == 'clean-package') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[clean-package-only]')) }}
 
 jobs:
