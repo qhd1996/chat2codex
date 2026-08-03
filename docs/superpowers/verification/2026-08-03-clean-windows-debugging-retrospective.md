@@ -56,7 +56,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 14:43–14:53 | `.8` / `9f46d55` → `3afd717` | [30791096324](https://github.com/qhd1996/chat2codex/actions/runs/30791096324), jobs `91614605402`, `91615730276` | repository passed; clean failed | Cross-user redirected-file SID proof was invalid; clean log SHA-256 `893D4420986A6C4D7255B8530A24D12BA96B48A9693A653E76366CCBB111906B`; zero residual artifact passed |
 | 15:00–15:58 | `.8` / `f0466ed` → `faa494c` | [30791876218](https://github.com/qhd1996/chat2codex/actions/runs/30791876218), job `91616927253` | repository failed; clean skipped | Native lifecycle ACL inspector timed out at fixed 5 s with empty output; log SHA-256 `ED3C7720E14B9906569F684477D5DF5982C38B46BE5096B5001FD0147A4E539D` |
 | 16:05–16:11 | `.8` / `db088ff` → `ba0ac79` | [30792210012](https://github.com/qhd1996/chat2codex/actions/runs/30792210012), jobs `91617951793`, `91619215078` | repository passed; clean failed | ACL timeout fixed; `Start-Process` passed pipe as a literal `whoami` option. Clean log SHA-256 `297D47873CD1A4F6E1C35AABFCCB0D4B8304E24879883B8BD2C67A4427997FC1`; zero residual artifact passed |
-| 16:18–pending | `.8` / `8a04b3e` → `3120db0` | [30793010125](https://github.com/qhd1996/chat2codex/actions/runs/30793010125), job `91620355323` | candidate running | .NET explicit-credential process launch and in-memory SID proof; terminal result pending |
+| 16:18–16:24 | `.8` / `8a04b3e` → `3120db0` | [30793010125](https://github.com/qhd1996/chat2codex/actions/runs/30793010125), jobs `91620355323`, `91621591908` | repository passed; clean failed | Advanced beyond another-user helper; second install SID PowerShell child failed empty. Clean log SHA-256 `E9C0402E470FF8A101943A0CAB571981BD7CD6F84AAF5F21D1470D22558B4A02`; zero residual artifact passed |
+| 16:31–pending | `.8` / `b0a9b22` → `a8fee1c` | [30793753462](https://github.com/qhd1996/chat2codex/actions/runs/30793753462), job `91622623891` | candidate running | Service SID uses locale-independent `whoami.exe`; terminal result pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -149,6 +150,11 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     `Start-Process` with .NET `ProcessStartInfo` carrying explicit user/domain/secure
     password, captures `whoami` SID in memory, then separately reads the key with
     all output redirected to `nul`. No key bytes or plaintext password are logged.
+18. **Current-user SID discovery did not need a PowerShell child.** Run
+    `30793010125` advanced beyond the cross-user helper, then a second install failed
+    while evaluating `WindowsIdentity` in an otherwise silent PowerShell child.
+    `b0a9b22` calls `whoami.exe /user /fo csv /nh` and accepts exactly one bounded
+    SID; empty, malformed, or multi-SID output fails closed.
 
 ### Inferences
 
@@ -196,6 +202,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `f0466ed` in-process SID proof | hosted run `30791096324` rejected the redirected-file identity evidence | tests require exact SID match inside the temporary-user process, an independent key read, no redirect file and no encoded PowerShell; hosted proof pending |
 | `db088ff` SID-only ACL inspection | hosted run `30791876218` killed the ACL inspector at 5 s with empty output | 30 real ACL create/inspect checks passed, max 725 ms; focused 36/36 and typecheck passed; timeout remains 5 s |
 | `8a04b3e` explicit-credential process launch | hosted run `30792210012` passed the literal pipe to `whoami` | helper uses .NET process credentials, in-memory SID proof, an independent no-output key read, and rejects cmd metacharacters; hosted proof pending |
+| `b0a9b22` native current-user SID | hosted run `30793010125` advanced past the helper, then the PowerShell SID child failed empty | parser RED covered missing implementation; 40 pass, 2 platform skips, 0 fail plus typecheck; hosted proof pending |
 
 ## Environment differences and immutable candidate evidence
 
@@ -205,9 +212,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `8a04b3e` produced byte-equal 411,850-byte archives, SHA-256
-  `63BBBB598FF7A071D9D5561DA6698C2009C0B01527868A695241744B10391E6F`,
-  131 files. Workflow binding commit is `3120db0`.
+  source `b0a9b22` produced byte-equal 411,865-byte archives, SHA-256
+  `9777450763EF37B96B5B450B06557DCE984A46D5D65401F3F1E598CD0846B2C5`,
+  131 files. Workflow binding commit is `a8fee1c`.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -251,7 +258,7 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30793010125` must finish both repository and clean-package
+Current blocker: run `30793753462` must finish both repository and clean-package
 jobs. The clean job must directly confirm the another-user ACL helper plus every
 clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
 CI time is 10–20 minutes for this attempt; further repair time depends on its retained
@@ -280,16 +287,16 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 35 through current run
-  `30793010125`; 34 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 36 through current run
+  `30793753462`; 35 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 67 commits through
-  `3120db0`, including package hash rebinds and one explicit revert.
+- Product/test/workflow repair commits after `8df77f3`: 70 commits through
+  `a8fee1c`, including package hash rebinds and one explicit revert.
 - Clean job `30781607399` zero-residual artifact: owned root false, environment root
   false, matching processes 0, residual users 0, residual task false.
 - Final counts and the terminal run conclusion will be appended after the first full
