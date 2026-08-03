@@ -7,9 +7,9 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { defaultChat2CodexHome, defaultEnvPath } from "../config/paths.js";
-import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../desktop-gateway/server.js";
+import { inspectWindowsDirectoryAcl, inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../desktop-gateway/server.js";
 import { readPackageVersion } from "../package-info.js";
-import { applyOwnerOnlyWindowsAcl, ensureWindowsGatewayKeys } from "./windows-private-files.js";
+import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, ensureWindowsGatewayKeys } from "./windows-private-files.js";
 import { assertCanonicalWindowsOwnedPath, installWindowsUserTask, uninstallWindowsUserTask, type WindowsServiceIo } from "./windows-service.js";
 import { isWindowsChat2CodexWriter } from "./windows-distribution-inspector.js";
 import { renderWindowsLauncher, renderWindowsTaskXml, windowsTaskPath } from "./windows-task.js";
@@ -503,6 +503,8 @@ function windowsServiceIo(home: string): WindowsServiceIo {
     },
     ensureGatewayKeys: () => ensureWindowsGatewayKeys({
       root: path.join(home, ".secrets", "desktop-gateway"),
+      applyRootAcl: applyOwnerOnlyWindowsDirectoryAcl,
+      inspectRootAcl: async (directoryPath) => { const report = await inspectWindowsDirectoryAcl(directoryPath); requireOwnerOnlyWindowsTokenAcl(report); return report; },
       applyAcl: applyOwnerOnlyWindowsAcl,
       inspectAcl: async (filePath) => {
         const report = await inspectWindowsTokenAcl(filePath);

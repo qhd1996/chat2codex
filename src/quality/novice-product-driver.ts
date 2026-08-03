@@ -183,7 +183,7 @@ function windowsLifecycleIo(input: WindowsServiceInstallInput, home: string) {
           })))
         : new Map<string, Awaited<ReturnType<typeof inspectWindowsTokenAcl>>>();
       const result = await ensureWindowsGatewayKeys({
-        root: keyRoot, applyAcl: applyOwnerOnlyWindowsAcl,
+        root: keyRoot, applyRootAcl: async () => undefined, inspectRootAcl: async () => ({}), applyAcl: applyOwnerOnlyWindowsAcl,
         inspectAcl: async (file) => {
           const fresh = freshReports.get(file);
           if (fresh) return fresh;

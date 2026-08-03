@@ -52,12 +52,24 @@ $result = [ordered]@{
 }
 $result | ConvertTo-Json -Depth 5 -Compress
 `;
+const windowsDirectoryAclScript = windowsAclScript.replace(
+  "[System.IO.File]::GetAccessControl($tokenPath)",
+  "[System.IO.Directory]::GetAccessControl($tokenPath)",
+);
 
 export async function inspectWindowsTokenAcl(filePath: string): Promise<WindowsTokenAclReport> {
+  return inspectWindowsAcl(filePath, windowsAclScript);
+}
+
+export async function inspectWindowsDirectoryAcl(directoryPath: string): Promise<WindowsTokenAclReport> {
+  return inspectWindowsAcl(directoryPath, windowsDirectoryAclScript);
+}
+
+async function inspectWindowsAcl(filePath: string, script: string): Promise<WindowsTokenAclReport> {
   if (process.platform !== "win32") throw new Error("Windows ACL inspection requires Windows");
   const { stdout } = await execFileAsync("powershell.exe", [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-    "-Command", windowsAclScript,
+    "-Command", script,
   ], {
     windowsHide: true, timeout: 5_000, maxBuffer: 64 * 1024, encoding: "utf8",
     env: { ...process.env, CHAT2CODEX_GATEWAY_ACL_PATH: filePath },

@@ -19,7 +19,7 @@ describe("Windows Gateway private files", () => {
       await writeFile(path.join(parent, "placeholder"), "x");
       await (await import("node:fs/promises")).mkdir(target);
       await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
-      await expect(ensureWindowsGatewayKeys({ root: path.join(alias, "keys"), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/symbolic|reparse|symlink/i);
+      await expect(ensureWindowsGatewayKeys({ root: path.join(alias, "keys"), applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/symbolic|reparse|symlink/i);
     } finally { await rm(parent, { recursive: true, force: true }); }
   });
 
@@ -28,9 +28,13 @@ describe("Windows Gateway private files", () => {
       let sequence = 0;
       const aclApplied: string[] = [];
       const inspected: string[] = [];
+      const rootApplied: string[] = [];
+      const rootInspected: string[] = [];
       const result = await ensureWindowsGatewayKeys({
         root,
         randomBytes: (size) => Buffer.alloc(size, ++sequence),
+        applyRootAcl: async (file) => { rootApplied.push(file); },
+        inspectRootAcl: async (file) => { rootInspected.push(file); return { ownerSid: "S-1-test" }; },
         applyAcl: async (file) => { aclApplied.push(file); },
         inspectAcl: async (file) => { inspected.push(file); return { ownerSid: "S-1-test" }; },
       });
@@ -39,6 +43,8 @@ describe("Windows Gateway private files", () => {
       expect(Object.keys(result.paths).sort()).toEqual([...gatewayKeyRoles].sort());
       expect(aclApplied).toEqual(result.created);
       expect(inspected).toEqual(result.created);
+      expect(rootApplied).toEqual([root]);
+      expect(rootInspected).toEqual([root]);
       const values = await Promise.all(Object.values(result.paths).map((file) => readFile(file, "utf8")));
       expect(new Set(values).size).toBe(3);
       for (const value of values) expect(value).toMatch(/^[A-Za-z0-9_-]{43}\n$/u);
@@ -48,11 +54,11 @@ describe("Windows Gateway private files", () => {
 
   test("preserves valid existing keys and never reapplies their ACL", async () => {
     await withRoot(async (root) => {
-      const first = await ensureWindowsGatewayKeys({ root, applyAcl: async () => {}, inspectAcl: async () => ({}) });
+      const first = await ensureWindowsGatewayKeys({ root, applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {}, inspectAcl: async () => ({}) });
       const before = await Promise.all(Object.values(first.paths).map((file) => readFile(file, "utf8")));
       let randomCalls = 0;
       const second = await ensureWindowsGatewayKeys({
-        root, randomBytes: (size) => { randomCalls += 1; return Buffer.alloc(size, 9); },
+        root, randomBytes: (size) => { randomCalls += 1; return Buffer.alloc(size, 9); }, applyRootAcl: async () => {}, inspectRootAcl: async () => ({}),
         applyAcl: async () => { throw new Error("must not rewrite existing ACL"); },
         inspectAcl: async () => ({}),
       });
@@ -66,20 +72,20 @@ describe("Windows Gateway private files", () => {
   test("fails closed for malformed, duplicate, or symlinked existing keys", async () => {
     await withRoot(async (root) => {
       await writeFile(path.join(root, "prompt-hook.key"), "bad\n");
-      await expect(ensureWindowsGatewayKeys({ root, applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/256-bit|base64url/i);
+      await expect(ensureWindowsGatewayKeys({ root, applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/256-bit|base64url/i);
     });
     await withRoot(async (root) => {
       const same = Buffer.alloc(32, 1).toString("base64url") + "\n";
       await writeFile(path.join(root, "prompt-hook.key"), same);
       await writeFile(path.join(root, "stop-hook.key"), same);
-      await expect(ensureWindowsGatewayKeys({ root, applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/duplicate/i);
+      await expect(ensureWindowsGatewayKeys({ root, applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/duplicate/i);
     });
     await withRoot(async (root) => {
       const target = path.join(root, "target.key");
       await writeFile(target, Buffer.alloc(32, 2).toString("base64url") + "\n");
       try {
         await symlink(target, path.join(root, "prompt-hook.key"));
-        await expect(ensureWindowsGatewayKeys({ root, applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/symbolic|symlink/i);
+        await expect(ensureWindowsGatewayKeys({ root, applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {}, inspectAcl: async () => ({}) })).rejects.toThrow(/symbolic|symlink/i);
       } catch (error) {
         if (!(error && typeof error === "object" && "code" in error && error.code === "EPERM")) throw error;
       }
@@ -89,7 +95,7 @@ describe("Windows Gateway private files", () => {
   test("removes every newly created key after ACL verification failure", async () => {
     await withRoot(async (root) => {
       await expect(ensureWindowsGatewayKeys({
-        root, randomBytes: (size) => Buffer.alloc(size, 3), applyAcl: async () => {},
+        root, randomBytes: (size) => Buffer.alloc(size, 3), applyRootAcl: async () => {}, inspectRootAcl: async () => ({}), applyAcl: async () => {},
         inspectAcl: async () => { throw new Error("broad ACL"); },
       })).rejects.toThrow(/broad ACL/i);
       for (const role of gatewayKeyRoles) await expect(readFile(path.join(root, `${role}.key`))).rejects.toThrow();

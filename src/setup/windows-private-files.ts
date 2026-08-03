@@ -10,6 +10,8 @@ export type GatewayKeyRole = typeof gatewayKeyRoles[number];
 export interface EnsureWindowsGatewayKeysOptions {
   root: string;
   randomBytes?: (size: number) => Buffer;
+  applyRootAcl: (rootPath: string) => Promise<void>;
+  inspectRootAcl: (rootPath: string) => Promise<unknown>;
   applyAcl: (filePath: string) => Promise<void>;
   inspectAcl: (filePath: string) => Promise<unknown>;
 }
@@ -20,6 +22,8 @@ export async function ensureWindowsGatewayKeys(options: EnsureWindowsGatewayKeys
   created: string[]; preserved: string[]; paths: Record<GatewayKeyRole, string>;
 }> {
   const root = await ensureCanonicalRoot(options.root);
+  await options.applyRootAcl(root);
+  await options.inspectRootAcl(root);
   const paths = Object.fromEntries(gatewayKeyRoles.map((role) => [role, path.join(root, `${role}.key`)])) as Record<GatewayKeyRole, string>;
   const created: string[] = [];
   const preserved: string[] = [];
@@ -83,6 +87,30 @@ export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> 
   await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
     windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
     env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: filePath },
+  });
+}
+
+export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): Promise<void> {
+  if (process.platform !== "win32") throw new Error("Windows directory ACL creation requires Windows.");
+  const script = [
+    "$ErrorActionPreference='Stop'",
+    "$path=$env:CHAT2CODEX_PRIVATE_PATH",
+    "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
+    "$existing=[System.IO.Directory]::GetAccessControl($path,[Security.AccessControl.AccessControlSections]::Owner)",
+    "$owner=$existing.GetOwner([Security.Principal.SecurityIdentifier])",
+    "if($owner.Value -ne $user.Value){throw 'Gateway key directory owner differs from the current user'}",
+    "$system=New-Object Security.Principal.SecurityIdentifier('S-1-5-18')",
+    "$admins=New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')",
+    "$acl=New-Object Security.AccessControl.DirectorySecurity",
+    "$acl.SetAccessRuleProtection($true,$false)",
+    "$inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'",
+    "$propagate=[Security.AccessControl.PropagationFlags]::None",
+    "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$propagate,'Allow'))) }",
+    "[System.IO.Directory]::SetAccessControl($path,$acl)",
+  ].join(";");
+  await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
+    windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
+    env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: directoryPath },
   });
 }
 
