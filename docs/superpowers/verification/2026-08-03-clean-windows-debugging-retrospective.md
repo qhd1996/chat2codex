@@ -565,3 +565,92 @@ and qualifying second-Windows DIST-003. Goal remains active.
   directory lock, schema 4, exact state/env/launcher hashes, 4 tasks / 9 jobs /
   4 delivered outbox, zero active/undelivered/pending/drafts/clarifications, and no
   candidate task. Production retry is stopped.
+
+## 2026-08-04 04:01–05:02 personal-portable local stop-loss loop
+
+Classification: all timestamps below are Asia/Shanghai and come from the preserved
+local run directories. These are current-host pre-candidate runs, not hosted CI,
+clean-Windows DIST-003, production, Desktop, or real-Weixin evidence. No GitHub run
+or job link exists for these local attempts.
+
+| Time | Run | Archive SHA-256 | Direct result |
+| --- | --- | --- | --- |
+| 04:01 | run5 prepack | none | confirmed environment failure: prepack selected Node 16.17.0 and TypeScript 7 failed with ERR_UNKNOWN_FILE_EXTENSION before an archive existed |
+| 04:02 | run5 | c28d1709fa363122316cad3121372a3945486989e8d88bd1d4272ae51f544509 | confirmed RED at install_1: PORTABLE_ROLLBACK_INCOMPLETE at doctor; cleanup task false, process 0, root false |
+| 04:24 | run6 | ceded48028b29efbecce47f28be7d5074cc89c202793cdc3d1a27ea61b5a1672 | confirmed RED at install_1: transaction rolled back at doctor; cleanup zero |
+| 04:27 | run7 | 195e74676e58ee09b790865c20ddbc0b97273800b4d5824838eae96145cbe14a | confirmed bounded root cause DIST_NPM_MISSING; cleanup zero |
+| 04:29 | run8 | 82020a416833a2503c8b1e0405b65d2270243eab335d38142ee1f8cf9615b0fe | first complete package-only pass |
+| 04:35 | run9 | 29df71f18246de5effe82e7b906202f3273cf1a0911a6a4a1eb5989b69593f2f | pass after conservative rollback and installed-root doctor hardening |
+| 04:43 | run10 | 7dfeb3b72a83562f86c96d45a992fe66f0c80e3807ed4b4e837daf35e26c4d19 | confirmed RED at start_service when a pre-login fresh install was incorrectly forced online |
+| 04:45 | run11 | 46062a96d170f09e875381d18e5fa650597df8b44b58594222fc5381060e978f | pass with offline pre-login state and archive-free second Uninstall |
+| 04:54 | run12 | b5e4150e54d057ae6377818f709883cb6711e198cdb8236c870064912c04139a | pass; exposed misleading DIST_ROLLBACK_PENDING for a terminal onboarding receipt |
+| 04:57 | run13 | afe2db8b8ccbd34384cf568854d0d7796dae902ceef504561b281935266eae77 | pass with DIST_ROLLBACK_CLEAR |
+| 05:01 | run14 | afe2db8b8ccbd34384cf568854d0d7796dae902ceef504561b281935266eae77 | byte-identical repeat pass on the final submitted tree |
+
+### Confirmed roots and rejected paths
+
+- Confirmed: the original install_1 ERR_MODULE_NOT_FOUND came from executing an
+  extracted archive before installing dependencies. The bootstrap now installs the
+  SHA-verified archive into a unique temporary controller prefix and removes it in
+  finally. Package-tree verification binds the packaged bootstrap to source bytes.
+- Confirmed: run5 rollback was falsely incomplete because an empty owned directory
+  hashed as a present tree. Empty trees now normalize to null. Fresh all-null backup
+  rollback skips nonexistent old doctor while existing installs still require it.
+- Confirmed: run7 DIST_NPM_MISSING came from doctor ignoring the canonical npm CLI
+  already validated by the bootstrap. Inspector now executes the absolute regular,
+  non-reparse CHAT2CODEX_NPM_CLI through the running Node; invalid overrides fail
+  closed and do not expose the path.
+- Confirmed: forcing fresh install online before setup weixin caused run10
+  start_service failure. The accepted journey orders Install twice before setup.
+  The final receipt uses terminal awaiting_setup, records only through
+  install_service, retains candidate hashes for rollback, and does not claim start
+  or doctor. Doctor reports the actionable Weixin/writer/Hook/MCP onboarding gaps.
+- Confirmed review fixes: writer enumeration rejects negative, NaN, unsafe, or >1;
+  uninstall binds manifest home/prefix to the trusted plan; rolled-back receipts
+  require every conservative restoration step; backup metadata/material hashes,
+  canonical path, owner-only ACL, and no-reparse checks run before target deletion;
+  transient receipt-write failure cannot truncate compensation.
+- Rejected hypothesis: Directory.SetAccessControl/WRITE_OWNER was not the run5–14
+  cause. The earlier elevated ACL report remains separate evidence.
+- Rejected approach: immediately running another full Windows CI after each local
+  failure. This loop used one bounded hypothesis, focused RED→GREEN, then only the
+  package-only lifecycle. No remote CI was triggered.
+
+### Environment, routing, integrity, and residuals
+
+- Default PATH Node was 16.17.0; all valid builds/tests used bundled Node 24.14.0.
+  Local Bun was 1.3.14, so these archives are not the final Bun 1.3.9 .18 candidate.
+  The final run13/run14 archive was 418,805 bytes, 138 files, and byte-identical.
+- The temporary controller uses npm 8.15.0 from its canonical npm-cli.js; the npm
+  upgrade notice was bounded diagnostic noise, not a failure. Windows temporary
+  roots, task names, profiles, Codex Home, and PowerShell ModuleAnalysisCache were
+  directed under disposable roots. One earlier 8,246-byte ModuleAnalysisCache was
+  created under the worktree before that fix; it remains untracked and excluded
+  from package/commit because local policy rejected both recursive and exact
+  non-recursive cleanup commands. It is not a product task/process/install root.
+- Every run5–14 lifecycle report proves taskResidual=false, processResidual=0, and
+  rootResidual=false. run11+ additionally prove archive-free second Uninstall;
+  run13/run14 prove two awaiting_setup installs, named rollback, double uninstall,
+  reinstall with three rotated keys, final uninstall, and rollback clear.
+- Final focused gate: 115 passed, 0 failed. Broader Windows/state gate: 155 passed,
+  0 failed. Latest full check: 1,023 passed, 8 documented platform skips, 0 failed,
+  plus Node 24 typecheck, contracts, and build. OpenSpec 4/4, authority, distribution
+  tree, hardcoded-path scan, secret scan, and diff-check passed.
+- No timeout was increased, no test was skipped to manufacture success, and no ACL,
+  writer, rollback, redaction, manifest, or external-action boundary was weakened.
+  Failures and superseded archives remain preserved under .tmp.
+- Routing stayed gpt-5.6-sol / ultra. It was already at the maximum available model
+  and reasoning tier. After repeated failures the investigation path changed from
+  archive reruns to bounded doctor codes, TDD fixtures, package-only execution, and
+  independent specification/quality review.
+
+### Remaining blockers, estimate, and rollback
+
+Commit 0b5c081 contains the personal-portable executor. It does not bump .18 or
+change production. Remaining P0 path is final Bun 1.3.9 deterministic .18 freeze and
+full Windows CI, clean personal Windows DIST-003 including setup-to-start-to-doctor,
+production single-writer deployment/rollback, real Codex Home Hook/MCP trust,
+Desktop seven primitives, Haoda-only real-Weixin E2E, and final matrix audit. The
+remaining estimate stays 1–2 engineering days when clean Windows and Desktop are
+available. Repository rollback is revert of 0b5c081; runtime rollback continues to
+use the named receipt and exact backup hashes. Goal remains active.
