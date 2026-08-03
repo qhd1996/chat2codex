@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
 
 describe("Windows Gateway private files", () => {
   const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -24,7 +24,7 @@ describe("Windows Gateway private files", () => {
     try { await applyOwnerOnlyWindowsDirectoryAcl(missing); } catch (error) { failure = error; }
     expect(failure?.name).toBe("WindowsAclApplicationError");
     expect(failure?.failureDetail).toMatchObject({
-      stage: "directory_acl",
+      stage: "directory_acl_owner_read",
       exitCode: 86,
       signal: null,
       exceptionType: expect.any(String),
@@ -36,6 +36,18 @@ describe("Windows Gateway private files", () => {
     });
     const serialized = JSON.stringify(failure.failureDetail);
     expect(serialized.length).toBeLessThanOrEqual(4096);
+    expect(serialized).not.toContain(missing);
+    expect(serialized).not.toContain("S-1-5-21-123456789");
+    expect(serialized).not.toContain("token-secret");
+  });
+
+  windowsTest("returns bounded redacted file ACL diagnostics across the PowerShell boundary", async () => {
+    const missing = path.join(os.tmpdir(), "chat2codex-file-S-1-5-21-123456789-token-secret.key");
+    let failure: any;
+    try { await applyOwnerOnlyWindowsAcl(missing); } catch (error) { failure = error; }
+    expect(failure?.name).toBe("WindowsAclApplicationError");
+    expect(failure?.failureDetail).toMatchObject({ stage: "file_acl_owner_read", exitCode: 86, exceptionType: expect.any(String), fullyQualifiedErrorId: expect.any(String) });
+    const serialized = JSON.stringify(failure.failureDetail);
     expect(serialized).not.toContain(missing);
     expect(serialized).not.toContain("S-1-5-21-123456789");
     expect(serialized).not.toContain("token-secret");

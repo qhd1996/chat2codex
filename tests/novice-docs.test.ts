@@ -35,6 +35,12 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
     expect(parsed?.on?.workflow_dispatch).toBeDefined();
+    expect(parsed?.jobs?.["novice-acceptance"]?.if).toContain("[native-only]");
+    const nativeOnly = parsed?.jobs?.["native-lifecycle-diagnostic"];
+    expect(nativeOnly?.if).toContain("[native-only]");
+    expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic"]);
+    expect(JSON.stringify(nativeOnly)).not.toContain("Run thirty repetitions");
+    expect(JSON.stringify(nativeOnly)).not.toContain("Pack reviewed candidate");
     expect(parsed?.on?.workflow_dispatch?.inputs?.gate?.options).toEqual(["full", "clean-package"]);
     expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("inputs.gate == 'clean-package'");
     expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("contains(github.event.head_commit.message, '[clean-package-only]')");

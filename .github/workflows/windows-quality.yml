@@ -26,6 +26,7 @@ env:
 
 jobs:
   novice-acceptance:
+    if: ${{ !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-only]')) }}
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -151,6 +152,46 @@ jobs:
             .tmp/old-package/old-metadata.json
           if-no-files-found: error
           retention-days: 14
+
+  native-lifecycle-diagnostic:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-only]') }}
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.9
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Build candidate
+        run: bun run build
+      - name: Run native temporary lifecycle diagnostic
+        env:
+          C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
+        run: bun scripts/novice-native-lifecycle-probe.mjs
+      - name: Upload native lifecycle diagnostic
+        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: novice-native-lifecycle-diagnostic
+          path: .tmp/native-lifecycle-status.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish native lifecycle diagnostic
+        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        shell: pwsh
+        run: |
+          $source = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw
+          $value = $source | ConvertFrom-Json
+          $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
+          if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle diagnostic::' + $message) }
+          else { Write-Host ('::notice title=Native lifecycle diagnostic::' + $message) }
 
   clean-package-acceptance:
     needs: novice-acceptance

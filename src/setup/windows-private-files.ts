@@ -72,8 +72,8 @@ export async function ensureWindowsGatewayKeys(options: EnsureWindowsGatewayKeys
 
 export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> {
   if (process.platform !== "win32") throw new Error("Windows ACL creation requires Windows.");
-  const script = [
-    "$ErrorActionPreference='Stop'",
+  const body = [
+    "$stage='owner_read'",
     "$path=$env:CHAT2CODEX_PRIVATE_PATH",
     "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
     "$existing=[System.IO.File]::GetAccessControl($path,[Security.AccessControl.AccessControlSections]::Owner)",
@@ -84,17 +84,16 @@ export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> 
     "$acl=New-Object Security.AccessControl.FileSecurity",
     "$acl.SetAccessRuleProtection($true,$false)",
     "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'))) }",
+    "$stage='dacl_apply'",
     "[System.IO.File]::SetAccessControl($path,$acl)",
   ].join(";");
-  await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
-    windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
-    env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: filePath },
-  });
+  await applyWindowsAcl("file_acl", filePath, body);
 }
 
 export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): Promise<void> {
   if (process.platform !== "win32") throw new Error("Windows directory ACL creation requires Windows.");
   const body = [
+    "$stage='owner_read'",
     "$path=$env:CHAT2CODEX_PRIVATE_PATH",
     "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
     "$existing=[System.IO.Directory]::GetAccessControl($path,[Security.AccessControl.AccessControlSections]::Owner)",
@@ -107,12 +106,17 @@ export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): 
     "$inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'",
     "$propagate=[Security.AccessControl.PropagationFlags]::None",
     "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$propagate,'Allow'))) }",
+    "$stage='dacl_apply'",
     "[System.IO.Directory]::SetAccessControl($path,$acl)",
   ].join(";");
+  await applyWindowsAcl("directory_acl", directoryPath, body);
+}
+
+async function applyWindowsAcl(stage: "file_acl" | "directory_acl", targetPath: string, body: string): Promise<void> {
   const diagnostic = [
     "$record=$_",
     "$native=if($record.Exception.PSObject.Properties['NativeErrorCode']){[int]$record.Exception.NativeErrorCode}else{$null}",
-    "$detail=[ordered]@{stage='directory_acl';exceptionType=$record.Exception.GetType().FullName;hResult=[int]$record.Exception.HResult;nativeCode=$native;fullyQualifiedErrorId=[string]$record.FullyQualifiedErrorId;category=[string]$record.CategoryInfo.Category}",
+    "$detail=[ordered]@{stage=('" + stage + "_'+$stage);exceptionType=$record.Exception.GetType().FullName;hResult=[int]$record.Exception.HResult;nativeCode=$native;fullyQualifiedErrorId=[string]$record.FullyQualifiedErrorId;category=[string]$record.CategoryInfo.Category}",
     "[Console]::Error.WriteLine(($detail|ConvertTo-Json -Compress -Depth 3))",
     "exit 86",
   ].join(";");
@@ -120,10 +124,10 @@ export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): 
   try {
     await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
       windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
-      env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: directoryPath },
+      env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: targetPath },
     });
   } catch (error) {
-    throw windowsAclApplicationError("directory_acl", error);
+    throw windowsAclApplicationError(stage, error);
   }
 }
 
@@ -142,7 +146,7 @@ function windowsAclApplicationError(stage: string, error: unknown): WindowsAclAp
   const stdout = typeof value.stdout === "string" ? value.stdout : "";
   const parsed = parsePowerShellAclDetail(stderr);
   return new WindowsAclApplicationError({
-    stage: bounded(stage, 64),
+    stage: bounded(typeof parsed.stage === "string" ? parsed.stage : stage, 64),
     exitCode: typeof value.code === "number" && Number.isSafeInteger(value.code) ? value.code : null,
     signal: typeof value.signal === "string" ? bounded(value.signal, 32) : null,
     exceptionType: bounded(parsed.exceptionType, 160),
@@ -160,7 +164,7 @@ function parsePowerShellAclDetail(stderr: string): Record<string, unknown> {
     if (!line.trim().startsWith("{")) continue;
     try {
       const value = JSON.parse(line);
-      if (isRecord(value) && value.stage === "directory_acl") return value;
+      if (isRecord(value) && typeof value.stage === "string" && /^(?:directory|file)_acl_(?:owner_read|dacl_apply)$/u.test(value.stage)) return value;
     } catch { /* use bounded fallback below */ }
   }
   return { exceptionType: "PowerShellDiagnosticUnavailable", fullyQualifiedErrorId: "unavailable", category: "unavailable" };

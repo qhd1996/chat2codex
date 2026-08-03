@@ -22,4 +22,11 @@ describe("native lifecycle diagnostics", () => {
       stage: "x".repeat(64), exceptionType: "Y".repeat(160), code: "Z".repeat(64), errno: null, hResult: null,
     });
   });
+
+  test("preserves an already-redacted nested boundary stage", () => {
+    const error = Object.assign(new Error("outer"), {
+      failureDetail: { stage: "file_acl", exitCode: 86, signal: null, exceptionType: "System.UnauthorizedAccessException", hResult: -2147024891, nativeCode: 5, fullyQualifiedErrorId: "UnauthorizedAccess", category: "PermissionDenied", stderrTail: [], stdoutTail: [] },
+    });
+    expect(nativeLifecycleFailure("journey", error)).toEqual({ stage: "journey/file_acl", exceptionType: "System.UnauthorizedAccessException", code: "exit_86", errno: 5, hResult: -2147024891 });
+  });
 });

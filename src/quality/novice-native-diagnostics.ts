@@ -8,6 +8,18 @@ export interface NativeLifecycleFailure {
 
 export function nativeLifecycleFailure(stage: string, error: unknown): NativeLifecycleFailure {
   const value = error && typeof error === "object" ? error as Record<string, unknown> : {};
+  const nested = value.failureDetail && typeof value.failureDetail === "object"
+    ? value.failureDetail as Record<string, unknown>
+    : undefined;
+  if (nested && typeof nested.stage === "string") {
+    return {
+      stage: bounded(stage + "/" + nested.stage, 64),
+      exceptionType: bounded(typeof nested.exceptionType === "string" ? nested.exceptionType : "unavailable", 160),
+      code: bounded(typeof nested.exitCode === "number" ? "exit_" + nested.exitCode : "unavailable", 64),
+      errno: integer(nested.nativeCode),
+      hResult: integer(nested.hResult),
+    };
+  }
   return {
     stage: bounded(stage, 64),
     exceptionType: bounded(typeof value.name === "string" ? value.name : error instanceof Error ? error.name : typeof error, 160),
