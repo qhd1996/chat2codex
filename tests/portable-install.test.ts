@@ -14,6 +14,7 @@ describe("personal portable install transaction", () => {
     const fixture = transactionFixture();
     const result = await executePersonalPortableInstall(plan, fixture.io);
     expect(result.status).toBe("committed");
+    expect(result.installedHashes).toEqual({ package: "9".repeat(64), config: "8".repeat(64), state: "7".repeat(64), task: "6".repeat(64) });
     expect(result.completed).toEqual(["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service", "start_service", "doctor"]);
     expect(fixture.events).toEqual([
       "archive_hash", "prerequisite_snapshot", "assert_quiescent", "receipt:prepared",
@@ -24,7 +25,7 @@ describe("personal portable install transaction", () => {
       "receipt:applying:pending:migrate_state", "migrate_state", "receipt:applying:migrate_state",
       "receipt:applying:pending:install_service", "install_windows_user_task", "receipt:applying:install_service",
       "receipt:applying:pending:start_service", "start_windows_user_task", "receipt:applying:start_service",
-      "receipt:applying:pending:doctor", "doctor", "receipt:applying:doctor", "receipt:committed",
+      "receipt:applying:pending:doctor", "doctor", "receipt:applying:doctor", "installed_hashes", "receipt:committed",
     ]);
     expect(JSON.stringify(result)).not.toMatch(/token|prompt|message|weixin|secret/i);
   });
@@ -85,6 +86,12 @@ describe("personal portable install transaction", () => {
     expect(fixture.receipts.at(-1)?.rollbackCompleted).toEqual(["stop_current_writer", "restore_state", "restore_configuration", "restore_package", "restore_windows_user_task", "verify_restored"]);
   });
 
+  test("clears candidate hashes before rollback when the committed receipt write fails", async () => {
+    const fixture = transactionFixture({ receiptFailAt: "receipt:committed" });
+    await expect(executePersonalPortableInstall(plan, fixture.io)).rejects.toMatchObject({ code: "PORTABLE_TRANSACTION_ROLLED_BACK" });
+    expect(fixture.receipts.filter((receipt) => receipt.status === "rolling_back").every((receipt) => receipt.installedHashes === null)).toBeTrue();
+  });
+
   test("does not compensate an operation whose pending intent could not be written", async () => {
     const fixture = transactionFixture({ receiptFailAt: "receipt:applying:pending:install_package" });
     await expect(executePersonalPortableInstall(plan, fixture.io)).rejects.toMatchObject({ code: "PORTABLE_TRANSACTION_ROLLED_BACK" });
@@ -129,7 +136,7 @@ describe("portable receipt", () => {
       archiveSha256: "a".repeat(64), home: plan.home, npmPrefix: plan.npmPrefix, receiptRoot: plan.receiptRoot,
       createdAt: "2026-08-04T00:00:00.000Z", updatedAt: "2026-08-04T00:00:00.000Z",
       prerequisites: { windowsVersion: "11", architecture: "x64", powershellVersion: "5.1", nodeVersion: "24.14.0", npmVersion: "11.0.0", codexCliVersion: "0.146.0", desktopVersion: null },
-      backup: null, pendingStep: null, completed: [], rollbackCompleted: [], rollbackFailures: [],
+      backup: null, installedHashes: null, pendingStep: null, completed: [], rollbackCompleted: [], rollbackFailures: [],
     };
     const source = serializePortableReceipt(receipt);
     expect(parsePortableReceipt(JSON.parse(source))).toEqual(receipt);
@@ -140,6 +147,10 @@ describe("portable receipt", () => {
     expect(() => parsePortableReceipt({ ...receipt, status: "rolled_back", backup: { backupId: "backup-1", hashes: { package: null, config: null, state: null, task: null } }, completed: ["backup_prior"], rollbackCompleted: [] })).toThrow(/rollback|verify|restor|inconsistent/i);
     expect(() => parsePortableReceipt({ ...receipt, status: "rolled_back", rollbackCompleted: ["verify_restored"] })).toThrow(/backup|rollback|inconsistent/i);
     expect(() => parsePortableReceipt({ ...receipt, status: "rollback_failed", rollbackFailures: ["verify_restored"] })).toThrow(/backup|rollback|inconsistent/i);
+    expect(() => parsePortableReceipt({ ...receipt, receiptRoot: receipt.receiptRoot + "\n" })).toThrow(/path/i);
+    const committed = { ...receipt, status: "committed", backup: { backupId: "backup-1", hashes: { package: null, config: null, state: null, task: null } }, installedHashes: { package: null, config: "a".repeat(64), state: "b".repeat(64), task: "c".repeat(64) }, completed: ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service", "start_service", "doctor"] };
+    expect(() => parsePortableReceipt(committed)).toThrow(/installed|hash|committed/i);
+    expect(() => parsePortableReceipt({ ...committed, status: "rolling_back" })).toThrow(/installed|hash|rollback/i);
     expect(() => parsePortableReceipt({ ...receipt, status: "rollback_failed", backup: { backupId: "backup-1", hashes: { package: null, config: null, state: null, task: null } }, completed: ["backup_prior"], rollbackCompleted: ["restore_package", "restore_state"], rollbackFailures: ["verify_restored"] })).toThrow(/sequence/i);
   });
 });
@@ -214,6 +225,7 @@ function transactionFixture(options: { archiveHash?: string; failAt?: string; ro
     restoreConfiguration: async () => await step("restore_configuration"), restorePackage: async () => await step("restore_package"),
     restoreWindowsUserTask: async () => await step("restore_windows_user_task"),
     ownedHashes: async () => {
+      if (!options.failAt && !options.receiptFailAt) { events.push("installed_hashes"); return { package: "9".repeat(64), config: "8".repeat(64), state: "7".repeat(64), task: "6".repeat(64) }; }
       events.push("verify_restored");
       if (options.freshInstall) return { package: null, config: null, state: null, task: null };
       return options.restoredHashDrift
