@@ -58,7 +58,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 16:05–16:11 | `.8` / `db088ff` → `ba0ac79` | [30792210012](https://github.com/qhd1996/chat2codex/actions/runs/30792210012), jobs `91617951793`, `91619215078` | repository passed; clean failed | ACL timeout fixed; `Start-Process` passed pipe as a literal `whoami` option. Clean log SHA-256 `297D47873CD1A4F6E1C35AABFCCB0D4B8304E24879883B8BD2C67A4427997FC1`; zero residual artifact passed |
 | 16:18–16:24 | `.8` / `8a04b3e` → `3120db0` | [30793010125](https://github.com/qhd1996/chat2codex/actions/runs/30793010125), jobs `91620355323`, `91621591908` | repository passed; clean failed | Advanced beyond another-user helper; second install SID PowerShell child failed empty. Clean log SHA-256 `E9C0402E470FF8A101943A0CAB571981BD7CD6F84AAF5F21D1470D22558B4A02`; zero residual artifact passed |
 | 16:31–16:39 | `.8` / `b0a9b22` → `a8fee1c` | [30793753462](https://github.com/qhd1996/chat2codex/actions/runs/30793753462), jobs `91622623891`, `91623994418` | repository passed; clean failed | Advanced through ACL/SID gates to Scheduled Task readiness; no ready file in 15 s. Clean log SHA-256 `A2B4A85184615541BFA975EAF2FC23DB677E62DD10246DC47DEE8C366947D308`; zero residual artifact passed |
-| 16:46–pending | `.8` / `4a344fc` → `2f6aefc` | [30794632293](https://github.com/qhd1996/chat2codex/actions/runs/30794632293), job `91625320208` | candidate running | Retains redacted task status, writer count and launcher log on same 15 s failure; terminal result pending |
+| 16:46–16:50 | `.8` / `4a344fc` → `2f6aefc` | [30794632293](https://github.com/qhd1996/chat2codex/actions/runs/30794632293), jobs [`91625320208`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91625320208), [`91626525352`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91626525352) | repository passed; clean failed | Readiness diagnostic itself threw `ReferenceError: logFile is not defined`, masking the Scheduled Task failure. Clean log SHA-256 `4880EA5BD82F49CA6669BDFB32CC64F5393A832E68F47EC6FB4A1A8E5F857464`; cleanup proved 0 processes, 0 users, 0 task and both owned roots absent |
+| 16:53–pending | `.8` / `80f8093` → `992dcaa` | [30795295379](https://github.com/qhd1996/chat2codex/actions/runs/30795295379), job [`91627379356`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91627379356) | candidate running | Correctly passes `logFile` into both readiness calls; repository job reached the required 30-repetition step; terminal result pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -161,6 +162,13 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     another-user ACL, second install, and task registration, but no ready file
     appeared inside the unchanged 15 s boundary. `4a344fc` retains redacted verbose
     task status, exact writer count, and launcher log tail on that same failure.
+20. **The new readiness diagnostic did not receive its log path.** Run
+    `30794632293` reached the same failure path, then `startTask()` referenced a
+    free `logFile` and threw `ReferenceError` before emitting task/writer/log
+    evidence. `80f8093` adds `logFile` to the function signature and both call
+    sites; `992dcaa` binds the resulting 412,100-byte package to CI. This confirms
+    the diagnostic defect, but the underlying Scheduled Task start failure remains
+    **unknown** until the corrected hosted run preserves its original evidence.
 
 ### Inferences
 
@@ -210,6 +218,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `8a04b3e` explicit-credential process launch | hosted run `30792210012` passed the literal pipe to `whoami` | helper uses .NET process credentials, in-memory SID proof, an independent no-output key read, and rejects cmd metacharacters; hosted proof pending |
 | `b0a9b22` native current-user SID | hosted run `30793010125` advanced past the helper, then the PowerShell SID child failed empty | parser RED covered missing implementation; 40 pass, 2 platform skips, 0 fail plus typecheck; hosted proof pending |
 | `4a344fc` readiness diagnostics | hosted run `30793753462` reached task start but timed out without a ready file | tests require redacted task/writer/log diagnostics and retain the 15 s boundary; remote evidence pending |
+| `80f8093` readiness log binding | hosted run `30794632293` failed with `ReferenceError: logFile is not defined`; the new source-contract assertions fail against `4a344fc` because neither call nor signature carries `logFile` | both calls and the signature now carry the value; focused regression and hosted proof are required before this row is complete |
 
 ## Environment differences and immutable candidate evidence
 
@@ -219,9 +228,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `4a344fc` produced byte-equal 412,099-byte archives, SHA-256
-  `2DEBEEC251570048059077CDECB23ABF24DDD123559FAD1D0B1CA163663441B7`,
-  131 files. Workflow binding commit is `2f6aefc`.
+  source `80f8093` produced byte-equal 412,100-byte archives, SHA-256
+  `4B79EE41FB3C0FE498056D0BC8325D28D47B98DA7D90B676ABC82304DDB29DAF`,
+  131 files. Workflow binding commit is `992dcaa`.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -265,7 +274,7 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30794632293` must finish both repository and clean-package
+Current blocker: run `30795295379` must finish both repository and clean-package
 jobs. The clean job must directly confirm the another-user ACL helper plus every
 clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
 CI time is 10–20 minutes for this attempt; further repair time depends on its retained
@@ -291,20 +300,25 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
    artifacts; make this a permanent workflow contract.
 6. A five-second test contained unrelated shell/CIM work. Measure and budget each
    boundary independently; obtain identity in-band when the child already owns it.
+7. The first readiness-diagnostic test asserted the helper body but not parameter
+   flow through both call sites. Before a remote rerun, force the local failure path
+   and add source/runtime checks that every diagnostic dependency is explicitly
+   bound; do not accept a happy-path-only test for an error reporter.
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 37 through current run
-  `30794632293`; 36 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 38 through current run
+  `30795295379`; 37 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 73 commits through
-  `2f6aefc`, including package hash rebinds and one explicit revert.
-- Clean job `30781607399` zero-residual artifact: owned root false, environment root
-  false, matching processes 0, residual users 0, residual task false.
+- Product/test/workflow repair commits after `8df77f3`: 76 commits through
+  `992dcaa`, including package hash rebinds and one explicit revert.
+- Latest failed clean job `30794632293` zero-residual artifact: owned root false,
+  environment root false, matching processes 0, residual users 0, residual task
+  false.
 - Final counts and the terminal run conclusion will be appended after the first full
   green repository + clean-package run.
