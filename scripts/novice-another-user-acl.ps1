@@ -33,6 +33,7 @@ function Invoke-AsTestUser([string]$fileName, [string]$arguments, [bool]$capture
   return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout }
 }
 try {
+  $beforeHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $keyPath).Hash
   $secure = [Security.SecureString]::new()
   foreach ($character in $passwordText.ToCharArray()) { $secure.AppendChar($character) }
   $secure.MakeReadOnly()
@@ -44,6 +45,12 @@ try {
   $cmdPath = Join-Path $env:SystemRoot 'System32\cmd.exe'
   $read = Invoke-AsTestUser $cmdPath ('/d /q /c type "' + $keyPath + '" >nul 2>&1') $false
   if ($read.ExitCode -eq 0) { throw 'Another interactive user read an owner-only key.' }
+  $delete = Invoke-AsTestUser $cmdPath ('/d /q /c del /f /q "' + $keyPath + '" >nul 2>&1') $false
+  if ($delete.ExitCode -eq 0 -or -not (Test-Path -LiteralPath $keyPath -PathType Leaf)) { throw 'Another interactive user deleted an owner-only key.' }
+  $replace = Invoke-AsTestUser $cmdPath ('/d /q /c echo tampered>"' + $keyPath + '" 2>nul') $false
+  if ($replace.ExitCode -eq 0) { throw 'Another interactive user replaced an owner-only key.' }
+  $afterHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $keyPath).Hash
+  if ($afterHash -ne $beforeHash) { throw 'Owner-only key bytes changed during another-user probes.' }
 } finally {
   if ($created) { Remove-LocalUser -Name $userName }
 }

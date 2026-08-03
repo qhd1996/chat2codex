@@ -108,6 +108,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(anotherUserAcl).toContain("Another-user denial probe identity is invalid: exit");
     expect(anotherUserAcl).toContain("&|<>^%!");
     expect(anotherUserAcl).toContain(`$read = Invoke-AsTestUser $cmdPath ('/d /q /c type "' + $keyPath + '" >nul 2>&1') $false`);
+    expect(anotherUserAcl).toContain(`$delete = Invoke-AsTestUser $cmdPath ('/d /q /c del /f /q "' + $keyPath + '" >nul 2>&1') $false`);
+    expect(anotherUserAcl).toContain(`$replace = Invoke-AsTestUser $cmdPath ('/d /q /c echo tampered>"' + $keyPath + '" 2>nul') $false`);
+    expect(anotherUserAcl).toContain("Another interactive user deleted an owner-only key.");
+    expect(anotherUserAcl).toContain("Another interactive user replaced an owner-only key.");
+    expect(anotherUserAcl).toContain("Owner-only key bytes changed during another-user probes.");
     expect(anotherUserAcl).not.toContain("^>nul");
     expect(anotherUserAcl).not.toContain("-EncodedCommand");
     expect(anotherUserAcl).not.toContain("Start-Process");
