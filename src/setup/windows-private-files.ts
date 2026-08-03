@@ -91,7 +91,16 @@ async function ensureCanonicalRoot(candidate: string): Promise<string> {
   const info = await lstat(resolved);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Gateway key root must be a non-symlink directory.");
   const canonical = await realpath(resolved);
-  if (!samePath(canonical, resolved)) throw new Error("Gateway key root must not traverse a symbolic link.");
+  return canonicalizeWindowsGatewayKeyRoot(resolved, canonical);
+}
+
+export function canonicalizeWindowsGatewayKeyRoot(
+  requested: string,
+  canonical: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== "win32" && !samePath(canonical, requested, platform))
+    throw new Error("Gateway key root must not traverse a symbolic link.");
   return canonical;
 }
 
@@ -106,6 +115,6 @@ async function readKey(filePath: string): Promise<string> {
   } finally { decoded.fill(0); }
 }
 
-function samePath(left: string, right: string): boolean {
-  return process.platform === "win32" ? left.toLocaleLowerCase() === right.toLocaleLowerCase() : left === right;
+function samePath(left: string, right: string, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" ? left.toLocaleLowerCase() === right.toLocaleLowerCase() : left === right;
 }

@@ -4,9 +4,13 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
 
 describe("Windows Gateway private files", () => {
+  test("accepts a Windows temp alias when it resolves to the requested key root", () => {
+    expect(canonicalizeWindowsGatewayKeyRoot("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys", "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys", "win32")).toBe("C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys");
+  });
+
   test("creates three distinct bounded keys and verifies every ACL", async () => {
     await withRoot(async (root) => {
       let sequence = 0;
