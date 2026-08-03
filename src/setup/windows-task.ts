@@ -22,9 +22,10 @@ export function renderWindowsTaskXml(input: WindowsTaskDefinition): string {
   const taskName = validateTaskName(input.taskName);
   if (!sidPattern.test(input.userSid)) throw new Error("Windows task user SID is invalid.");
   const launcherPath = windowsAbsolute(input.launcherPath, "Windows task launcher");
+  if (launcherPath.includes('"')) throw new Error("Windows task launcher cannot contain a double quote.");
   const argumentsText = [
     "-NoLogo", "-NoProfile", "-NonInteractive",
-    "-ExecutionPolicy", "Bypass", "-File", psQuote(launcherPath),
+    "-ExecutionPolicy", "Bypass", "-File", `"${launcherPath}"`,
   ].join(" " );
   return `<Task version="1.4" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo><URI>\\Chat2Codex\\${xml(taskName)}</URI></RegistrationInfo>
@@ -60,6 +61,7 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
     "$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'",
     "$env:NODE_ENV = 'production'",
     `$env:PATH = ${psQuote(input.pathEnv)}`,
+    `[IO.Directory]::CreateDirectory(${psQuote(path.win32.dirname(logFile))}) | Out-Null`,
     `Set-Location -LiteralPath ${psQuote(workingDirectory)}`,
     `& ${psQuote(nodeBin)} ${psQuote(entrypoint)} start *>> ${psQuote(logFile)}`,
     "exit $LASTEXITCODE",

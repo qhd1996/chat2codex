@@ -35,6 +35,15 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
     expect(parsed?.on?.workflow_dispatch).toBeDefined();
+    expect(parsed?.on?.workflow_dispatch?.inputs?.gate?.options).toEqual(["full", "clean-package"]);
+    expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("inputs.gate == 'clean-package'");
+    expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("contains(github.event.head_commit.message, '[clean-package-only]')");
+    for (const stepName of ["Run novice fast diagnostics", "Run novice restart diagnostics", "Run native temporary lifecycle gate", "Run thirty repetitions", "Audit dependencies"]) {
+      expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === stepName)?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true'");
+    }
+    expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload novice repetition evidence")?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()");
+    expect(workflow).toContain("[clean-package-only]");
+    expect(workflow).toContain("if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true')");
     expect(parsed?.on?.pull_request).toBeDefined();
     const parsedSteps = parsed?.jobs?.["clean-package-acceptance"]?.steps;
     expect(Array.isArray(parsedSteps)).toBe(true);

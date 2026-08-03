@@ -44,9 +44,11 @@ async function queryTaskXml(taskName: string): Promise<string> {
 
 function launcherFromTaskXml(source: string): string {
   const decoded = source.replace(/&apos;/gu, "'").replace(/&quot;/gu, '"').replace(/&lt;/gu, "<").replace(/&gt;/gu, ">").replace(/&amp;/gu, "&");
-  const match = decoded.match(/-File\s+'([^'](?:[^']|'')*)'/u);
-  if (!match) throw new Error("Windows task XML does not contain the expected launcher action.");
-  return match[1].replace(/''/gu, "'");
+  const quoted = decoded.match(/-File\s+"([^"]+)"/u);
+  if (quoted) return quoted[1];
+  const legacy = decoded.match(/-File\s+'([^'](?:[^']|'')*)'/u);
+  if (!legacy) throw new Error("Windows task XML does not contain the expected launcher action.");
+  return legacy[1].replace(/''/gu, "'");
 }
 
 async function readStateSchema(statePath: string): Promise<number | undefined> {

@@ -171,9 +171,11 @@ function parsePriorManifest(source: string | null | undefined, home: string): Wi
 }
 function taskLauncherPath(source: string): string {
   const decoded = source.replace(/&apos;/gu, "'").replace(/&quot;/gu, '"').replace(/&lt;/gu, "<").replace(/&gt;/gu, ">").replace(/&amp;/gu, "&");
-  const match = decoded.match(/-File\s+'([^'](?:[^']|'')*)'/u);
-  if (!match) throw new Error("Windows task query omitted the package-owned launcher.");
-  return path.win32.normalize(match[1].replace(/''/gu, "'"));
+  const quoted = decoded.match(/-File\s+"([^"]+)"/u);
+  if (quoted) return path.win32.normalize(quoted[1]);
+  const legacy = decoded.match(/-File\s+'([^'](?:[^']|'')*)'/u);
+  if (!legacy) throw new Error("Windows task query omitted the package-owned launcher.");
+  return path.win32.normalize(legacy[1].replace(/''/gu, "'"));
 }
 
 function readEnvPath(source: string, key: string): string | undefined {

@@ -143,6 +143,18 @@ describe("Windows service lifecycle executor", () => {
     await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/wrong|launcher|query/i);
   });
 
+  test("accepts both current Windows-quoted and legacy PowerShell-quoted launcher actions during upgrade", async () => {
+    for (const argumentsXml of [
+      `-File &quot;${input.launcherPath}&quot;`,
+      `-File &apos;${input.launcherPath}&apos;`,
+    ]) {
+      const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: `<Task><Actions><Exec><Arguments>${argumentsXml}</Arguments></Exec></Actions></Task>`, [input.manifestPath]: JSON.stringify(priorManifest()) };
+      const fixture = ioFixture(prior);
+      fixture.setQueryXml(prior[input.taskXmlPath]);
+      await expect(installWindowsUserTask(input, fixture.io)).resolves.toMatchObject({ taskPath: "\\Chat2Codex\\Chat2Codex" });
+    }
+  });
+
   test("uninstall removes exact owned files and managed env while preserving user data", async () => {
     const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n# BEGIN CHAT2CODEX WINDOWS MANAGED\r\nA=b\r\n# END CHAT2CODEX WINDOWS MANAGED\r\n" });
     await installWindowsUserTask(input, fixture.io);

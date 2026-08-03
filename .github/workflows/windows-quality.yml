@@ -6,6 +6,15 @@ on:
       - candidate/novice-0.8.0-novice.8
   pull_request:
   workflow_dispatch:
+    inputs:
+      gate:
+        description: Run the final full gate or the diagnostic package-only clean gate
+        required: true
+        type: choice
+        default: full
+        options:
+          - full
+          - clean-package
 
 permissions:
   contents: read
@@ -13,6 +22,7 @@ permissions:
 env:
   C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.8
   C2C_EXPECTED_CANDIDATE_SHA256: 9a5813b90436a024074db1080c63813f15e5cf07d657f4328216d583810e1a53
+  C2C_CLEAN_PACKAGE_ONLY: ${{ (github.event_name == 'workflow_dispatch' && inputs.gate == 'clean-package') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[clean-package-only]')) }}
 
 jobs:
   novice-acceptance:
@@ -35,15 +45,19 @@ jobs:
       - name: Build candidate before package-bound novice tests
         run: bun run build
       - name: Run novice fast diagnostics
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun test tests/novice-scenarios.test.ts tests/novice-real-upgrade.test.ts tests/novice-simulator.test.ts tests/novice-redaction.test.ts tests/novice-fresh-journey.test.ts tests/novice-upgrade-journey.test.ts tests/novice-daily-use.test.ts tests/novice-recovery.test.ts tests/novice-evidence.test.ts tests/novice-package-matrix.test.ts tests/outbox-retry-scheduler.test.ts tests/properties/novice-actions.property.test.ts tests/properties/novice-lifecycle.property.test.ts --max-concurrency=1
       - name: Run novice restart diagnostics
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun test tests/novice-restart.test.ts --max-concurrency=1
       - name: Run native temporary lifecycle gate
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun scripts/novice-native-lifecycle-probe.mjs
       - name: Run thirty repetitions
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30
       - name: Upload novice repetition evidence
-        if: always()
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: novice-repetition-evidence
@@ -51,6 +65,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Audit dependencies
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         env:
           NPM_CONFIG_REGISTRY: https://registry.npmjs.org/
         run: bun audit
@@ -62,8 +77,10 @@ jobs:
           $archive = Get-ChildItem .tmp/package/*.tgz | Select-Object -First 1
           tar -xf $archive.FullName -C .tmp/package
           node scripts/verify-distribution-package.mjs .tmp/package/package
-          $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
-          if (($report.repetitions | Where-Object { $_.counts.residualProcesses -ne 0 }).Count -ne 0) { throw 'residual process evidence' }
+          if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true') {
+            $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
+            if (($report.repetitions | Where-Object { $_.counts.residualProcesses -ne 0 }).Count -ne 0) { throw 'residual process evidence' }
+          } else { Write-Host '[clean-package-only] repository stability and audit gates are deferred to the required final full run' }
           $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant()
           $packageVersion = (Get-Content -LiteralPath .tmp/package/package/package.json -Raw | ConvertFrom-Json).version
           if ($packageVersion -ne $env:C2C_EXPECTED_CANDIDATE_VERSION) { throw 'candidate_version_mismatch' }

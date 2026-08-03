@@ -23,13 +23,15 @@ describe("Windows user task rendering", () => {
     expect(xml).toContain("<Count>3</Count>");
     expect(xml).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
     expect(xml).toContain("<Command>powershell.exe</Command>");
-    expect(xml).toContain("&apos;C:\\Users\\Example User\\.chat2codex\\.service\\windows\\launcher.ps1&apos;");
+    expect(xml).toContain("&quot;C:\\Users\\Example User\\.chat2codex\\.service\\windows\\launcher.ps1&quot;");
+    expect(xml).not.toContain("-File &apos;");
     expect(xml).not.toContain("HighestAvailable");
   });
 
   test("escapes XML and rejects relative, malformed, or unsafe inputs", () => {
     expect(renderWindowsTaskXml({ ...taskInput, taskName: "Chat2Codex & Personal" })).toContain("Chat2Codex &amp; Personal");
     expect(() => renderWindowsTaskXml({ ...taskInput, launcherPath: "relative.ps1" })).toThrow(/absolute/i);
+    expect(() => renderWindowsTaskXml({ ...taskInput, launcherPath: 'C:\\bad"path\\launcher.ps1' })).toThrow(/launcher|quote|invalid/i);
     expect(() => renderWindowsTaskXml({ ...taskInput, taskName: "bad\nname" })).toThrow(/task name/i);
     expect(() => renderWindowsTaskXml({ ...taskInput, userSid: "Example User" })).toThrow(/SID/i);
   });
@@ -47,6 +49,7 @@ describe("Windows launcher rendering", () => {
     });
     expect(source).toContain("$env:CHAT2CODEX_ENV = 'C:\\Users\\O''Brien\\.chat2codex\\.env'");
     expect(source).toContain("$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'");
+    expect(source).toContain("[IO.Directory]::CreateDirectory('C:\\Users\\O''Brien\\.chat2codex\\.data\\logs') | Out-Null");
     expect(source).toContain("Set-Location -LiteralPath 'C:\\Users\\O''Brien\\.chat2codex'");
     expect(source).toContain("& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\O''Brien\\AppData");
     expect(source).toContain("\\dist\\index.js' start *>>");
