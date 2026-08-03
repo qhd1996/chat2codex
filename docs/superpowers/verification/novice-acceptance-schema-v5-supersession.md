@@ -30,7 +30,7 @@ historical evidence only. They must not be used for approval or installation.
 | Item | Direct result |
 | --- | --- |
 | Version | `0.8.0-novice.5` |
-| Source | `b2162323d21aed85866dd4ecde08c669ff3cb45b` |
+| Source | `8ff7ee3067cca2b5d599e6cce367e2172ef3d2e6` |
 | Size | 392,014 bytes |
 | SHA-256 | `c657ac0743897ee758448f20aa25ba3d8d1848d68018f7c2e9909e26bf80234f` |
 | Files | 131 |
@@ -45,11 +45,11 @@ historical evidence only. They must not be used for approval or installation.
   platform-conditional skip, 0 fail; typecheck, contract typecheck, and build pass.
 - Official-registry `bun audit`: no vulnerabilities.
 - OpenSpec/authority/quality/package: pass; checked-in templates remain `unproven`.
-- Schema-v5 repository matrix: 30×19 scenarios, 570 execution records, 1,950
+- Schema-v5 repository matrix at final source `8ff7ee3`: 30×19 scenarios, 570 execution records, 1,950
   tests, zero fail/skip/timeout/residual.
-- Report: `.tmp/novice-repository-30-b216232.json`.
+- Report: `.tmp/novice-repository-30-8ff7ee3.json`.
 - Report SHA-256:
-  `c8f18db4a3c76679d9e8832dd5e7c6b157044f8d5ccc74649745eb4a26a626f6`.
+  `3d5745f01356390cc991187e07514a2c7bbd81c91875f9673f0b0b83b6831609`.
 - The report intentionally has `attestation=null` and `realUpgrade=null`, so it
   is repository evidence only and cannot promote clean-Windows acceptance.
 - The final `.5` extracted package generated and strict-parsed a new temporary
@@ -62,6 +62,10 @@ historical evidence only. They must not be used for approval or installation.
   `2cb845e5a0ccf6c26aa27d5d3f438f3ab7db50c41fc23844da42607f41947b26`.
   Two earlier PowerShell wrapper attempts failed to parse Bun output and remain
   negative tool evidence; the route changed to direct Bun `spawnSync`.
+- Windows workflows resolve only immutable action commits: checkout
+  `3d3c42e...`, setup-node `8207627...`, setup-bun `0c5077e...`, artifact upload
+  `ea165f8...`, and artifact download `d3f86a1...`. GitHub MCP resolved each tag
+  read-only; no push, PR, or workflow dispatch occurred.
 
 ## Windows lifecycle hardening
 

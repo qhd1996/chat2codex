@@ -8,11 +8,11 @@ action-time confirmation. Approval of one packet never authorizes another.
 ## Immutable candidate inputs
 
 - Candidate version: `0.8.0-novice.5`.
-- Source: `b2162323d21aed85866dd4ecde08c669ff3cb45b`.
+- Source: `8ff7ee3067cca2b5d599e6cce367e2172ef3d2e6`.
 - Package: `chat2codex-0.8.0-novice.5.tgz`; 392,014 bytes; 131 files.
 - SHA-256: `c657ac0743897ee758448f20aa25ba3d8d1848d68018f7c2e9909e26bf80234f`.
 - Reproduction: two new detached clean checkouts produced byte-identical archives.
-- Do not use superseded `.3`, `.4`, or intermediate `122d624` artifacts.
+- Do not use superseded `.3`, `.4`, or intermediate `122d624`/`b216232` provenance.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements ledger: `3c2af05`.
 - Task 11 handoff: `3b0698c`.
