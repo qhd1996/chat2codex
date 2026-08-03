@@ -59,7 +59,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeStep?.["continue-on-error"]).toBe(true);
     expect(nativeStep?.run).toContain("workflow_invocation/report_missing");
     const standardUserScript = await readFile(path.join(root, "scripts", "novice-standard-user-lifecycle.ps1"), "utf8");
-    for (const value of ["New-LocalUser", "New-ScheduledTaskAction", "-Password $plain -RunLevel Limited", "Register-ScheduledTask", "Export-ScheduledTask", "<LogonType>Password</LogonType>", "<RunLevel>LeastPrivilege</RunLevel>", "Start-ScheduledTask", "Stop-ScheduledTask", "Unregister-ScheduledTask", "novice-native-lifecycle-worker.ps1", "Remove-LocalUser", "residualTasks", "residualUsers", "residualProcesses", "profileExists", "task_cleanup", "profile_cleanup", "ownedRootExists"]) expect(standardUserScript).toContain(value);
+    for (const value of ["New-LocalUser", "New-ScheduledTaskAction", "-Password $plain -RunLevel Limited", "Register-ScheduledTask", "Export-ScheduledTask", "<LogonType>Password</LogonType>", ".Principal.RunLevel -ne 'Limited'", "Start-ScheduledTask", "Stop-ScheduledTask", "Unregister-ScheduledTask", "novice-native-lifecycle-worker.ps1", "Remove-LocalUser", "residualTasks", "residualUsers", "residualProcesses", "profileExists", "task_cleanup", "profile_cleanup", "ownedRootExists"]) expect(standardUserScript).toContain(value);
     expect(standardUserScript).not.toContain("ProcessStartInfo");
     expect(standardUserScript).not.toContain("Start-AsUser");
     expect(standardUserScript).toContain("-Password $plain");

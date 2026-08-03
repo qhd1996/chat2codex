@@ -49,7 +49,8 @@ try {
   $stage = 'scheduled_task/verify_logon'
   if ($registeredXml -notmatch '<LogonType>Password</LogonType>') { throw 'Scheduled Task principal is not password-logon.' }
   $stage = 'scheduled_task/verify_runlevel'
-  if ($registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') { throw 'Scheduled Task principal is not least-privilege.' }
+  $registeredTask = Get-ScheduledTask -TaskName $taskName -ErrorAction Stop
+  if ($registeredTask.Principal.RunLevel -ne 'Limited') { throw 'Scheduled Task principal is not least-privilege.' }
   $stage = 'scheduled_task/verify_password'
   if ($registeredXml -match [Regex]::Escape($plain)) { throw 'Scheduled Task action exposes the password.' }
   $stage = 'scheduled_task/start'
