@@ -28,7 +28,8 @@ test("uses direct .NET ACL APIs without PowerShell module discovery", async () =
 test("uses schtasks query exit codes instead of Task Scheduler COM discovery", async () => {
   const source = await readFile(path.join(repositoryRoot, "src/setup/service.ts"), "utf8");
   expect(source).toContain('spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]');
-  expect(source).toContain('result.error?.code === "ENOENT"');
+  expect(source).toContain('?.code === "ENOENT"');
+  expect(source).toContain('result.status === -1073741510');
   expect(source).not.toContain("Schedule.Service");
 });
 
