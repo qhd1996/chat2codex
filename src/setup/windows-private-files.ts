@@ -97,6 +97,28 @@ export async function createOwnerOnlyWindowsFile(filePath: string, content: stri
   await runWindowsAclCommand("file_create", filePath, body, content);
 }
 
+export async function createOwnerOnlyWindowsDirectory(directoryPath: string): Promise<void> {
+  if (process.platform !== "win32") throw new Error("Owner-only Windows directory creation requires Windows.");
+  if (!path.isAbsolute(directoryPath)) throw new Error("Owner-only Windows directory creation input is invalid.");
+  const body = [
+    "$stage='identity'",
+    "$path=$env:CHAT2CODEX_PRIVATE_PATH",
+    "if([IO.Directory]::Exists($path)){throw 'Gateway key directory already exists'}",
+    "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
+    "$system=New-Object Security.Principal.SecurityIdentifier('S-1-5-18')",
+    "$admins=New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')",
+    "$acl=New-Object Security.AccessControl.DirectorySecurity",
+    "$acl.SetOwner($user)",
+    "$acl.SetAccessRuleProtection($true,$false)",
+    "$inherit=[Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'",
+    "$propagate=[Security.AccessControl.PropagationFlags]::None",
+    "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$propagate,'Allow'))) }",
+    "$stage='create'",
+    "[IO.Directory]::CreateDirectory($path,$acl)|Out-Null",
+  ].join(";");
+  await runWindowsAclCommand("directory_create", directoryPath, body);
+}
+
 export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> {
   if (process.platform !== "win32") throw new Error("Windows ACL creation requires Windows.");
   const body = [
@@ -143,7 +165,7 @@ async function applyWindowsAcl(stage: "file_acl" | "directory_acl", targetPath: 
   await runWindowsAclCommand(stage, targetPath, body);
 }
 
-async function runWindowsAclCommand(stage: "file_acl" | "directory_acl" | "file_create", targetPath: string, body: string, input?: string): Promise<void> {
+async function runWindowsAclCommand(stage: "file_acl" | "directory_acl" | "file_create" | "directory_create", targetPath: string, body: string, input?: string): Promise<void> {
   const diagnostic = [
     "$record=$_",
     ...(stage === "file_create" ? ["if($stream){try{$stream.Dispose()}catch{}}", "if($created){try{[IO.File]::Delete($path)}catch{}}"] : []),
@@ -206,7 +228,7 @@ function parsePowerShellAclDetail(stderr: string): Record<string, unknown> {
     if (!line.trim().startsWith("{")) continue;
     try {
       const value = JSON.parse(line);
-      if (isRecord(value) && typeof value.stage === "string" && /^(?:(?:directory|file)_acl_(?:owner_read|dacl_apply)|file_create_(?:identity|create|stdin))$/u.test(value.stage)) return value;
+      if (isRecord(value) && typeof value.stage === "string" && /^(?:(?:directory|file)_acl_(?:owner_read|dacl_apply)|file_create_(?:identity|create|stdin)|directory_create_(?:identity|create))$/u.test(value.stage)) return value;
     } catch { /* use bounded fallback below */ }
   }
   return { exceptionType: "PowerShellDiagnosticUnavailable", fullyQualifiedErrorId: "unavailable", category: "unavailable" };
@@ -233,7 +255,11 @@ async function ensureCanonicalRoot(candidate: string): Promise<string> {
   if (!path.isAbsolute(candidate)) throw new Error("Gateway key root must be absolute.");
   const resolved = path.resolve(candidate);
   await assertNoExplicitReparseAncestor(resolved);
-  await mkdir(resolved, { recursive: true, mode: 0o700 });
+  const before = await lstat(resolved).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
+  if (!before) {
+    if (process.platform === "win32") await createOwnerOnlyWindowsDirectory(resolved);
+    else await mkdir(resolved, { recursive: true, mode: 0o700 });
+  }
   const info = await lstat(resolved);
   if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("Gateway key root must be a non-symlink directory.");
   const canonical = await realpath(resolved);

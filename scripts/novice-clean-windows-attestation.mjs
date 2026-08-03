@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanWindowsFailureLine } from "./clean-windows-failure-evidence.mjs";
+import { cleanWindowsFailureLine, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
 
 const args = process.argv.slice(2);
 const read = (flag) => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
@@ -62,6 +62,8 @@ const baseArgs = ["--target", "windows-task", "--project-dir", home, "--entrypoi
 const commands = [];
 let completed = false;
 let stage = "root_create";
+let lifecycleFailureCode = "failed";
+let lifecycleFailureDetailStage = null;
 try {
   stage = "root_create";
   await mkdir(workspace, { recursive: true });
@@ -127,8 +129,9 @@ try {
   completed = true;
   process.stdout.write("NOVICE_CLEAN_WINDOWS_ATTESTATION " + JSON.stringify(attestation) + "\n");
 } catch (error) {
-  const code = error && typeof error === "object" && error.failureDetail?.exitCode === 86 ? "exit_86" : "failed";
-  process.stderr.write(cleanWindowsFailureLine({ stage, code }) + "\n");
+  const code = lifecycleFailureCode;
+  const publicStage = lifecycleFailureDetailStage && /^install_[123]$/u.test(stage) ? stage + "/" + lifecycleFailureDetailStage : stage;
+  process.stderr.write(cleanWindowsFailureLine({ stage: publicStage, code }) + "\n");
   throw error;
 } finally {
   if (!completed) {
@@ -137,7 +140,7 @@ try {
   }
 }
 
-function runCli(cliArgs, commands, allowOutput = false) { const command = [process.execPath, cli, ...cliArgs]; commands.push(command); const result = spawnSync(command[0], command.slice(1), { encoding: "utf8", windowsHide: true, maxBuffer: 4 * 1024 * 1024 }); if (result.status !== 0 && !allowOutput) throw new Error("Installed lifecycle command failed: " + redactFailure(result.stderr)); return result; }
+function runCli(cliArgs, commands, allowOutput = false) { const command = [process.execPath, cli, ...cliArgs]; commands.push(command); const result = spawnSync(command[0], command.slice(1), { encoding: "utf8", windowsHide: true, maxBuffer: 4 * 1024 * 1024 }); if (result.status !== 0 && !allowOutput) { const failure = parseLifecycleFailure(result.stderr); lifecycleFailureCode = failure.code; lifecycleFailureDetailStage = failure.detailStage; throw new Error("Installed lifecycle command failed: " + redactFailure(result.stderr)); } return result; }
 async function startTask(taskPath, readyPath, stopPath, statePath, logFile, commands) { await rm(readyPath, { force: true }); await rm(stopPath, { force: true }); commands.push(["schtasks.exe", "/Run", "/TN", taskPath]); const run = spawnSync("schtasks.exe", ["/Run", "/TN", taskPath], { encoding: "utf8", windowsHide: true }); if (run.status !== 0) throw new Error("Scheduled Task start failed."); let ready; try { ready = await waitJson(readyPath, 15_000); } catch (error) { let writers = "uncertain"; try { writers = String(matchingWriters().length); } catch {} const diagnostics = "task=" + queryTaskDiagnostic(taskPath) + "; writers=" + writers + "; log=" + await readRedactedLogTail(logFile); throw new Error("Scheduled Task readiness deadline exceeded: " + diagnostics, { cause: error }); } const identity = queryProcess(ready.pid); const writers = matchingWriters(); const lock = await lstat(statePath + ".lock").catch(() => null); if (!identity || !identity.commandLine.includes(entrypoint) || !identity.commandLine.includes(" start") || writers.length !== 1 || writers[0].pid !== identity.pid || !lock) throw new Error("Scheduled Task writer identity or lock is invalid."); return { pid: identity.pid, createdAt: identity.createdAt, commandHash: sha256(identity.commandLine), stateSha256: ready.stateSha256 }; }
 async function stopTask(stopPath, identity, commands) { commands.push(["novice-service-stop", stopPath]); await writeFile(stopPath, "stop\n", { flag: "w" }); const deadline = Date.now() + 15_000; while (Date.now() < deadline) { if (!processExists(identity.pid)) { await rm(stopPath, { force: true }); return; } await new Promise((resolve) => setTimeout(resolve, 50)); } throw new Error("Scheduled Task writer remained after stop."); }
 function queryTask(taskPath) { const result = spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"], { encoding: "utf8", windowsHide: true }); return { exists: result.status === 0, xml: result.stdout }; }

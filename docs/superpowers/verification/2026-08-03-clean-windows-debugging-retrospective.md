@@ -856,3 +856,28 @@ reproduction, then one corrected full-CI attempt.
   `[clean-package-only]`. No timeout, skip, or safety relaxation is added. Routing
   remains `gpt-5.6-sol / ultra`; after repeated CI failures the path changed from
   full reruns to one targeted gate with a public diagnostic contract.
+
+### 07:01-07:17 clean lifecycle stage narrowing and atomic directory fix
+
+- Targeted `.19` run [30861197110](https://github.com/qhd1996/chat2codex/actions/runs/30861197110)
+  published `attestation_lifecycle_failed` with cleanup inspection complete and
+  root/environment/process/user/task all zero. It proved clean isolation and
+  cleanup, but not the inner lifecycle stage.
+- `.20` added a packaged closed-stage marker. Two detached clean builds produced
+  139 entries, 439,165 bytes, SHA-256
+  `301e09fa69b199f254aa2112c7803918f8840b58e66caec852f9a73a021b178e`.
+  Targeted run [30861775614](https://github.com/qhd1996/chat2codex/actions/runs/30861775614)
+  narrowed the failure to `install_1` / `failed`; cleanup again proved every
+  residual zero.
+- Code tracing found the directory analogue of the confirmed file-owner defect:
+  the key root used ordinary recursive `mkdir` before owner validation. TDD now
+  creates an absent Windows key directory with `.NET Directory.CreateDirectory`
+  and a creation-time `DirectorySecurity` whose owner is current SID and protected
+  inheritable DACL is limited to current user, SYSTEM, and Administrators. Existing
+  directories still go through owner validation and are never taken over.
+- The same marker parser now accepts only existing ACL `FailureDetail` stages and
+  `exit_86`, composing them only under install 1/2/3; unknown, extra, unbounded, or
+  secret-bearing values fail to `unavailable`. Clean-only runs no longer publish
+  a false native-report-missing error. Local gate: 35 pass / 0 fail plus Node 24
+  typecheck/contracts. Since `.20` already ran remotely, these new product bytes
+  require `.21`; they are not relabeled as `.20`.

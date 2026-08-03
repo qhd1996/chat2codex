@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, createOwnerOnlyWindowsFile, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, createOwnerOnlyWindowsDirectory, createOwnerOnlyWindowsFile, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
 import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../src/desktop-gateway/server.js";
 
 describe("Windows Gateway private files", () => {
@@ -16,6 +16,17 @@ describe("Windows Gateway private files", () => {
     try {
       await (await import("node:fs/promises")).mkdir(directory);
       await expect(applyOwnerOnlyWindowsDirectoryAcl(directory)).resolves.toBeUndefined();
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  windowsTest("atomically creates a current-user owner-only directory", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-atomic-directory-"));
+    const directory = path.join(parent, "nested", "keys");
+    try {
+      await createOwnerOnlyWindowsDirectory(directory);
+      const report = await (await import("../src/desktop-gateway/server.js")).inspectWindowsDirectoryAcl(directory);
+      expect(() => requireOwnerOnlyWindowsTokenAcl(report)).not.toThrow();
+      expect(report.ownerSid).toBe(report.currentUserSid);
     } finally { await rm(parent, { recursive: true, force: true }); }
   });
 

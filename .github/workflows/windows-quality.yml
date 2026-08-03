@@ -74,7 +74,7 @@ jobs:
             Write-Host ('::error::' + $message)
           }
       - name: Upload native lifecycle evidence
-        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: novice-native-lifecycle-evidence
@@ -82,7 +82,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Publish native lifecycle evidence
-        if: always()
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()
         shell: pwsh
         run: |
           $output = @(& node scripts/publish-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
@@ -342,6 +342,7 @@ jobs:
                 try {
                   $bounded = ([string]$failureMarker[0]).Substring('NOVICE_CLEAN_WINDOWS_FAILURE '.Length) | ConvertFrom-Json
                   $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
+                  $allowedStages += foreach ($installStage in @('install_1','install_2','install_3')) { foreach ($aclStage in @('file_acl_owner_read','file_acl_dacl_apply','directory_acl_owner_read','directory_acl_dacl_apply','file_create_identity','file_create_create','file_create_stdin')) { $installStage + '/' + $aclStage } }
                   $allowedDetailCodes = @('failed','exit_86','unavailable')
                   if ($bounded.schemaVersion -eq 1 -and $allowedStages -contains [string]$bounded.stage -and $allowedDetailCodes -contains [string]$bounded.code) { $failureStage = [string]$bounded.stage; $failureDetailCode = [string]$bounded.code }
                 } catch {}
@@ -438,6 +439,7 @@ jobs:
             $allowed = @('job_incomplete','archive_size_mismatch','archive_hash_mismatch','old_archive_hash_mismatch','candidate_extract_failed','candidate_package_invalid','codex_cli_install_failed','codex_cli_binary_missing','attestation_task_readiness','attestation_another_user_acl','attestation_owned_root_cleanup','attestation_lifecycle_failed','novice_acceptance_failed','novice_evidence_invalid','clean_package_acceptance_failed')
             $failureCode = if ($status.failureCode -and $allowed -contains [string]$status.failureCode) { [string]$status.failureCode } elseif ($status.verdict -eq 'pass') { $null } else { 'clean_package_acceptance_failed' }
             $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
+            $allowedStages += foreach ($installStage in @('install_1','install_2','install_3')) { foreach ($aclStage in @('file_acl_owner_read','file_acl_dacl_apply','directory_acl_owner_read','directory_acl_dacl_apply','file_create_identity','file_create_create','file_create_stdin')) { $installStage + '/' + $aclStage } }
             $allowedDetailCodes = @('failed','exit_86','unavailable')
             $publicStage = if ($allowedStages -contains [string]$status.failureStage) {[string]$status.failureStage} else {'unavailable'}
             $publicDetailCode = if ($allowedDetailCodes -contains [string]$status.failureDetailCode) {[string]$status.failureDetailCode} else {'unavailable'}

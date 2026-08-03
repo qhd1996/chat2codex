@@ -4,6 +4,7 @@ import {
   cleanWindowsFailureLine,
   parseCleanWindowsFailureLine,
   parseCleanWindowsFailureOutput,
+  parseLifecycleFailure,
 } from "../scripts/clean-windows-failure-evidence.mjs";
 
 describe("clean Windows bounded failure evidence", () => {
@@ -33,5 +34,13 @@ describe("clean Windows bounded failure evidence", () => {
       "NOVICE_CLEAN_WINDOWS_FAILURE " + "x".repeat(5000),
     ]) expect(parseCleanWindowsFailureLine(line)).toBeNull();
     expect(parseCleanWindowsFailureOutput("token C:/Users/private")).toEqual({ stage: "unavailable", code: "unavailable" });
+  });
+
+  test("maps only a valid existing ACL failure detail to exit_86", () => {
+    const detail = { stage: "directory_acl_owner_read", exitCode: 86, signal: null, exceptionType: "RuntimeException", hResult: -1, nativeCode: null, fullyQualifiedErrorId: "private identity", category: "OperationStopped", stderrTail: [], stdoutTail: [] };
+    expect(parseLifecycleFailure("noise\nCHAT2CODEX_FAILURE_DETAIL " + JSON.stringify(detail))).toEqual({ detailStage: "directory_acl_owner_read", code: "exit_86" });
+    expect(parseLifecycleFailure("CHAT2CODEX_FAILURE_DETAIL " + JSON.stringify({ ...detail, stage: "unknown" }))).toEqual({ detailStage: null, code: "failed" });
+    expect(parseLifecycleFailure("token C:/Users/private")).toEqual({ detailStage: null, code: "failed" });
+    expect(parseCleanWindowsFailureLine(cleanWindowsFailureLine({ stage: "install_1/directory_acl_owner_read", code: "exit_86" }))).toEqual({ stage: "install_1/directory_acl_owner_read", code: "exit_86" });
   });
 });

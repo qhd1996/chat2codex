@@ -124,10 +124,10 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).not.toContain("if ($failure) { Write-Host ('NATIVE_LIFECYCLE_FAIL '");
     expect(standardUserScript).not.toContain("-Timeout");
     const nativeUpload = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload native lifecycle evidence");
-    expect(nativeUpload?.if).toBe("always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");
+    expect(nativeUpload?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");
     expect(nativeUpload?.with?.path).toBe(".tmp/native-lifecycle-status.json");
     const nativePublish = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Publish native lifecycle evidence");
-    expect(nativePublish?.if).toBe("always()");
+    expect(nativePublish?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()");
     expect(nativePublish?.run).toContain("publish-native-lifecycle-evidence.mjs");
     expect(nativePublish?.run).toContain("workflow_publication/process_failure");
     expect(nativePublish?.run).toContain("exit 0");

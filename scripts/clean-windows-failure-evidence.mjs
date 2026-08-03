@@ -6,8 +6,10 @@ const stages = new Set([
   "uninstall_2", "task_absent_1", "state_preserved", "install_3", "keys_2",
   "key_rotation", "uninstall_3", "task_absent_2", "protected_checks",
   "owned_root_cleanup", "attestation_build", "unavailable",
+  ...["install_1", "install_2", "install_3"].flatMap((operation) => ["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply", "file_create_identity", "file_create_create", "file_create_stdin"].map((detail) => operation + "/" + detail)),
 ]);
 const codes = new Set(["failed", "exit_86", "unavailable"]);
+const aclStages = new Set(["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply", "file_create_identity", "file_create_create", "file_create_stdin"]);
 
 export function cleanWindowsFailureLine(value) {
   const bounded = boundedFailure(value);
@@ -31,6 +33,18 @@ export function parseCleanWindowsFailureOutput(source) {
     if (value) return value;
   }
   return { stage: "unavailable", code: "unavailable" };
+}
+
+export function parseLifecycleFailure(source) {
+  if (typeof source !== "string" || source.length > 4 * 1024 * 1024) return { detailStage: null, code: "failed" };
+  for (const line of source.split(/\r?\n/u).reverse()) {
+    if (!line.startsWith("CHAT2CODEX_FAILURE_DETAIL ")) continue;
+    try {
+      const value = JSON.parse(line.slice("CHAT2CODEX_FAILURE_DETAIL ".length));
+      if (value && typeof value === "object" && !Array.isArray(value) && aclStages.has(value.stage) && value.exitCode === 86) return { detailStage: value.stage, code: "exit_86" };
+    } catch { return { detailStage: null, code: "failed" }; }
+  }
+  return { detailStage: null, code: "failed" };
 }
 
 function boundedFailure(value) {
