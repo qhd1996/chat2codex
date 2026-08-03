@@ -25,7 +25,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
     const parsed = YAML.parse(workflow);
-    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.5"]);
+    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.6"]);
     expect(parsed?.on?.workflow_dispatch).toBeDefined();
     expect(parsed?.on?.pull_request).toBeDefined();
     const parsedSteps = parsed?.jobs?.["clean-package-acceptance"]?.steps;
