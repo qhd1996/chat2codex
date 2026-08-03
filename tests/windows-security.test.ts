@@ -23,6 +23,11 @@ test("uses direct .NET ACL APIs without PowerShell module discovery", async () =
     expect(source, relativePath).toMatch(/\[System\.IO\.File\]::(?:Get|Set)AccessControl/u);
     expect(source, relativePath).not.toMatch(/(?:Get|Set)-Acl|Import-Module|Microsoft\.PowerShell\.Security/u);
   }
+  const privateFiles = await readFile(path.join(repositoryRoot, "src/setup/windows-private-files.ts"), "utf8");
+  expect(privateFiles).toContain("GetAccessControl($path,[Security.AccessControl.AccessControlSections]::Owner)");
+  expect(privateFiles).toContain("GetOwner([Security.Principal.SecurityIdentifier])");
+  expect(privateFiles).toContain("if($owner.Value -ne $user.Value){throw 'Gateway key owner differs from the current user'}");
+  expect(privateFiles).not.toContain("$acl.SetOwner($user)");
   for (const relativePath of ["src/desktop-gateway/server.ts", "src/desktop-gateway/client.ts"]) {
     const source = await readFile(path.join(repositoryRoot, relativePath), "utf8");
     expect(source, relativePath).toContain("GetOwner([Security.Principal.SecurityIdentifier])");
