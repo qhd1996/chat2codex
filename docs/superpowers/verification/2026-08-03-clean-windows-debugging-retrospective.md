@@ -39,7 +39,17 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 11:32–11:34 | `.8` / `b7be7e7` | [30782067568](https://github.com/qhd1996/chat2codex/actions/runs/30782067568), job `91588578476` | native/fast passed; 30-run failed at repetition 2 | Full log SHA-256 `CD2FC090AB44F422AC59584EF010C46BE58EE875F01262981C682EA0B8C7309D`. Inner failed shard was not uploaded: exact sub-failure remains **unknown** |
 | 11:37–11:45 | `.8` / `e7d5f05` | [30782268855](https://github.com/qhd1996/chat2codex/actions/runs/30782268855), jobs `91589133547`, `91589934140` | repository job passed; clean job failed | Exact failure was `Qualifying attestation requires an untouched real Codex Home`; setup actions create runner `~/.codex` before the no-checkout job |
 | 11:39–11:48 | `.8` / `4ae9bb9` | [30782360782](https://github.com/qhd1996/chat2codex/actions/runs/30782360782), jobs `91589402258`, `91590274544` | repository job passed; clean job repeated same failure | Full clean log SHA-256 `8513BD57AC394B146D7CC60514C7550C5847F82E3E65810FC9AF9459C64BAE58`; cleanup artifact again proves zero residual |
-| 11:54–pending | `.8` / `d3e3078` | [30782944296](https://github.com/qhd1996/chat2codex/actions/runs/30782944296) | projected fresh profile/Home plus protected-runner-home snapshot | Current remote blocker pending direct result |
+| 11:54–12:02 | `.8` / `d3e3078` | [30782944296](https://github.com/qhd1996/chat2codex/actions/runs/30782944296), jobs `91591021226`, `91591919803` | repository passed; clean failed | Confirmed: projected Codex Home already existed; clean log SHA-256 `883B86CEE34718F48A6143338F0F61A5D15A87CE052D646A343CD44DCBDE7D02` |
+| 11:54–11:55 | `.8` / `fccd0b8` | [30782984050](https://github.com/qhd1996/chat2codex/actions/runs/30782984050), job `91591126933` | repository failed before 30 repetitions | Exact ACL child timed out with empty stdout/stderr; this failure did not establish a new root cause |
+| 11:59–12:06 | `.8` / `146abb1` | [30783164418](https://github.com/qhd1996/chat2codex/actions/runs/30783164418), jobs `91591620462`, `91592465692` | repository passed; clean repeated projected-Home failure | Reproduced |
+| 12:06–12:07 | `.8` / `66163aa` | [30783483753](https://github.com/qhd1996/chat2codex/actions/runs/30783483753), job `91592499215` | repository failed in ACL child | Same empty-output child timeout; no clean job |
+| 12:14–12:21 | `.8` / `bc992df` | [30783833662](https://github.com/qhd1996/chat2codex/actions/runs/30783833662), jobs `91593504408`, `91594447965` | repository passed; clean failed | Confirmed: protected/global npm state leaked into projected novice boundary |
+| 12:27–12:34 | `.8` / `ce98e5d` | [30784466866](https://github.com/qhd1996/chat2codex/actions/runs/30784466866), jobs `91595289585`, `91596161257` | repository passed; clean failed | Confirmed: projected and protected global npm roots overlapped |
+| 12:39–12:47 | `.8` / `8b10fe3` | [30785022833](https://github.com/qhd1996/chat2codex/actions/runs/30785022833), jobs `91596836087`, `91597614681` | repository passed; clean lifecycle failed without inner diagnostic | Diagnostic gap confirmed; fixed by retaining redacted lifecycle stderr |
+| 12:51–13:01 | `.8` / `a633c4e` | [30785545916](https://github.com/qhd1996/chat2codex/actions/runs/30785545916), jobs `91598288106`, `91599110008` | repository passed; clean failed | Direct error: `Windows task state is uncertain` |
+| 13:06–13:14 | `.8` / `a886723` | [30786190323](https://github.com/qhd1996/chat2codex/actions/runs/30786190323), jobs `91600064025`, `91600972255` | repository passed; clean failed | Direct rollback error: `/Delete` said task file not found |
+| 13:19–13:28 | `.8` / `f027400` | [30786862444](https://github.com/qhd1996/chat2codex/actions/runs/30786862444), jobs `91601967155`, `91602866836` | repository passed all 30 repetitions; clean repeated rollback error | Confirmed: rollback treated an already-absent task as incomplete and masked the original `/Create` error; clean log SHA-256 `989150EC03E1FED604B4A4019560E65E1CB20888949D5F5DF19602DDDCCD32E0` |
+| 13:43–pending | `.8` / `227e618` → `ff5502e` | [30788022310](https://github.com/qhd1996/chat2codex/actions/runs/30788022310), job `91605441460` | candidate running | TDD repair verifies task absence after rollback delete; terminal remote result pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -70,6 +80,20 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
    strict and not the tested user boundary. `9d51611` runs the lifecycle under the
    owned projected profile/Codex Home, requires that projected Home to start absent,
    and snapshots the pre-existing runner Home before/after to prove no mutation.
+7. **Projected and protected npm state must be disjoint.** The first projected
+   profile still resolved the hosted account global npm tree; later path composition
+   overlapped the protected snapshot. `9d54efc` and `55d9b51` isolate the projected
+   npm prefix and resolve the protected global root exactly.
+8. **Task discovery cannot depend on Task Scheduler COM in this runner path.**
+   The retained lifecycle diagnostic first exposed uncertain task discovery.
+   `1c8d54b`, `9477f32`, and `d2979e1` use `schtasks.exe /Query`, type the spawn
+   failure, and classify the observed hosted not-found statuses.
+9. **Rollback must reconcile a failed `/Delete` against authoritative task
+   absence.** Runs `30786190323` and `30786862444` showed `/Create` failure
+   followed by `/Delete` reporting that the task file did not exist. The old code
+   recorded that delete error as incomplete rollback and hid the create error.
+   `227e618` accepts the delete failure only when a new `taskExists()` query proves
+   absence; present or uncertain state still fails closed.
 
 ### Inferences
 
@@ -79,6 +103,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - The repetition-2 failure on run `30782067568` may be a remaining timing/resource
   issue, but this is only an inference until the retained report from `e7d5f05` or
   a later run identifies the actual shard output.
+- The exact original `/Create` error behind runs `30786190323` and `30786862444`
+  remains unknown because the older rollback exception replaced it. The masking
+  defect and absent-task delete result are confirmed; the hidden create cause is not.
 
 ### Unknown or rejected paths
 
@@ -102,6 +129,10 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `7dad3bb` in-band restart identity | hosted `91585384532` timed out at 5,016 ms during CIM identity lookup | isolated restart test passed in 157 ms; local stable suite passed; no deadline change |
 | `b7be7e7` optional Codex package lookup | new workflow test failed because the expected platform-tree search did not exist; clean job `91588078865` recorded `codex_cli_binary_missing` | workflow test 2/2 passed; official-registry layout probe found `@openai/codex-win32-x64/.../codex.exe`; remote clean proof pending |
 | `e7d5f05` preserve failed repetition report | run `30782067568` failed repetition 2 but uploaded no artifact | workflow now has an `if: always()` repetition-evidence upload; run `30782268855` is the first direct verification |
+| `9d51611` / `f787dbd` fresh projected Home | clean runs rejected the hosted `~/.codex`, then rejected a projected Home already created by setup | projected Home is owned, required initially absent, and the real runner Home is immutable by before/after snapshot |
+| `9d54efc` / `55d9b51` projected npm isolation | runs `30783833662` and `30784466866` rejected prior/overlapping global npm state | later clean runs advanced to Scheduled Task discovery |
+| `1c8d54b` / `9477f32` / `d2979e1` non-COM task query | run `30785545916` reported `Windows task state is uncertain` | repository gates passed and later clean logs returned the concrete hosted not-found status |
+| `227e618` authoritative rollback absence | new regression failed with 18 pass / 1 fail: expected original `create result uncertain`, received rollback-incomplete delete error | 22/22 lifecycle tests; 46/46 related Windows tests; stable suite 906 pass, 8 documented platform skips, 0 fail; present and query-uncertain negatives remain closed |
 
 ## Environment differences and immutable candidate evidence
 
@@ -111,16 +142,15 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `51636ca`/workflow descendant `e7d5f05` produced byte-equal 411,309-byte
-  archives, SHA-256
-  `73BD1D09EDBC0A09D96DA3727EE9A9237C53135395F04D9100999E8DBF0AC179`,
-  131 files. Workflow-only commits do not alter package bytes.
+  source `227e618` produced byte-equal 411,687-byte archives, SHA-256
+  `F3A99343DC4247533B90E4C89AA25411D9D181508D0797D76BCEE01BEFE58953`,
+  131 files. Workflow binding commit is `ff5502e`.
 - Local temporary-Codex-Home proof used the exact archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
   `plugin/list`; config SHA-256
   `852B1C207902C59A0A6C9C2B222D47FD15D33290DFB85D0603E70EA71837D6BD`.
-- Latest local stable suite: 902 pass, 8 documented platform-conditional skips,
+- Latest local stable suite: 906 pass, 8 documented platform-conditional skips,
   0 fail across 87 files; typecheck/contracts/build passed.
 - Latest complete local matrix at `0d60108`: 30 × 19, 570 scenario executions,
   1,980 test passes, 0 fail/skip/timeout/residual; report SHA-256
@@ -158,11 +188,11 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30782944296` must complete. Its clean job must directly confirm
-the projected fresh profile/Home boundary and protected runner-home snapshot, then all
-clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual rows. Estimated remaining
-CI time is 10–20 minutes per attempt; root-cause-dependent repair time is unknown
-until the retained report is read.
+Current blocker: run `30788022310` must finish both repository and clean-package
+jobs. The clean job must directly confirm the rollback reconciliation plus every
+clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
+CI time is 10–20 minutes for this attempt; further repair time depends on its retained
+report if it fails.
 
 Rollback is commit-scoped: revert only the offending fix/rebind pair and return the
 candidate branch to the last reviewed SHA. No production files were changed by this
@@ -187,14 +217,15 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 17 through current run
-  `30782944296`; 16 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 28 through current run
+  `30788022310`; 27 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
-  fixed-deadline test overhead; Codex npm layout; one remote repetition failure whose
-  inner cause is still unknown.
-- Product/test/workflow repair commits since `8df77f3`: 23 commits through
-  `e7d5f05`, including package hash rebinds and one explicit revert.
+  fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
+  protected npm overlap; task discovery and rollback reconciliation; one remote
+  repetition failure whose inner cause is still unknown.
+- Product/test/workflow repair commits after `8df77f3`: 45 commits through
+  `ff5502e`, including package hash rebinds and one explicit revert.
 - Clean job `30781607399` zero-residual artifact: owned root false, environment root
   false, matching processes 0, residual users 0, residual task false.
 - Final counts and the terminal run conclusion will be appended after the first full
