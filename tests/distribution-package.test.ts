@@ -60,6 +60,11 @@ test("normalizes tracked text bytes for reproducible Windows package archives", 
   expect(attributes).toContain("* text=auto eol=lf");
 });
 
+test("cleans stale distribution output before every package build", async () => {
+  const packageJson = JSON.parse(await Bun.file(path.join(repositoryRoot, "package.json")).text());
+  expect(packageJson.scripts.build).toStartWith("node scripts/clean-package-dist.mjs && tsc");
+});
+
 async function fixture(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-dist-package-"));
   await mkdir(path.join(root, "distribution"), { recursive: true });

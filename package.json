@@ -68,7 +68,7 @@
     "setup:service": "bun src/index.ts service install --env .env --project-dir .",
     "service:print": "bun src/index.ts service print --env .env --project-dir .",
     "service:uninstall": "bun src/index.ts service uninstall --env .env --project-dir .",
-    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
+    "build": "node scripts/clean-package-dist.mjs && tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/index.js', 0o755)\"",
     "check": "bun run typecheck && bun run typecheck:contracts && bun test && bun run build",
     "prepack": "bun run build",
     "release:check": "bun run check && bun audit && bun pm pack --dry-run",
