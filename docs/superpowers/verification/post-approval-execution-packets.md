@@ -7,14 +7,15 @@ action-time confirmation. Approval of one packet never authorizes another.
 
 ## Immutable candidate inputs
 
-- Candidate version: `0.8.0-novice.5`.
-- Source: `8ff7ee3067cca2b5d599e6cce367e2172ef3d2e6`.
-- Package: `chat2codex-0.8.0-novice.5.tgz`; 392,014 bytes; 131 files.
-- SHA-256: `c657ac0743897ee758448f20aa25ba3d8d1848d68018f7c2e9909e26bf80234f`.
+- Candidate version: `0.8.0-novice.6`.
+- Source: `11919dddfb20d3510fa0587c42926630ed0ce7c7`.
+- Package: `chat2codex-0.8.0-novice.6.tgz`; 392,178 bytes; 131 files.
+- SHA-256: `81cdcb130550bff426e2386f8a921609ea7b3ad1255eec75b0c1cfa6bf784079`.
 - Reproduction: two new detached clean checkouts produced byte-identical archives.
-- Do not use superseded `.3`, `.4`, or intermediate `122d624`/`b216232` provenance.
+- Do not use superseded `.3`, `.4`, `.5`, or intermediate
+  `122d624`/`b216232`/`8ff7ee3`/`e917aa5` provenance.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
-- Requirements ledger: `3c2af05`.
+- Requirements ledger observed before this refresh: `7bc9cde`.
 - Task 11 handoff: `3b0698c`.
 
 Any byte, version, process, state, task, or target drift invalidates this packet and
