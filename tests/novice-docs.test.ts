@@ -28,7 +28,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     const parsed = YAML.parse(workflow);
     expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.8"]);
     expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_VERSION).toBe("0.8.0-novice.8");
-    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("a8d51944b8785916ac5fbdddb8262abacac8ce7a801e841c23aadff70dd2ad92");
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("e548f2b05f7ab0245679abd4e0a9702e7498e59937c1dc402e19a5443419b715");
     const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
