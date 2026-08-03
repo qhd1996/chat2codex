@@ -52,7 +52,18 @@ jobs:
         run: bun test tests/novice-restart.test.ts --max-concurrency=1
       - name: Run native temporary lifecycle gate
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
-        run: bun scripts/novice-native-lifecycle-probe.mjs
+        shell: pwsh
+        run: |
+          $output = @(& bun scripts/novice-native-lifecycle-probe.mjs 2>&1)
+          $exitCode = $LASTEXITCODE
+          $output | ForEach-Object { Write-Host ([string]$_) }
+          if ($exitCode -ne 0) {
+            $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_FAIL *' } | Select-Object -Last 1)
+            $message = if ($marker.Count -eq 1) { [string]$marker[0] } else { 'native_lifecycle_diagnostic_missing' }
+            $message = $message.Replace('%','%25').Replace([char]13,'%0D').Replace([char]10,'%0A')
+            Write-Host ('::error::' + $message)
+            exit $exitCode
+          }
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30

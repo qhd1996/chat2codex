@@ -42,6 +42,11 @@ describe("novice acceptance documentation and Windows CI", () => {
       expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === stepName)?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true'");
     }
     expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload novice repetition evidence")?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always() && hashFiles('.tmp/novice-repository-30.json') != ''");
+    const nativeStep = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Run native temporary lifecycle gate");
+    expect(nativeStep?.shell).toBe("pwsh");
+    expect(nativeStep?.run).toContain("NATIVE_LIFECYCLE_FAIL");
+    expect(nativeStep?.run).toContain("::error::");
+    expect(nativeStep?.run).toContain("native_lifecycle_diagnostic_missing");
     expect(workflow).toContain("[clean-package-only]");
     expect(workflow).toContain("if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true')");
     expect(parsed?.on?.pull_request).toBeDefined();
