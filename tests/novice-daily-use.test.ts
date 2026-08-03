@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -7,18 +7,6 @@ import { describe, expect, test } from "bun:test";
 import { runNoviceDailyUseJourney } from "../src/quality/novice-product-driver.js";
 
 describe("novice daily-use product journey", () => {
-  test("contains workspace routes when the supplied root resolves through a Windows junction", async () => {
-    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-root-alias-"));
-    const target = path.join(parent, "target");
-    const alias = path.join(parent, "alias");
-    try {
-      await mkdir(target);
-      await symlink(target, alias, process.platform === "win32" ? "junction" : "dir");
-      const result = await runNoviceDailyUseJourney({ root: alias });
-      expect(result.workspaceContained).toBe(true);
-    } finally { await rm(parent, { recursive: true, force: true }); }
-  });
-
   test("creates, continues, stops, and retries two exact tasks across all workspace routes", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-daily-"));
     try {

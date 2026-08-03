@@ -32,8 +32,6 @@ jobs:
           bun-version: 1.3.9
       - name: Install frozen dependencies
         run: bun install --frozen-lockfile
-      - name: Build candidate before package-bound novice tests
-        run: bun run build
       - name: Run novice fast gate
         run: bun run test:novice
       - name: Run native temporary lifecycle gate

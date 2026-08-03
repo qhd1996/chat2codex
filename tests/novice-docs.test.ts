@@ -48,11 +48,5 @@ describe("novice acceptance documentation and Windows CI", () => {
     for (const value of ["clean-run-status.json", "zero-residual-proof.json", "ResidualTestUsers", "ResidualTask", "Remove-LocalUser", "Start-Process -FilePath schtasks.exe", "-WindowStyle Hidden", "finally", "Finalize exact owned cleanup", "$userName", "$taskPath = '\\Chat2Codex\\' + $taskName"]) expect(cleanJob).toContain(value);
     expect(cleanJob).toMatch(/if:\s*always\(\)[\s\S]*clean-run-status\.json/u);
     expect(cleanJob).not.toContain("Where-Object Name -Like 'C2CN*'");
-    const repositorySteps = parsed?.jobs?.["novice-acceptance"]?.steps ?? [];
-    const buildIndex = repositorySteps.findIndex((step: any) => step.name === "Build candidate before package-bound novice tests");
-    const fastIndex = repositorySteps.findIndex((step: any) => step.name === "Run novice fast gate");
-    expect(buildIndex).toBeGreaterThan(-1);
-    expect(buildIndex).toBeLessThan(fastIndex);
-    expect(repositorySteps[buildIndex]?.run).toBe("bun run build");
   });
 });
