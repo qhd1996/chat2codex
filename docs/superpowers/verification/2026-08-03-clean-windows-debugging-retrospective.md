@@ -60,7 +60,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 16:31–16:39 | `.8` / `b0a9b22` → `a8fee1c` | [30793753462](https://github.com/qhd1996/chat2codex/actions/runs/30793753462), jobs `91622623891`, `91623994418` | repository passed; clean failed | Advanced through ACL/SID gates to Scheduled Task readiness; no ready file in 15 s. Clean log SHA-256 `A2B4A85184615541BFA975EAF2FC23DB677E62DD10246DC47DEE8C366947D308`; zero residual artifact passed |
 | 16:46–16:50 | `.8` / `4a344fc` → `2f6aefc` | [30794632293](https://github.com/qhd1996/chat2codex/actions/runs/30794632293), jobs [`91625320208`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91625320208), [`91626525352`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91626525352) | repository passed; clean failed | Readiness diagnostic itself threw `ReferenceError: logFile is not defined`, masking the Scheduled Task failure. Clean log SHA-256 `4880EA5BD82F49CA6669BDFB32CC64F5393A832E68F47EC6FB4A1A8E5F857464`; cleanup proved 0 processes, 0 users, 0 task and both owned roots absent |
 | 16:53–17:01 | `.8` / `80f8093` → `992dcaa` | [30795295379](https://github.com/qhd1996/chat2codex/actions/runs/30795295379), jobs [`91627379356`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91627379356), [`91628441400`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91628441400) | repository passed; clean failed | Both calls accepted `logFile`, but no outer declaration existed; clean failed at the first call with `ReferenceError: logFile is not defined`. Log SHA-256 `309CBED0BC9C93BE888AD4C522FD8D89430F5DF402D901643B1C8061045DEC11`; cleanup again proved 0 processes/users/task and absent roots |
-| 17:07–pending | `.8` / `8bc12c7` → `90c7367`, evidence head `8d014f8` | [30796160808](https://github.com/qhd1996/chat2codex/actions/runs/30796160808) | local RED→GREEN and clean-pack reproduction complete; hosted run active | Declares one `logFile`, binds the installer `--stderr`, both calls and diagnostic reader to that path. Two detached clean checkouts produced byte-equal packages |
+| 17:07–pending | `.8` / `8bc12c7` → `90c7367`, evidence heads `8d014f8` and `26b0aae` | [30796160808](https://github.com/qhd1996/chat2codex/actions/runs/30796160808), [30796194757](https://github.com/qhd1996/chat2codex/actions/runs/30796194757) | local RED→GREEN and clean-pack reproduction complete; two byte-identical hosted runs active | Declares one `logFile`, binds installer `--stderr`, both calls and diagnostic reader. The second run was triggered only by the committed evidence-index update; both consume the same package hash |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -277,8 +277,8 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30796160808` must finish both repository and clean-package
-jobs. The clean job must directly confirm the another-user ACL helper
+Current blocker: runs `30796160808` and `30796194757` must finish both repository
+and clean-package jobs. The clean jobs must directly confirm the another-user ACL helper
 plus every clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated
 remaining CI time is 10–20 minutes for this attempt; further repair time depends on
 its retained report if it fails.
@@ -310,8 +310,8 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 39 through current run
-  `30796160808`; 38 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 40 through current runs
+  `30796160808` and `30796194757`; 38 completed before them, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
