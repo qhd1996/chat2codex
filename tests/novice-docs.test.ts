@@ -55,6 +55,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(attestation).toContain("Projected fresh Codex Home");
     expect(attestation).toContain("projectedGlobalNpmRoot");
     expect(attestation).toContain("protectedGlobalNpmRootBefore");
+    expect(attestation).toContain("Scheduled Task readiness deadline exceeded: ");
+    expect(attestation).toContain("queryTaskDiagnostic(taskPath)");
+    expect(attestation).toContain("readRedactedLogTail(logFile)");
+    expect(attestation).toContain(`"; writers=" + writers`);
+    expect(attestation).toContain("waitJson(readyPath, 15_000)");
     expect(attestation).toContain(`Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr)`);
     expect(anotherUserAcl).not.toContain("IsPathFullyQualified");
     expect(anotherUserAcl).not.toContain("ConvertTo-SecureString");
