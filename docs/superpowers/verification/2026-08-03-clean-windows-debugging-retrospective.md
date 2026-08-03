@@ -788,3 +788,39 @@ reproduction, then one corrected full-CI attempt.
   differences, including generated protocol/docs files; it is the same invalid
   evidence class already recorded above, not a new candidate. Only a detached
   committed clean build may verify the frozen `87d11543...57a7` archive.
+
+### 06:36-06:47 atomic owner-only key creation RED to GREEN
+
+- Targeted run [30859261042](https://github.com/qhd1996/chat2codex/actions/runs/30859261042)
+  on `4c30cb3` confirmed the first package repetition failure as
+  `repetition/package_report/file_acl_owner_read` / `exit_86`, cleanup succeeded.
+  Artifact `8873687449` is the bounded one-repetition report. This closed the
+  hosted cause: Node `writeFile(..., flag: wx)` created a key before the product
+  applied its DACL, and the hosted file owner differed from the current user SID.
+- The accepted fix does not use `takeown`, post-hoc owner replacement, or overwrite
+  an existing file. Windows key creation uses `.NET FileStream` `CreateNew` with a
+  `FileSecurity` descriptor whose owner is the current SID and whose protected
+  DACL contains only current user, SYSTEM, and Administrators. Key bytes travel
+  only over stdin, never argv or environment. The existing inspector still
+  independently verifies owner, protection, principals, rights, and inheritance.
+- RED: atomic creator export absent. First GREEN attempt timed out at 5 seconds
+  because promisified `execFile` ignored an `input` option and PowerShell waited on
+  stdin; the test killed one dangling process. The path changed to an explicit
+  child handle and `stdin.end()` without extending a timeout. A broader gate then
+  exposed an obsolete blanket `SetOwner` prohibition; it was narrowed to allow
+  exactly one pre-`CreateNew` descriptor owner assignment while post-hoc ACL paths
+  retain owner comparison and no owner mutation.
+- Local focused evidence: 39 Windows/private/package lifecycle tests pass, then 45
+  candidate/security/version tests pass; Node 24.14.0 typecheck and contracts pass.
+  Ambient Node 16 produced one extensionless-TypeScript loader error and was
+  rejected as invalid toolchain evidence.
+- Candidate `.19`: source commits `c877766` / `1d33479`, final binding `4164436`.
+  Two detached Bun 1.3.9 / Node 24.14.0 clean builds produced byte-identical 138
+  entry, 438,304-byte archives with SHA-256
+  `d30cea14703a313445a8d56d0d8d090a392f2c6282c6a711e2848d1f2d15844c`;
+  package verifier and tracked-zero checks passed.
+- Targeted hosted run [30859912851](https://github.com/qhd1996/chat2codex/actions/runs/30859912851)
+  is GREEN. The one-repetition matrix ran from 22:47:09Z to 22:47:20Z, artifact
+  `8873936916` was uploaded, failure publisher was correctly skipped, and the
+  blocking enforce step passed. Full/native/clean-package jobs were intentionally
+  not run by the `[matrix-only]` diagnostic marker; final full CI remains required.
