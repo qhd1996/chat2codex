@@ -42,8 +42,10 @@ on `61ee173` passed checkout, tool setup, frozen install, build, novice fast,
 restart, and standalone native diagnostics. The native diagnostic retained the
 known P1 hosted-owner failure `journey/file_acl_owner_read` / `exit_86` with zero
 task, user, process, profile, or root residuals. The following 30-repetition step
-failed in about six seconds because `run-novice-matrix.mjs` invoked that same P1
-native probe again inside every P0 repository repetition.
+failed in about six seconds. The duplicate P1 native probe was a confirmed
+repository/acceptance-boundary defect and was removed, but the public run did not
+publish the 30-run report or exact exception, so it did not prove that defect was
+the sole cause.
 
 Commit `85e2dae` removes only the duplicate P1 invocation. The standalone native
 diagnostic and its public annotation remain unchanged. Exact Bun 1.3.9 local
@@ -51,6 +53,15 @@ RED-to-GREEN evidence is 30 repetitions x 19 scenarios, 1,950 P0 test passes,
 zero fail/skip/timeout/residual, report SHA-256
 `b260538b422d54fabc79756b8e1751def7a84aca12d35ba233f7defddae94863`.
 The latest full stable gate is 1,023 pass, 8 documented platform skips, 0 fail.
+
+Corrected full run [30855991670](https://github.com/qhd1996/chat2codex/actions/runs/30855991670)
+on `5df7634` failed the same 30-repetition step in about six seconds and produced
+no `.tmp/novice-repository-30.json`. This disproves the earlier sole-cause claim.
+The exact hosted exception remains unknown. Current high-confidence inference is
+that an exception before or during the first package repetition escaped the old
+report boundary; it is not recorded as a confirmed root cause. The next candidate
+must first prove bounded reports for preflight, missing/invalid shard, package
+repetition, validation, and cleanup failures before any new full CI.
 
 ## Current acceptance boundary
 

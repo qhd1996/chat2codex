@@ -103,6 +103,17 @@ jobs:
           path: .tmp/novice-repository-30.json
           if-no-files-found: error
           retention-days: 14
+      - name: Publish novice repetition evidence
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()
+        shell: pwsh
+        run: |
+          $output = @(& node scripts/publish-novice-matrix-evidence.mjs .tmp/novice-repository-30.json 2>&1)
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -eq 0) { $output | ForEach-Object { Write-Host ([string]$_) }; exit 0 }
+          $fallback = '{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/process_failure","code":"unavailable","repetition":null},"cleanup":{"attempted":false,"succeeded":false}}'
+          Write-Host ('::error title=Novice matrix evidence::' + $fallback)
+          try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Novice matrix evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable","repetition":null},"cleanup":{"attempted":false,"succeeded":false}}' }
+          exit 0
       - name: Audit dependencies
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         env:

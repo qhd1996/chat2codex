@@ -670,10 +670,12 @@ use the named receipt and exact backup hashes. Goal remains active.
   `journey/file_acl_owner_read` / `exit_86` P1 result with complete cleanup.
   Clean-package was dependency-skipped. Public annotations had no detailed 30-run
   error; run-log download returned 403 and the public step endpoint disconnected.
-- Confirmed root cause: every repository repetition re-ran the same hosted-owner
-  sensitive native probe, so P1 evidence still determined a blocking P0 verdict.
-  TDD required the blocking runner to omit that probe while the standalone
-  workflow diagnostic remained. Commit `85e2dae` implements the separation.
+- Confirmed defect, not confirmed sole root cause: every repository repetition
+  re-ran the same hosted-owner-sensitive native probe, allowing P1 evidence to
+  determine a blocking P0 verdict. TDD required the blocking runner to omit that
+  probe while the standalone workflow diagnostic remained. Commit `85e2dae`
+  implements the separation. Run 30854454515 did not publish the 30-run report or
+  exact exception, so it could not establish that this was the only failure.
 - Exact Bun 1.3.9 GREEN after the fix: one repetition recorded 65 P0 passes and
   19 scenarios; 30 repetitions recorded 1,950 passes and zero fail, skip, timeout,
   or residual. Report SHA-256 is
@@ -687,3 +689,26 @@ No timeout was extended, no blocking P0 scenario, property, or package proof was
 removed, and the P1 native diagnostic was not skipped. Routing remained
 gpt-5.6-sol / ultra; investigation changed to exact-step evidence, local Bun 1.3.9
 reproduction, then one corrected full-CI attempt.
+
+## 2026-08-04 05:47-06:08 corrected CI and bounded pre-loop diagnosis
+
+- Full run [30855991670](https://github.com/qhd1996/chat2codex/actions/runs/30855991670)
+  on `5df7634` again failed Run thirty repetitions in about six seconds. The
+  expected `.tmp/novice-repository-30.json` was absent, so artifact upload was
+  skipped. This is direct negative evidence that the removed P1 duplicate was not
+  the sole cause.
+- **Unknown:** the exact hosted exception. GitHub annotations expose only exit 1;
+  log download returned 403 and the public step endpoint disconnected. No report
+  exists to classify a narrower cause.
+- **High-confidence inference:** the old runner could throw before report creation
+  in argument/runtime/scenario/Git/package/temp setup, shard read/parse, package
+  repetition, validation, or cleanup. A hosted-sensitive ACL seam may be involved
+  in the first package repetition, but no direct hosted error proves that.
+- Stop-loss: no further push/full CI until real subprocess fixtures prove a
+  bounded, redacted report for pre-loop and missing/invalid shard failures, the
+  publisher validates the complete schema-5 pass before annotation, and the old
+  failure history survives an early failure. The original 30-run step remains
+  blocking.
+- No timeout, skip, retry loop, or security relaxation was introduced. Routing
+  remains `gpt-5.6-sol / ultra`, already the maximum tier; after the second remote
+  failure the path changed from candidate reruns to local diagnostic-chain TDD.

@@ -23,6 +23,7 @@ describe("novice acceptance documentation and Windows CI", () => {
   test("runs the novice fast, native, 30-run, pack, extraction, and residual gates on Windows", async () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
+    const matrixPublisher = await readFile(path.join(root, "scripts", "publish-novice-matrix-evidence.mjs"), "utf8");
     expect(matrix).toContain("tests/novice-package-matrix.test.ts");
     expect(matrix).not.toContain("novice-native-lifecycle-probe.mjs");
     expect(matrix).not.toContain("nativeCommand");
@@ -30,7 +31,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(matrix).toContain(`path.join(os.tmpdir(), ".novice-matrix-" + process.pid)`);
     expect(matrix).not.toContain(`path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid)`);
     for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-standard-user-lifecycle.ps1", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
-    for (const value of ["Upload novice repetition evidence", ".tmp/novice-repository-30.json", "if: always()"]) expect(workflow).toContain(value);
+    for (const value of ["Upload novice repetition evidence", "Publish novice repetition evidence", "publish-novice-matrix-evidence.mjs", ".tmp/novice-repository-30.json", "if: always()"]) expect(workflow).toContain(value);
     expect(workflow).not.toContain("Select-Object -Single");
     expect(workflow).toContain("Select-Object -First 1");
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
@@ -57,6 +58,11 @@ describe("novice acceptance documentation and Windows CI", () => {
       expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === stepName)?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true'");
     }
     expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload novice repetition evidence")?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always() && hashFiles('.tmp/novice-repository-30.json') != ''");
+    const matrixPublish = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Publish novice repetition evidence");
+    expect(matrixPublish?.if).toBe("env.C2C_CLEAN_PACKAGE_ONLY != 'true' && always()");
+    expect(matrixPublish?.run).toContain("publish-novice-matrix-evidence.mjs");
+    expect(matrixPublisher).toContain("workflow_publication/report_missing");
+    expect(matrixPublish?.run).toContain("exit 0");
     const nativeStep = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Run native temporary lifecycle gate");
     expect(nativeStep?.shell).toBe("pwsh");
     expect(nativeStep?.run).toContain("NATIVE_LIFECYCLE_FAIL");
