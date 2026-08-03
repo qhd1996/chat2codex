@@ -41,7 +41,7 @@ export async function loadScopedTokenFile(tokenPath: string, options: TokenFileO
 }
 
 async function inspectWindowsTokenFile(tokenPath: string): Promise<WindowsTokenAclReport> {
-  const script = "$a=[System.IO.File]::GetAccessControl($env:CHAT2CODEX_GATEWAY_ACL_PATH); $u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; function S($x){try{$x.Translate([Security.Principal.SecurityIdentifier]).Value}catch{$x.Value}}; [ordered]@{ownerSid=S (New-Object Security.Principal.NTAccount($a.Owner));currentUserSid=$u;protected=[bool]$a.AreAccessRulesProtected;rules=@($a.Access|%{[ordered]@{sid=S $_.IdentityReference;type=$_.AccessControlType.ToString().ToLowerInvariant();rights=[int]$_.FileSystemRights;inherited=[bool]$_.IsInherited}})}|ConvertTo-Json -Depth 5 -Compress";
+  const script = "$a=[System.IO.File]::GetAccessControl($env:CHAT2CODEX_GATEWAY_ACL_PATH); $u=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value; $o=$a.GetOwner([Security.Principal.SecurityIdentifier]); $r=$a.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier]); [ordered]@{ownerSid=$o.Value;currentUserSid=$u;protected=[bool]$a.AreAccessRulesProtected;rules=@($r|%{[ordered]@{sid=$_.IdentityReference.Value;type=$_.AccessControlType.ToString().ToLowerInvariant();rights=[int]$_.FileSystemRights;inherited=[bool]$_.IsInherited}})}|ConvertTo-Json -Depth 5 -Compress";
   const child = spawn("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
     { stdio: ["ignore", "pipe", "ignore"], windowsHide: true, env: { ...process.env, CHAT2CODEX_GATEWAY_ACL_PATH: tokenPath } });
   const chunks: Buffer[] = []; let length = 0;

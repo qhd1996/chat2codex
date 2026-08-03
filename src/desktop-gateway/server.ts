@@ -35,18 +35,15 @@ $tokenPath = [Environment]::GetEnvironmentVariable('CHAT2CODEX_GATEWAY_ACL_PATH'
 if ([string]::IsNullOrWhiteSpace($tokenPath)) { throw 'Missing ACL inspection path' }
 $acl = [System.IO.File]::GetAccessControl($tokenPath)
 $currentUserSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-function Convert-ToSid([System.Security.Principal.IdentityReference]$identity) {
-  try { return $identity.Translate([Security.Principal.SecurityIdentifier]).Value }
-  catch { return $identity.Value }
-}
-$owner = New-Object Security.Principal.NTAccount($acl.Owner)
+$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+$rules = $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])
 $result = [ordered]@{
-  ownerSid = Convert-ToSid $owner
+  ownerSid = $owner.Value
   currentUserSid = $currentUserSid
   protected = [bool]$acl.AreAccessRulesProtected
-  rules = @($acl.Access | ForEach-Object {
+  rules = @($rules | ForEach-Object {
     [ordered]@{
-      sid = Convert-ToSid $_.IdentityReference
+      sid = $_.IdentityReference.Value
       type = $_.AccessControlType.ToString().ToLowerInvariant()
       rights = [int]$_.FileSystemRights
       inherited = [bool]$_.IsInherited

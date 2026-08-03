@@ -23,6 +23,13 @@ test("uses direct .NET ACL APIs without PowerShell module discovery", async () =
     expect(source, relativePath).toMatch(/\[System\.IO\.File\]::(?:Get|Set)AccessControl/u);
     expect(source, relativePath).not.toMatch(/(?:Get|Set)-Acl|Import-Module|Microsoft\.PowerShell\.Security/u);
   }
+  for (const relativePath of ["src/desktop-gateway/server.ts", "src/desktop-gateway/client.ts"]) {
+    const source = await readFile(path.join(repositoryRoot, relativePath), "utf8");
+    expect(source, relativePath).toContain("GetOwner([Security.Principal.SecurityIdentifier])");
+    expect(source, relativePath).toContain("GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])");
+    expect(source, relativePath).not.toContain(".Translate([Security.Principal.SecurityIdentifier])");
+    expect(source, relativePath).not.toContain("Security.Principal.NTAccount");
+  }
 });
 
 test("uses schtasks query exit codes instead of Task Scheduler COM discovery", async () => {
