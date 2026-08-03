@@ -15,7 +15,7 @@ action-time confirmation. Approval of one packet never authorizes another.
 - Do not use superseded `.3`, `.4`, `.5`, or intermediate
   `122d624`/`b216232`/`8ff7ee3`/`e917aa5` provenance.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
-- Requirements ledger observed before this refresh: `7bc9cde`.
+- Requirements ledger: `e3553f9`.
 - Task 11 handoff: `3b0698c`.
 
 Any byte, version, process, state, task, or target drift invalidates this packet and
