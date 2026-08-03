@@ -30,7 +30,9 @@ export async function ensureWindowsGatewayKeys(options: EnsureWindowsGatewayKeys
       const info = await lstat(filePath).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error));
       if (!info) continue;
       if (info.isSymbolicLink() || !info.isFile()) throw new Error("Gateway key must be a regular non-symbolic file.");
-      if (!samePath(await realpath(filePath), filePath)) throw new Error("Gateway key path must be canonical and non-symlinked.");
+      const canonicalFile = await realpath(filePath);
+      if (process.platform !== "win32" && !samePath(canonicalFile, filePath)) throw new Error("Gateway key path must be canonical and non-symlinked.");
+      if (process.platform === "win32" && !samePath(path.dirname(canonicalFile), await realpath(path.dirname(filePath)))) throw new Error("Gateway key path must be canonical and non-symlinked.");
       const material = await readKey(filePath);
       if (materials.has(material)) throw new Error("Gateway key files contain duplicate material.");
       materials.add(material);
