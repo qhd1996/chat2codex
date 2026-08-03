@@ -12,7 +12,7 @@ permissions:
 
 env:
   C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.7
-  C2C_EXPECTED_CANDIDATE_SHA256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+  C2C_EXPECTED_CANDIDATE_SHA256: 951d75b1695cecc1ace3be5621e259c6ced52cadc93568a9d430a04874a05180
 
 jobs:
   novice-acceptance:
