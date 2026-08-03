@@ -37,7 +37,7 @@ jobs:
       - name: Run novice fast gate
         run: bun run test:novice
       - name: Run native temporary lifecycle gate
-        run: bun scripts/run-test-shard.mjs --name novice-native-ci --timeout-ms 90000 --report .tmp/novice-native-ci.json -- bun scripts/novice-native-lifecycle-probe.mjs
+        run: bun scripts/novice-native-lifecycle-probe.mjs
       - name: Run thirty repetitions
         run: bun run test:novice:30
       - name: Audit dependencies

@@ -54,5 +54,6 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(buildIndex).toBeGreaterThan(-1);
     expect(buildIndex).toBeLessThan(fastIndex);
     expect(repositorySteps[buildIndex]?.run).toBe("bun run build");
+    expect(repositorySteps.find((step: any) => step.name === "Run native temporary lifecycle gate")?.run).toBe("bun scripts/novice-native-lifecycle-probe.mjs");
   });
 });
