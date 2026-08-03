@@ -4,9 +4,43 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
 
 describe("Windows Gateway private files", () => {
+  const windowsTest = process.platform === "win32" ? test : test.skip;
+
+  windowsTest("applies a protected owner-only DACL to a directory without changing its owner", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-directory-acl-"));
+    const directory = path.join(parent, "keys");
+    try {
+      await (await import("node:fs/promises")).mkdir(directory);
+      await expect(applyOwnerOnlyWindowsDirectoryAcl(directory)).resolves.toBeUndefined();
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  windowsTest("returns bounded redacted directory ACL diagnostics across the PowerShell boundary", async () => {
+    const missing = path.join(os.tmpdir(), "chat2codex-private-S-1-5-21-123456789-token-secret", "missing");
+    let failure: any;
+    try { await applyOwnerOnlyWindowsDirectoryAcl(missing); } catch (error) { failure = error; }
+    expect(failure?.name).toBe("WindowsAclApplicationError");
+    expect(failure?.failureDetail).toMatchObject({
+      stage: "directory_acl",
+      exitCode: 86,
+      signal: null,
+      exceptionType: expect.any(String),
+      hResult: expect.any(Number),
+      fullyQualifiedErrorId: expect.any(String),
+      category: expect.any(String),
+      stderrTail: expect.any(Array),
+      stdoutTail: expect.any(Array),
+    });
+    const serialized = JSON.stringify(failure.failureDetail);
+    expect(serialized.length).toBeLessThanOrEqual(4096);
+    expect(serialized).not.toContain(missing);
+    expect(serialized).not.toContain("S-1-5-21-123456789");
+    expect(serialized).not.toContain("token-secret");
+  });
+
   test("accepts a Windows temp alias when it resolves to the requested key root", () => {
     expect(canonicalizeWindowsGatewayKeyRoot("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys", "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\keys", "win32")).toBe("C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\keys");
   });

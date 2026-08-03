@@ -4,6 +4,8 @@ import { lstat, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/p
 import path from "node:path";
 import { promisify } from "node:util";
 
+import type { FailureDetail } from "../util/failure-detail.js";
+
 export const gatewayKeyRoles = ["prompt-hook", "stop-hook", "desktop-mcp"] as const;
 export type GatewayKeyRole = typeof gatewayKeyRoles[number];
 
@@ -92,8 +94,7 @@ export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> 
 
 export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): Promise<void> {
   if (process.platform !== "win32") throw new Error("Windows directory ACL creation requires Windows.");
-  const script = [
-    "$ErrorActionPreference='Stop'",
+  const body = [
     "$path=$env:CHAT2CODEX_PRIVATE_PATH",
     "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
     "$existing=[System.IO.Directory]::GetAccessControl($path,[Security.AccessControl.AccessControlSections]::Owner)",
@@ -108,11 +109,79 @@ export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): 
     "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl',$inherit,$propagate,'Allow'))) }",
     "[System.IO.Directory]::SetAccessControl($path,$acl)",
   ].join(";");
-  await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
-    windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
-    env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: directoryPath },
+  const diagnostic = [
+    "$record=$_",
+    "$native=if($record.Exception.PSObject.Properties['NativeErrorCode']){[int]$record.Exception.NativeErrorCode}else{$null}",
+    "$detail=[ordered]@{stage='directory_acl';exceptionType=$record.Exception.GetType().FullName;hResult=[int]$record.Exception.HResult;nativeCode=$native;fullyQualifiedErrorId=[string]$record.FullyQualifiedErrorId;category=[string]$record.CategoryInfo.Category}",
+    "[Console]::Error.WriteLine(($detail|ConvertTo-Json -Compress -Depth 3))",
+    "exit 86",
+  ].join(";");
+  const script = "$ErrorActionPreference='Stop';try{" + body + "}catch{" + diagnostic + "}";
+  try {
+    await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
+      windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
+      env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: directoryPath },
+    });
+  } catch (error) {
+    throw windowsAclApplicationError("directory_acl", error);
+  }
+}
+
+class WindowsAclApplicationError extends Error {
+  readonly failureDetail: FailureDetail;
+  constructor(detail: FailureDetail) {
+    super("Windows directory ACL application failed.");
+    this.name = "WindowsAclApplicationError";
+    this.failureDetail = detail;
+  }
+}
+
+function windowsAclApplicationError(stage: string, error: unknown): WindowsAclApplicationError {
+  const value = isRecord(error) ? error : {};
+  const stderr = typeof value.stderr === "string" ? value.stderr : "";
+  const stdout = typeof value.stdout === "string" ? value.stdout : "";
+  const parsed = parsePowerShellAclDetail(stderr);
+  return new WindowsAclApplicationError({
+    stage: bounded(stage, 64),
+    exitCode: typeof value.code === "number" && Number.isSafeInteger(value.code) ? value.code : null,
+    signal: typeof value.signal === "string" ? bounded(value.signal, 32) : null,
+    exceptionType: bounded(parsed.exceptionType, 160),
+    hResult: integerOrNull(parsed.hResult),
+    nativeCode: integerOrNull(parsed.nativeCode),
+    fullyQualifiedErrorId: bounded(parsed.fullyQualifiedErrorId, 256),
+    category: bounded(parsed.category, 96),
+    stderrTail: safeTail(stderr),
+    stdoutTail: safeTail(stdout),
   });
 }
+
+function parsePowerShellAclDetail(stderr: string): Record<string, unknown> {
+  for (const line of stderr.split(/\r?\n/u).reverse()) {
+    if (!line.trim().startsWith("{")) continue;
+    try {
+      const value = JSON.parse(line);
+      if (isRecord(value) && value.stage === "directory_acl") return value;
+    } catch { /* use bounded fallback below */ }
+  }
+  return { exceptionType: "PowerShellDiagnosticUnavailable", fullyQualifiedErrorId: "unavailable", category: "unavailable" };
+}
+
+function safeTail(value: string): string[] {
+  return value.split(/\r?\n/u).filter(Boolean).slice(-4).map((line) => redact(line).slice(0, 512));
+}
+
+function redact(value: string): string {
+  return value
+    .replace(/(?:[A-Za-z]:\\|\\\\)[^\s"']+/gu, "<path>")
+    .replace(/S-\d+(?:-\d+){2,}/gu, "<sid>")
+    .replace(/[A-Za-z0-9_-]{40,}/gu, "<secret>");
+}
+
+function bounded(value: unknown, max: number): string {
+  return redact(typeof value === "string" ? value : "unavailable").slice(0, max) || "unavailable";
+}
+function integerOrNull(value: unknown): number | null { return typeof value === "number" && Number.isSafeInteger(value) ? value : null; }
+function isRecord(value: unknown): value is Record<string, any> { return Boolean(value) && typeof value === "object" && !Array.isArray(value); }
 
 async function ensureCanonicalRoot(candidate: string): Promise<string> {
   if (!path.isAbsolute(candidate)) throw new Error("Gateway key root must be absolute.");
