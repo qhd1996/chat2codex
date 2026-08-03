@@ -10,29 +10,40 @@ if ($keyPath -match '["\r\n&|<>^%!]') { throw 'Invalid novice ACL key path.' }
 if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { throw 'Novice ACL test user already exists.' }
 
 $created = $false
+function Invoke-AsTestUser([string]$fileName, [string]$arguments, [bool]$captureOutput) {
+  $startInfo = New-Object Diagnostics.ProcessStartInfo
+  $startInfo.FileName = $fileName
+  $startInfo.Arguments = $arguments
+  $startInfo.UserName = $userName
+  $startInfo.Domain = $env:COMPUTERNAME
+  $startInfo.Password = $secure
+  $startInfo.UseShellExecute = $false
+  $startInfo.CreateNoWindow = $true
+  $startInfo.RedirectStandardOutput = $captureOutput
+  $startInfo.RedirectStandardError = $captureOutput
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo = $startInfo
+  if (-not $process.Start()) { throw 'Another-user denial probe did not start.' }
+  $stdout = if ($captureOutput) { $process.StandardOutput.ReadToEnd() } else { '' }
+  if (-not $process.WaitForExit(15000)) {
+    $process.Kill()
+    $process.WaitForExit()
+    throw 'Another-user denial probe timed out.'
+  }
+  return [pscustomobject]@{ ExitCode = $process.ExitCode; Stdout = $stdout }
+}
 try {
   $secure = [Security.SecureString]::new()
   foreach ($character in $passwordText.ToCharArray()) { $secure.AppendChar($character) }
   $secure.MakeReadOnly()
   $createdUser = New-LocalUser -Name $userName -Password $secure -AccountNeverExpires -PasswordNeverExpires
   $created = $true
-  $credential = [Management.Automation.PSCredential]::new(".\$userName", $secure)
-  $identityCommand = 'whoami /user /fo csv /nh ^| findstr /i /c:"' + $createdUser.SID.Value + '" >nul'
-  $identityProcess = Start-Process cmd.exe -Credential $credential -ArgumentList @('/d', '/q', '/c', $identityCommand) -WindowStyle Hidden -PassThru
-  if (-not $identityProcess.WaitForExit(15000)) {
-    $identityProcess.Kill()
-    $identityProcess.WaitForExit()
-    throw 'Another-user denial probe timed out.'
-  }
-  if ($identityProcess.ExitCode -ne 0) { throw ('Another-user denial probe identity is invalid: exit ' + $identityProcess.ExitCode) }
-  $command = 'type "' + $keyPath + '" >nul'
-  $process = Start-Process cmd.exe -Credential $credential -ArgumentList @('/d', '/q', '/c', $command) -WindowStyle Hidden -PassThru
-  if (-not $process.WaitForExit(15000)) {
-    $process.Kill()
-    $process.WaitForExit()
-    throw 'Another-user denial probe timed out.'
-  }
-  if ($process.ExitCode -eq 0) { throw 'Another interactive user read an owner-only key.' }
+  $whoamiPath = Join-Path $env:SystemRoot 'System32\whoami.exe'
+  $identity = Invoke-AsTestUser $whoamiPath '/user /fo csv /nh' $true
+  if ($identity.ExitCode -ne 0 -or $identity.Stdout -notmatch [regex]::Escape($createdUser.SID.Value)) { throw ('Another-user denial probe identity is invalid: exit ' + $identity.ExitCode) }
+  $cmdPath = Join-Path $env:SystemRoot 'System32\cmd.exe'
+  $read = Invoke-AsTestUser $cmdPath ('/d /q /c type "' + $keyPath + '" >nul 2>&1') $false
+  if ($read.ExitCode -eq 0) { throw 'Another interactive user read an owner-only key.' }
 } finally {
   if ($created) { Remove-LocalUser -Name $userName }
 }
