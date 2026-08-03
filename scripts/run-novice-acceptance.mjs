@@ -64,7 +64,7 @@ export async function runNoviceArchiveAcceptance(input) {
     const taskName = "Chat2Codex-Novice-" + input.repositoryCommit.slice(0, 8);
     const attestationRoot = path.join(plan.ownedRoot, "native-lifecycle");
     const script = path.join(installedRoot, "scripts", "novice-clean-windows-attestation.mjs");
-    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--protected-real-codex-home", input.realCodexHome, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--old-archive-sha256", input.oldArchiveSha256, "--old-repository-commit", input.oldRepositoryCommit, "--run-identity", runIdentity], {
+    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--protected-real-codex-home", input.realCodexHome, "--protected-global-npm-root", input.protectedGlobalNpmRoot, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--old-archive-sha256", input.oldArchiveSha256, "--old-repository-commit", input.oldRepositoryCommit, "--run-identity", runIdentity], {
       cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true,
       env: { ...process.env, USERPROFILE: plan.environment.userProfile, APPDATA: plan.environment.appData, LOCALAPPDATA: plan.environment.localAppData, CODEX_HOME: plan.environment.codexHome, CHAT2CODEX_HOME: plan.environment.chat2codexHome, CHAT2CODEX_NOVICE_ISOLATION: "1" },
     });
@@ -201,6 +201,7 @@ async function main() {
   const reportPath = read("--report");
   const runIdentity = read("--run-identity");
   const codexBin = read("--codex-bin");
+  const protectedGlobalNpmRoot = (spawnSync("npm", ["root", "-g"], { encoding: "utf8", windowsHide: true }).stdout ?? "").trim();
   const oldArchive = read("--old-archive"); const oldArchiveSha256 = read("--old-sha256"); const oldVersion = read("--old-version"); const oldRepositoryCommit = read("--old-commit");
   if (qualifying && !oldRepositoryCommit) throw new Error("Qualifying novice run requires the supported old repository commit.");
   if (qualifying && (!repositoryCommit || !reportPath || !runIdentity || !codexBin || !oldArchive || !oldArchiveSha256 || !oldVersion || !args.includes("--fresh-profile") || !args.includes("--repository-absent") || !args.includes("--prior-package-absent"))) throw new Error("Qualifying novice run requires commit, report, run identity, Codex binary, old package, and all fresh-environment flags.");
@@ -212,7 +213,7 @@ async function main() {
     archive, expectedSha256, ownedRoot, repositoryRoot, realUserProfile: os.homedir(), realCodexHome: process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"), productionRoot,
     environmentKind, qualification: qualifying ? { freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true } : undefined,
     repositoryCommit, versions: { windows: os.release(), node: process.versions.node, npm: npmVersion, bun: bunVersion, package: JSON.parse(await readFile(path.join(repositoryRoot, "package.json"), "utf8")).version, codexCli: codexVersion },
-    runIdentity, codexBin, oldArchive, oldArchiveSha256, oldVersion, oldRepositoryCommit,
+    runIdentity, codexBin, protectedGlobalNpmRoot, oldArchive, oldArchiveSha256, oldVersion, oldRepositoryCommit,
     dryRun: args.includes("--dry-run"),
   });
   process.stdout.write(JSON.stringify({
