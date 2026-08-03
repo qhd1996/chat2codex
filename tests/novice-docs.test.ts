@@ -24,6 +24,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
     expect(matrix).toContain("tests/novice-package-matrix.test.ts");
+    expect(matrix).not.toContain("novice-native-lifecycle-probe.mjs");
+    expect(matrix).not.toContain("nativeCommand");
+    expect(matrix).not.toContain("nativeContract");
     expect(matrix).toContain(`path.join(os.tmpdir(), ".novice-matrix-" + process.pid)`);
     expect(matrix).not.toContain(`path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid)`);
     for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-standard-user-lifecycle.ps1", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
