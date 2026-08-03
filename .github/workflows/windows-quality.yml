@@ -331,8 +331,16 @@ jobs:
             $codexBin = Get-ChildItem -LiteralPath (Join-Path $npmRoot 'node_modules/@openai') -Recurse -File | Where-Object Name -EQ 'codex.exe' | Select-Object -First 1
             if (-not $codexBin) { throw 'codex_cli_binary_missing' }
             $env:Path = $codexBin.DirectoryName + ';' + $env:Path
-            node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup
-            if ($LASTEXITCODE -ne 0) { throw 'novice_acceptance_failed' }
+            $acceptanceOutput = @(& node candidate/extracted/package/scripts/run-novice-acceptance.mjs --archive $archive.FullName --sha256 $metadata.sha256 --old-archive $oldArchive.FullName --old-sha256 $oldMetadata.sha256 --old-version $oldMetadata.version --old-commit $oldMetadata.repositoryCommit --owned-root $ownedRoot --environment-root $environmentRoot --production-root (Join-Path $env:RUNNER_TEMP 'excluded-production') --environment-kind equivalent_isolated_windows --fresh-profile --repository-absent --prior-package-absent --repository-commit $metadata.repositoryCommit --run-identity $runIdentity --codex-bin $codexBin.FullName --report $report --cleanup 2>&1)
+            $acceptanceExit = $LASTEXITCODE
+            if ($acceptanceExit -ne 0) {
+              $acceptanceText = ($acceptanceOutput | ForEach-Object { [string]$_ }) -join "`n"
+              if ($acceptanceText -like '*Scheduled Task readiness deadline exceeded*') { throw 'attestation_task_readiness' }
+              if ($acceptanceText -like '*Another-interactive-user ACL denial probe failed*') { throw 'attestation_another_user_acl' }
+              if ($acceptanceText -like '*Attestation owned root remained after cleanup*') { throw 'attestation_owned_root_cleanup' }
+              if ($acceptanceText -like '*Integrated clean Windows lifecycle attestation failed*') { throw 'attestation_lifecycle_failed' }
+              throw 'novice_acceptance_failed'
+            }
             node candidate/extracted/package/scripts/verify-novice-evidence.mjs --external $report
             if ($LASTEXITCODE -ne 0) { throw 'novice_evidence_invalid' }
             Copy-Item -LiteralPath $report -Destination candidate/novice-clean-evidence.json
@@ -408,3 +416,21 @@ jobs:
             candidate/clean-run-status.json
           if-no-files-found: error
           retention-days: 14
+      - name: Publish bounded clean-package evidence
+        if: always()
+        shell: pwsh
+        run: |
+          $fallback = [ordered]@{ schemaVersion=1; verdict='fail'; failureCode='clean_package_evidence_unavailable'; cleanup=[ordered]@{ InspectionComplete=$false; CleanupErrorCodes=@('unavailable'); OwnedRootExists=$true; EnvironmentRootExists=$true; MatchingProcesses=-1; ResidualTestUsers=-1; ResidualTask=$true } }
+          try {
+            $status = Get-Content -LiteralPath candidate/clean-run-status.json -Raw -ErrorAction Stop | ConvertFrom-Json
+            $proof = Get-Content -LiteralPath candidate/zero-residual-proof.json -Raw -ErrorAction Stop | ConvertFrom-Json
+            $allowed = @('job_incomplete','archive_size_mismatch','archive_hash_mismatch','old_archive_hash_mismatch','candidate_extract_failed','candidate_package_invalid','codex_cli_install_failed','codex_cli_binary_missing','attestation_task_readiness','attestation_another_user_acl','attestation_owned_root_cleanup','attestation_lifecycle_failed','novice_acceptance_failed','novice_evidence_invalid','clean_package_acceptance_failed')
+            $failureCode = if ($status.failureCode -and $allowed -contains [string]$status.failureCode) { [string]$status.failureCode } elseif ($status.verdict -eq 'pass') { $null } else { 'clean_package_acceptance_failed' }
+            $public = [ordered]@{ schemaVersion=1; verdict=if ($status.verdict -eq 'pass' -and $status.cleanupComplete) {'pass'} else {'fail'}; failureCode=$failureCode; cleanup=[ordered]@{ InspectionComplete=[bool]$proof.InspectionComplete; CleanupErrorCodes=@($proof.CleanupErrorCodes | ForEach-Object { if ([string]$_ -match '^[a-z0-9_]+$') {[string]$_} else {'unavailable'} }); OwnedRootExists=[bool]$proof.OwnedRootExists; EnvironmentRootExists=[bool]$proof.EnvironmentRootExists; MatchingProcesses=[int]$proof.MatchingProcesses; ResidualTestUsers=[int]$proof.ResidualTestUsers; ResidualTask=[bool]$proof.ResidualTask } }
+          } catch { $public = $fallback }
+          $json = $public | ConvertTo-Json -Compress -Depth 6
+          $escaped = $json.Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
+          $level = if ($public.verdict -eq 'pass') {'notice'} else {'error'}
+          Write-Host ('::' + $level + ' title=Clean package evidence::' + $escaped)
+          try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $json -ErrorAction Stop } catch { Write-Host '::error title=Clean package evidence::{"schemaVersion":1,"verdict":"fail","failureCode":"clean_package_summary_write"}' }
+          exit 0

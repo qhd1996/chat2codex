@@ -824,3 +824,35 @@ reproduction, then one corrected full-CI attempt.
   `8873936916` was uploaded, failure publisher was correctly skipped, and the
   blocking enforce step passed. Full/native/clean-package jobs were intentionally
   not run by the `[matrix-only]` diagnostic marker; final full CI remains required.
+
+### 06:54-07:01 novice.19 full repository GREEN and clean-package RED
+
+- Before the remote run, committed-tree 30 x 19 passed in 222.5 seconds with
+  1,950 pass and zero fail/skip/timeout/residual; report SHA-256 is
+  `ad3eb5d478935b9e11ad98f4d8dcde8df7f061393b7357d9d0cbc387f5ebaf90`.
+  Full local stable was 1,033 pass / 8 documented conditional skips / 0 fail;
+  build, OpenSpec 4/4, authority, distribution, and novice template validation
+  passed under Bun 1.3.9 / Node 24.14.0.
+- Full run [30860379008](https://github.com/qhd1996/chat2codex/actions/runs/30860379008)
+  on `7421d2f` completed repository `novice-acceptance` successfully in 4m47s.
+  The public matrix notice confirms 30 completed repetitions and cleanup true.
+  It produced reviewed `.19`, supported-old, repetition, and native artifacts.
+- `clean-package-acceptance` then ran 1m22s and failed. Artifact `8874228771`
+  (548 bytes, workflow artifact digest
+  `71b181da838b623e41e87cb443fd448fa3e374d472aea83b4819bf07c90c0fad`)
+  exists, but the public annotation contains only generic exit 1. Browser control
+  was unavailable because its required JS execution entry was absent; credential
+  lookup was policy-blocked, so no credential bypass or manual-download request
+  was used. Exact clean failure is still unknown.
+- The separate nonblocking native diagnostic reported
+  `standard_user_wrapper/scheduled_task/exit` / `exit_267009`, cleanup false, with
+  zero task/user/process counts but `profileExists=true` and
+  `ownedRootExists=true`. This is preserved P1/cleanup-negative evidence and is
+  not treated as a clean-package cause.
+- Stop-loss path: do not rerun full repository gates. The clean workflow now maps
+  a closed list of existing attestation errors to bounded codes, always publishes
+  `clean-run-status` plus the zero-residual proof, and exits zero only for evidence
+  publication; the original clean step remains blocking. The next run uses only
+  `[clean-package-only]`. No timeout, skip, or safety relaxation is added. Routing
+  remains `gpt-5.6-sol / ultra`; after repeated CI failures the path changed from
+  full reruns to one targeted gate with a public diagnostic contract.

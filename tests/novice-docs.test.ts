@@ -163,6 +163,12 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(cleanupStep?.run).not.toContain("$absentTaskExitCodes");
     expect(cleanupStep?.run).not.toContain("SilentlyContinue");
     expect(parsedSteps.find((step: any) => step.name === "Upload redacted clean-package evidence")?.if).toBe("always()");
+    const cleanPublish = parsedSteps.find((step: any) => step.name === "Publish bounded clean-package evidence");
+    expect(cleanPublish?.if).toBe("always()");
+    for (const value of ["clean_package_evidence", "failureCode", "InspectionComplete", "MatchingProcesses", "ResidualTestUsers", "ResidualTask", "GITHUB_STEP_SUMMARY", "::error title=Clean package evidence::", "exit 0"]) expect(cleanPublish?.run).toContain(value);
+    expect(cleanPublish?.run).not.toContain("Get-Content $report");
+    const cleanRun = parsedSteps.find((step: any) => step.name === "Run package-only clean Windows novice acceptance")?.run;
+    for (const value of ["$acceptanceOutput", "$acceptanceExit", "attestation_task_readiness", "attestation_another_user_acl", "attestation_owned_root_cleanup", "novice_acceptance_failed"]) expect(cleanRun).toContain(value);
     for (const value of ["needs: novice-acceptance", "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4", "@openai/codex@0.146.0", "C2C_RUNNER_ENVIRONMENT", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--run-identity", "--codex-bin", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
     expect(cleanJob).toContain("Join-Path $npmRoot 'node_modules/@openai'");
     expect(cleanJob).toContain("Where-Object Name -EQ 'codex.exe'");
