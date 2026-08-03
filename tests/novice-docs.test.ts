@@ -70,6 +70,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     for (const value of ["$environmentRoot", "--environment-root $environmentRoot", "--sha256 $metadata.sha256", "--repository-commit $metadata.repositoryCommit", "--run-identity $runIdentity", "CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT", "CHAT2CODEX_NOVICE_RUN_IDENTITY"]) expect(cleanJob).toContain(value);
     const acceptance = await readFile(path.join(root, "scripts", "run-novice-acceptance.mjs"), "utf8");
     const attestation = await readFile(path.join(root, "scripts", "novice-clean-windows-attestation.mjs"), "utf8");
+    const packageMatrix = await readFile(path.join(root, "src", "quality", "novice-package-matrix.ts"), "utf8");
     const anotherUserAcl = await readFile(path.join(root, "scripts", "novice-another-user-acl.ps1"), "utf8");
     expect(acceptance).toContain("--protected-real-codex-home");
     expect(acceptance).toContain("USERPROFILE: plan.environment.userProfile");
@@ -89,6 +90,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(attestation).toContain(`"; writers=" + writers`);
     expect(attestation).toContain(`ToString('yyyy-MM-ddTHH:mm:ss.fffZ')`);
     expect(attestation).not.toContain(`CreationDate.ToUniversalTime().ToString('o')`);
+    expect(packageMatrix).toContain(`ToString('yyyy-MM-ddTHH:mm:ss.fffZ')`);
+    expect(packageMatrix).not.toContain(`CreationDate.ToUniversalTime().ToString('o')`);
     expect(attestation).toContain("waitJson(readyPath, 15_000)");
     expect(attestation).toContain(`Another-interactive-user ACL denial probe failed: " + redactFailure(result.stderr)`);
     expect(anotherUserAcl).not.toContain("IsPathFullyQualified");

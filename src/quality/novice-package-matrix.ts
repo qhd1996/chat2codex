@@ -365,7 +365,7 @@ async function firstLine(stream: NodeJS.ReadableStream, deadlineMs: number): Pro
 }
 
 function queryWindowsProcessIdentity(pid: number): { pid: number; createdAt: string } {
-  const command = "$p=Get-CimInstance Win32_Process -Filter 'ProcessId = " + pid + "'; if(!$p){exit 3}; [pscustomobject]@{pid=[int]$p.ProcessId;createdAt=$p.CreationDate.ToUniversalTime().ToString('o')} | ConvertTo-Json -Compress";
+  const command = "$p=Get-CimInstance Win32_Process -Filter 'ProcessId = " + pid + "'; if(!$p){exit 3}; [pscustomobject]@{pid=[int]$p.ProcessId;createdAt=$p.CreationDate.ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ss.fffZ')} | ConvertTo-Json -Compress";
   const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], { encoding: "utf8", windowsHide: true });
   if (result.status !== 0) throw new Error("Could not query restart process identity.");
   return JSON.parse(result.stdout);
