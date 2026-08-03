@@ -29,6 +29,7 @@ type CliCommand =
   | "help"
   | "init"
   | "protocol"
+  | "portable"
   | "service"
   | "setup"
   | "smoke"
@@ -110,6 +111,9 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
     case "protocol":
       await runProtocol(args);
       return;
+    case "portable":
+      await runPortable(args);
+      return;
   }
 }
 
@@ -141,6 +145,7 @@ Commands:
   smoke                 Run Codex app-server smoke checks
   service               Print/install/uninstall a user service
   protocol generate     Refresh the bundled Codex app-server schema snapshot
+  portable              Plan or run the personal Windows lifecycle
   help                  Show this help
   version               Show package version
 
@@ -529,6 +534,18 @@ async function runProtocol(args: string[]): Promise<void> {
   await generateAppServerSchema(args.slice(1));
 }
 
+async function runPortable(args: string[]): Promise<void> {
+  if (args[0] === "-h" || args[0] === "--help") {
+    console.log("Usage: chat2codex portable <install|upgrade|rollback|uninstall|reinstall|doctor> [--archive PATH] [--sha256 HEX] [--home PATH] [--dry-run] [--json]");
+    return;
+  }
+  const portable = await import("./setup/personal-portable.js");
+  const options = portable.parsePersonalPortableArgs(args);
+  const plan = portable.planPersonalPortableAction(options);
+  if (!options.dryRun) throw new portable.PersonalPortableError("PORTABLE_EXECUTION_NOT_AVAILABLE", "Run with --dry-run until the transactional executor is installed.");
+  console.log(options.json ? JSON.stringify(plan) : JSON.stringify(plan, null, 2));
+}
+
 function normalizeSmokeArgs(args: string[]): string[] {
   const [first, ...rest] = args;
   if (first === "handshake" || first === "turn" || first === "approval") {
@@ -594,6 +611,7 @@ function isCommand(value: string): value is CliCommand {
     "doctor",
     "init",
     "protocol",
+    "portable",
     "service",
     "setup",
     "smoke",

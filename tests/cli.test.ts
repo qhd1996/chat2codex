@@ -39,6 +39,11 @@ describe("CLI", () => {
       command: "smoke",
       args: ["approval"],
     });
+    expect(parseCommand(["portable", "install", "--dry-run"])).toEqual({ command: "portable", args: ["install", "--dry-run"] });
+  });
+
+  test("portable help does not require bridge configuration", async () => {
+    await runCli(["portable", "--help"]);
   });
 
   test("start help does not require bridge configuration", async () => {
