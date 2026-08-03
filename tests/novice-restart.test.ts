@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { expect, test } from "bun:test";
+import { processIdExists } from "../scripts/process-identity.mjs";
 
 test("kills only after the durable boundary and recovers pending outbox without rerunning Codex", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-novice-restart-"));
@@ -19,7 +20,7 @@ test("kills only after the durable boundary and recovers pending outbox without 
     expect(identity.createdAt).toMatch(/^\d{4}-\d{2}-\d{2}T/u);
     child.kill();
     await child.exited;
-    expect(processExists(identity.pid)).toBe(false);
+    expect(processIdExists(identity.pid)).toBe(false);
     const recovered = Bun.spawnSync(["node", "scripts/novice-restart-probe.mjs", "recover", statePath], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
     expect(recovered.exitCode).toBe(0);
     const result = JSON.parse(recovered.stdout.toString());
@@ -29,7 +30,7 @@ test("kills only after the durable boundary and recovers pending outbox without 
     expect(result.recoveredIds).toEqual([result.deliveryIds[1]]);
     expect(result.codexRuns).toBe(1);
   } finally {
-    if (child && processExists(child.pid)) { child.kill(); await child.exited; }
+    if (child && processIdExists(child.pid)) { child.kill(); await child.exited; }
     await rm(root, { recursive: true, force: true });
   }
 });
@@ -54,7 +55,4 @@ function queryProcessIdentity(pid: number): { pid: number; createdAt: string } {
   const result = Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command], { stdout: "pipe", stderr: "pipe" });
   if (result.exitCode !== 0) throw new Error("Could not query restart probe identity.");
   return JSON.parse(result.stdout.toString());
-}
-function processExists(pid: number): boolean {
-  return Bun.spawnSync(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "if(Get-Process -Id " + pid + " -ErrorAction SilentlyContinue){exit 0}else{exit 1}"], { stdout: "pipe", stderr: "pipe" }).exitCode === 0;
 }

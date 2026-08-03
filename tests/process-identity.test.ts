@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-import { descendantIdentities, sameProcessIdentity } from "../scripts/process-identity.mjs";
+import { descendantIdentities, processIdExists, sameProcessIdentity } from "../scripts/process-identity.mjs";
 
 test("does not treat a reused pid as the original process identity", () => {
   expect(sameProcessIdentity(
@@ -18,4 +18,9 @@ test("tracks only descendants created after the root identity", () => {
     { pid: 40, parentPid: 10, createdAt: "2026-08-02T04:59:59.000Z" },
   ];
   expect(descendantIdentities(rows, root).map((row) => row.pid)).toEqual([20, 30]);
+});
+
+test("checks an exited pid without starting an external process", () => {
+  expect(processIdExists(process.pid)).toBe(true);
+  expect(processIdExists(0x7fffffff)).toBe(false);
 });

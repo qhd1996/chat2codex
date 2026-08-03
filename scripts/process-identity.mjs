@@ -6,6 +6,17 @@ export function sameProcessIdentity(left, right) {
   );
 }
 
+export function processIdExists(pid) {
+  const value = Number(pid);
+  if (!Number.isSafeInteger(value) || value <= 0) return false;
+  try {
+    process.kill(value, 0);
+    return true;
+  } catch (error) {
+    return error?.code === "EPERM";
+  }
+}
+
 export function descendantIdentities(rows, root) {
   const byParent = new Map();
   for (const row of rows) {
