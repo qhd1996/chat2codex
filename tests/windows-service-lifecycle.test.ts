@@ -37,6 +37,20 @@ describe("Windows service lifecycle executor", () => {
     expect(JSON.stringify(result)).not.toContain("secret-material");
   });
 
+  test("repeating an identical installed task is a verified no-op", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" });
+    await installWindowsUserTask(input, fixture.io);
+    fixture.setKeyMode("preserved");
+    fixture.events.length = 0;
+
+    const second = await installWindowsUserTask(input, fixture.io);
+
+    expect(second.createdKeys).toBe(0);
+    expect(fixture.events.filter((event) => event[0] === "write")).toEqual([]);
+    expect(fixture.events.filter((event) => event[0] === "run" && (event[2] as string[])[0] === "/Create")).toEqual([]);
+    expect(fixture.events.some((event) => event[0] === "run" && (event[2] as string[])[0] === "/Query")).toBeTrue();
+  });
+
   test("restores prior owned files and unregisters after task verification failure", async () => {
     const oldTask = "<Task><Actions><Exec><Arguments>-File &apos;" + input.launcherPath + "&apos;</Arguments></Exec></Actions></Task>";
     const prior = { [input.envFile]: "USER_SETTING=yes\r\n", [input.launcherPath]: "old launcher", [input.taskXmlPath]: oldTask, [input.manifestPath]: JSON.stringify(priorManifestFor("old launcher", oldTask)) };

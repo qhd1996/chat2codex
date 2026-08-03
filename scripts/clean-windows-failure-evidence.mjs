@@ -7,9 +7,11 @@ const stages = new Set([
   "key_rotation", "uninstall_3", "task_absent_2", "protected_checks",
   "owned_root_cleanup", "attestation_build", "unavailable",
   ...["install_1", "install_2", "install_3"].flatMap((operation) => ["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply", "file_create_identity", "file_create_create", "file_create_stdin"].map((detail) => operation + "/" + detail)),
+  ...["DIST_INSPECTION_FAILED", "DIST_TASK_MISSING", "DIST_WRITER_CONFLICT", "DIST_LOCK_UNHEALTHY", "DIST_KEYS_INVALID", "DIST_LOOPBACK_INVALID"].map((code) => "doctor/" + code),
 ]);
 const codes = new Set(["failed", "exit_86", "unavailable"]);
 const aclStages = new Set(["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply", "file_create_identity", "file_create_create", "file_create_stdin"]);
+const doctorCodes = new Set(["DIST_INSPECTION_FAILED", "DIST_TASK_MISSING", "DIST_WRITER_CONFLICT", "DIST_LOCK_UNHEALTHY", "DIST_KEYS_INVALID", "DIST_LOOPBACK_INVALID"]);
 
 export function cleanWindowsFailureLine(value) {
   const bounded = boundedFailure(value);
@@ -45,6 +47,12 @@ export function parseLifecycleFailure(source) {
     } catch { return { detailStage: null, code: "failed" }; }
   }
   return { detailStage: null, code: "failed" };
+}
+
+export function parseDoctorFailureCode(source) {
+  if (typeof source !== "string" || source.length > 1024 * 1024) return null;
+  for (const code of doctorCodes) if (source.includes(code + ":")) return code;
+  return null;
 }
 
 function boundedFailure(value) {

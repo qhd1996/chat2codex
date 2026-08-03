@@ -5,6 +5,7 @@ import {
   parseCleanWindowsFailureLine,
   parseCleanWindowsFailureOutput,
   parseLifecycleFailure,
+  parseDoctorFailureCode,
 } from "../scripts/clean-windows-failure-evidence.mjs";
 
 describe("clean Windows bounded failure evidence", () => {
@@ -42,5 +43,11 @@ describe("clean Windows bounded failure evidence", () => {
     expect(parseLifecycleFailure("CHAT2CODEX_FAILURE_DETAIL " + JSON.stringify({ ...detail, stage: "unknown" }))).toEqual({ detailStage: null, code: "failed" });
     expect(parseLifecycleFailure("token C:/Users/private")).toEqual({ detailStage: null, code: "failed" });
     expect(parseCleanWindowsFailureLine(cleanWindowsFailureLine({ stage: "install_1/directory_acl_owner_read", code: "exit_86" }))).toEqual({ stage: "install_1/directory_acl_owner_read", code: "exit_86" });
+  });
+
+  test("extracts only one bounded doctor code", () => {
+    expect(parseDoctorFailureCode("error Windows distribution - DIST_INSPECTION_FAILED: hidden path")).toBe("DIST_INSPECTION_FAILED");
+    expect(parseDoctorFailureCode("error token - BAD-CODE: secret")).toBeNull();
+    expect(parseDoctorFailureCode("error x - " + "A".repeat(100) + ": value")).toBeNull();
   });
 });

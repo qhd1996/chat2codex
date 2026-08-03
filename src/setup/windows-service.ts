@@ -93,14 +93,19 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
       envFile: input.envFile, keyFiles: Object.values(keys.paths),
       ownedKeyFiles: [...new Set([...(priorManifest?.ownedKeyFiles ?? []), ...keys.created])],
       ownedFiles: [input.launcherPath, input.taskXmlPath, input.manifestPath],
-      hashes: { "launcher.ps1": sha256(launcher), "task.xml": sha256(taskXml) }, installedAt: io.now().toISOString(),
+      hashes: { "launcher.ps1": sha256(launcher), "task.xml": sha256(taskXml) }, installedAt: priorManifest?.installedAt ?? io.now().toISOString(),
     };
     parseWindowsInstallationManifest(manifest, home);
+    const manifestText = JSON.stringify(manifest, null, 2) + "\n";
+    if (priorManifest && priorTaskExisted && priorWriterCount === 0 &&
+        snapshots.get(input.envFile) === env && snapshots.get(input.launcherPath) === launcher &&
+        snapshots.get(input.taskXmlPath) === taskXml && snapshots.get(input.manifestPath) === manifestText) {
+      return { taskPath, manifest, createdKeys: 0 };
+    }
     if (snapshots.get(input.manifestPath) !== null) await writeRollbackSnapshot(input, snapshots, statePath, io);
     await io.writeTextAtomic(input.envFile, env);
     await io.writeTextAtomic(input.launcherPath, launcher);
     await io.writeTextAtomic(input.taskXmlPath, taskXml);
-    const manifestText = JSON.stringify(manifest, null, 2) + "\n";
     await io.writeTextAtomic(input.manifestPath, manifestText);
     for (const [filePath, expected] of [[input.envFile, env], [input.launcherPath, launcher], [input.taskXmlPath, taskXml], [input.manifestPath, manifestText]] as const) {
       const observed = await io.readText(filePath);

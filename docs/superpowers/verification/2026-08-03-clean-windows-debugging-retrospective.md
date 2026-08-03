@@ -881,3 +881,28 @@ reproduction, then one corrected full-CI attempt.
   a false native-report-missing error. Local gate: 35 pass / 0 fail plus Node 24
   typecheck/contracts. Since `.20` already ran remotely, these new product bytes
   require `.21`; they are not relabeled as `.20`.
+
+### 07:17-07:34 personal P0 alignment and true idempotent install
+
+- `.21` clean-only run [30862410588](https://github.com/qhd1996/chat2codex/actions/runs/30862410588)
+  crossed install 1 and failed only at `another_user_acl`; cleanup was complete and
+  every residual was zero. CR-0010, ADR-0006, design/OpenSpec, acceptance matrix,
+  implementation plan, live UI Steps, CURRENT, estimate, and risks were reread.
+  They all state that same-machine second-user attack testing is
+  `DIST-HARDEN-001` P1 and must not decide personal P0.
+- The clean P0 attestation therefore retains the exact boolean field as false and
+  no longer executes the attack probe. The P1 script, current-host positive result,
+  and hosted negative history remain preserved. Current-user owner-only file and
+  directory ACL validation, protected DACL, authentication, and no-secret rules are
+  unchanged. TDD proves a qualifying P0 manifest accepts the P1 flag false.
+- `.22` clean-only run [30863006364](https://github.com/qhd1996/chat2codex/actions/runs/30863006364)
+  then crossed install 1/keys and failed at `install_2`; cleanup again had every
+  residual zero. Code tracing and a transaction fixture confirmed the exact defect:
+  a second identical install performed 9 writes including a rollback snapshot and
+  re-registered the same task with `/Create /F`.
+- TDD changed an identical verified prior manifest/task/launcher/hash/key set with
+  zero writers into a true no-op: zero write, zero `/Create`, zero new key,
+  `createdKeys=0`. Package/version drift, task/launcher drift, active writers, and
+  upgrades still use the full transaction and rollback. Focused lifecycle gate is
+  47 pass / 0 fail plus typecheck/contracts. These bytes require `.23`; they are
+  not relabeled as `.22`.

@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanWindowsFailureLine, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
+import { cleanWindowsFailureLine, parseDoctorFailureCode, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
 
 const args = process.argv.slice(2);
 const read = (flag) => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
@@ -64,6 +64,7 @@ let completed = false;
 let stage = "root_create";
 let lifecycleFailureCode = "failed";
 let lifecycleFailureDetailStage = null;
+let doctorFailureCode = null;
 try {
   stage = "root_create";
   await mkdir(workspace, { recursive: true });
@@ -85,7 +86,7 @@ try {
   stage = "installed_hashes"; const installedFiles = await hashInstalledFiles(home, packageRoot);
   stage = "start_1"; const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "doctor"; const doctor = runCli(["doctor", "--env", envFile], commands, true);
-  if (doctor.status !== 0) throw new Error("Installed doctor failed.");
+  if (doctor.status !== 0) { doctorFailureCode = parseDoctorFailureCode(String(doctor.stdout ?? "") + "\n" + String(doctor.stderr ?? "")); throw new Error("Installed doctor failed."); }
   stage = "stop_1"; await stopTask(stopPath, first, commands);
   stage = "start_2"; const second = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "restart_identity";
@@ -130,7 +131,7 @@ try {
   process.stdout.write("NOVICE_CLEAN_WINDOWS_ATTESTATION " + JSON.stringify(attestation) + "\n");
 } catch (error) {
   const code = lifecycleFailureCode;
-  const publicStage = lifecycleFailureDetailStage && /^install_[123]$/u.test(stage) ? stage + "/" + lifecycleFailureDetailStage : stage;
+  const publicStage = lifecycleFailureDetailStage && /^install_[123]$/u.test(stage) ? stage + "/" + lifecycleFailureDetailStage : stage === "doctor" && doctorFailureCode ? stage + "/" + doctorFailureCode : stage;
   process.stderr.write(cleanWindowsFailureLine({ stage: publicStage, code }) + "\n");
   throw error;
 } finally {

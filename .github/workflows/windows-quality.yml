@@ -343,6 +343,7 @@ jobs:
                   $bounded = ([string]$failureMarker[0]).Substring('NOVICE_CLEAN_WINDOWS_FAILURE '.Length) | ConvertFrom-Json
                   $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
                   $allowedStages += foreach ($installStage in @('install_1','install_2','install_3')) { foreach ($aclStage in @('file_acl_owner_read','file_acl_dacl_apply','directory_acl_owner_read','directory_acl_dacl_apply','file_create_identity','file_create_create','file_create_stdin')) { $installStage + '/' + $aclStage } }
+                  $allowedStages += foreach ($doctorCode in @('DIST_INSPECTION_FAILED','DIST_TASK_MISSING','DIST_WRITER_CONFLICT','DIST_LOCK_UNHEALTHY','DIST_KEYS_INVALID','DIST_LOOPBACK_INVALID')) { 'doctor/' + $doctorCode }
                   $allowedDetailCodes = @('failed','exit_86','unavailable')
                   if ($bounded.schemaVersion -eq 1 -and $allowedStages -contains [string]$bounded.stage -and $allowedDetailCodes -contains [string]$bounded.code) { $failureStage = [string]$bounded.stage; $failureDetailCode = [string]$bounded.code }
                 } catch {}
@@ -440,6 +441,7 @@ jobs:
             $failureCode = if ($status.failureCode -and $allowed -contains [string]$status.failureCode) { [string]$status.failureCode } elseif ($status.verdict -eq 'pass') { $null } else { 'clean_package_acceptance_failed' }
             $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
             $allowedStages += foreach ($installStage in @('install_1','install_2','install_3')) { foreach ($aclStage in @('file_acl_owner_read','file_acl_dacl_apply','directory_acl_owner_read','directory_acl_dacl_apply','file_create_identity','file_create_create','file_create_stdin')) { $installStage + '/' + $aclStage } }
+            $allowedStages += foreach ($doctorCode in @('DIST_INSPECTION_FAILED','DIST_TASK_MISSING','DIST_WRITER_CONFLICT','DIST_LOCK_UNHEALTHY','DIST_KEYS_INVALID','DIST_LOOPBACK_INVALID')) { 'doctor/' + $doctorCode }
             $allowedDetailCodes = @('failed','exit_86','unavailable')
             $publicStage = if ($allowedStages -contains [string]$status.failureStage) {[string]$status.failureStage} else {'unavailable'}
             $publicDetailCode = if ($allowedDetailCodes -contains [string]$status.failureDetailCode) {[string]$status.failureDetailCode} else {'unavailable'}
