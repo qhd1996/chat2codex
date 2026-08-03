@@ -69,8 +69,10 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).toContain("$taskDeadline = [DateTime]::UtcNow.AddSeconds(15)");
     expect(standardUserScript).toContain("Where-Object TaskName -EQ $taskName");
     const nativeWorker = await readFile(path.join(root, "scripts", "novice-native-lifecycle-worker.ps1"), "utf8");
-    for (const value of ["[IO.Directory]::CreateDirectory($OwnedRoot)", "$env:TEMP = $OwnedRoot", "$env:TMP = $OwnedRoot", "$env:USERPROFILE = $ProfilePath", "$env:HOME = $ProfilePath", "$env:C2C_NATIVE_LIFECYCLE_REPORT = $ReportPath", "WindowsIdentity", "WindowsPrincipal", "administrator", "sidHash", "& $NodeBin $LifecycleScript", "exit $LASTEXITCODE"]) expect(nativeWorker).toContain(value);
+    for (const value of ["[IO.Directory]::CreateDirectory($OwnedRoot)", "$env:TEMP = $OwnedRoot", "$env:TMP = $OwnedRoot", "$env:USERPROFILE = $ProfilePath", "$env:HOME = $ProfilePath", "$env:C2C_NATIVE_LIFECYCLE_REPORT = $ReportPath", "WindowsIdentity", "WindowsPrincipal", "administrator", "sidHash", "& $NodeBin $LifecycleScript", "$nodeExit = $LASTEXITCODE", "exit $nodeExit"]) expect(nativeWorker).toContain(value);
     expect(nativeWorker).not.toMatch(/Password|UserName/iu);
+    for (const value of ["worker/node_check", "worker/script_check", "worker/node_invoke", "worker/report_missing", "NODE_MISSING", "SCRIPT_MISSING", "Write-FailureReport"]) expect(nativeWorker).toContain(value);
+    expect(nativeWorker).not.toContain("$_.Exception.Message");
     expect(standardUserScript).toContain("Join-Path ([IO.Path]::GetTempPath()) ('C2C-Native-'");
     expect(standardUserScript).toContain("GetAccessControl($ownedRoot");
     expect(standardUserScript).toContain("$owner.Value -ne $currentSid");
