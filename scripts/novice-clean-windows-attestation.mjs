@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ const ownedRoot = path.resolve(read("--owned-root") ?? "");
 const packageRoot = path.resolve(read("--package-root") ?? "");
 const codexBin = path.resolve(read("--codex-bin") ?? "");
 const productionRoot = path.resolve(read("--production-root") ?? "");
+const protectedRealCodexHome = path.resolve(read("--protected-real-codex-home") ?? "");
 const taskName = read("--task-name") ?? "";
 const archiveSha256 = read("--archive-sha256") ?? "";
 const repositoryCommit = read("--repository-commit") ?? "";
@@ -19,7 +20,7 @@ const oldRepositoryCommit = read("--old-repository-commit") ?? "";
 const runIdentity = read("--run-identity") ?? "";
 const environmentRoot = path.resolve(read("--environment-root") ?? "");
 const rehearsal = args.includes("--rehearsal");
-if (!process.env.CHAT2CODEX_NOVICE_ISOLATION || !path.isAbsolute(ownedRoot) || !path.isAbsolute(packageRoot) || !path.isAbsolute(codexBin) || !path.isAbsolute(productionRoot)) throw new Error("Clean Windows attestation requires owned absolute inputs.");
+if (!process.env.CHAT2CODEX_NOVICE_ISOLATION || !path.isAbsolute(ownedRoot) || !path.isAbsolute(packageRoot) || !path.isAbsolute(codexBin) || !path.isAbsolute(productionRoot) || !path.isAbsolute(protectedRealCodexHome)) throw new Error("Clean Windows attestation requires owned absolute inputs.");
 if (!/^Chat2Codex-Novice-[a-f0-9]{8}$/u.test(taskName)) throw new Error("Clean Windows attestation scope is invalid.");
 if (!/^[a-f0-9]{64}$/u.test(archiveSha256) || !/^[a-f0-9]{40}$/u.test(repositoryCommit) || !/^[a-f0-9]{64}$/u.test(oldArchiveSha256) || !/^[a-f0-9]{40}$/u.test(oldRepositoryCommit) || !/^[A-Za-z0-9._-]{8,200}$/u.test(runIdentity)) throw new Error("Clean Windows attestation binding is invalid.");
 if (!path.isAbsolute(environmentRoot) || !inside(environmentRoot, ownedRoot) || !inside(environmentRoot, packageRoot) || overlaps(environmentRoot, productionRoot)) throw new Error("Clean Windows owned environment is invalid.");
@@ -32,10 +33,12 @@ const githubActions = process.env.GITHUB_ACTIONS === "true";
 const runnerEnvironment = process.env.C2C_RUNNER_ENVIRONMENT ?? "local-rehearsal";
 if (!rehearsal && (!githubActions || runnerEnvironment !== "github-hosted")) throw new Error("Qualifying attestation requires a GitHub-hosted ephemeral runner.");
 if (await findGitDirectory(process.cwd())) throw new Error("Qualifying attestation found a repository checkout.");
-const realCodexHome = path.join(os.homedir(), ".codex");
+const projectedRealCodexHome = path.resolve(process.env.CODEX_HOME ?? path.join(os.homedir(), ".codex"));
 const defaultChat2CodexHome = path.join(os.homedir(), ".chat2codex");
-const realCodexHomeAbsentBefore = !(await lstat(realCodexHome).catch(() => null));
-if (!realCodexHomeAbsentBefore) throw new Error("Qualifying attestation requires an untouched real Codex Home.");
+if (!inside(environmentRoot, projectedRealCodexHome) || overlaps(environmentRoot, protectedRealCodexHome)) throw new Error("Projected fresh Codex Home or protected real Codex Home scope is invalid.");
+const realCodexHomeAbsentBefore = !(await lstat(projectedRealCodexHome).catch(() => null));
+if (!realCodexHomeAbsentBefore) throw new Error("Projected fresh Codex Home must start absent.");
+const protectedRealCodexHomeBefore = await snapshotTree(protectedRealCodexHome);
 if (await lstat(defaultChat2CodexHome).catch(() => null) || await lstat(productionRoot).catch(() => null)) throw new Error("Prior Chat2Codex state, configuration, or production path is present.");
 const priorTasks = spawnSync("schtasks.exe", ["/Query", "/FO", "CSV", "/NH"], { encoding: "utf8", windowsHide: true });
 if (priorTasks.status !== 0 || priorTasks.stdout.toLocaleLowerCase().includes("\\chat2codex\\")) throw new Error("Prior Chat2Codex Scheduled Task is present or uncertain.");
@@ -86,7 +89,8 @@ try {
   if (firstKeys.length !== 3 || secondKeys.length !== 3 || firstKeys.some((value) => secondKeys.includes(value))) throw new Error("Reinstall did not rotate three fresh keys.");
   runCli(["service", "uninstall", ...baseArgs], commands);
   if (queryTask(taskPath).exists) throw new Error("Scheduled Task remained after final uninstall.");
-  if (await lstat(realCodexHome).catch(() => null)) throw new Error("Attestation changed the real Codex Home.");
+  if (await lstat(projectedRealCodexHome).catch(() => null)) throw new Error("Attestation changed the projected fresh Codex Home.");
+  if (await snapshotTree(protectedRealCodexHome) !== protectedRealCodexHomeBefore) throw new Error("Attestation changed the protected real Codex Home.");
   if (await lstat(productionRoot).catch(() => null)) throw new Error("Attestation changed the excluded production path.");
   await rm(ownedRoot, { recursive: true, force: true });
   const ownedRootRemoved = !(await lstat(ownedRoot).catch(() => null));
@@ -140,4 +144,24 @@ function slash(value) { return value.replaceAll("\\", "/"); }
 function inside(root, candidate) { const relative = path.relative(root, candidate); return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative)); }
 function overlaps(left, right) { return inside(left, right) || inside(right, left); }
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
+async function snapshotTree(root) {
+  const info = await lstat(root).catch((error) => error?.code === "ENOENT" ? null : Promise.reject(error));
+  if (!info) return sha256("absent");
+  const records = [];
+  async function visit(current, relative) {
+    const entry = await lstat(current);
+    if (entry.isSymbolicLink()) throw new Error("Protected real Codex Home contains a symbolic link; snapshot is uncertain.");
+    if (entry.isDirectory()) {
+      records.push([relative, "directory"]);
+      const children = await readdir(current);
+      children.sort((left, right) => left.localeCompare(right));
+      for (const child of children) await visit(path.join(current, child), relative ? relative + "/" + child : child);
+      return;
+    }
+    if (!entry.isFile()) throw new Error("Protected real Codex Home contains an unsupported entry.");
+    records.push([relative, "file", sha256(await readFile(current))]);
+  }
+  await visit(root, "");
+  return sha256(JSON.stringify(records));
+}
 async function findGitDirectory(start) { let current = path.resolve(start); while (true) { if (await lstat(path.join(current, ".git")).catch(() => null)) return true; const parent = path.dirname(current); if (parent === current) return false; current = parent; } }

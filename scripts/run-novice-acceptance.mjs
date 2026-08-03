@@ -61,7 +61,10 @@ export async function runNoviceArchiveAcceptance(input) {
     const taskName = "Chat2Codex-Novice-" + input.repositoryCommit.slice(0, 8);
     const attestationRoot = path.join(plan.ownedRoot, "native-lifecycle");
     const script = path.join(installedRoot, "scripts", "novice-clean-windows-attestation.mjs");
-    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--old-archive-sha256", input.oldArchiveSha256, "--old-repository-commit", input.oldRepositoryCommit, "--run-identity", runIdentity], { cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true, env: { ...process.env, CHAT2CODEX_NOVICE_ISOLATION: "1" } });
+    const result = spawnSync(node, [script, "--owned-root", attestationRoot, "--environment-root", plan.ownedRoot, "--package-root", installedRoot, "--codex-bin", input.codexBin, "--task-name", taskName, "--production-root", input.productionRoot, "--protected-real-codex-home", input.realCodexHome, "--archive-sha256", plan.archiveSha256, "--repository-commit", input.repositoryCommit, "--old-archive-sha256", input.oldArchiveSha256, "--old-repository-commit", input.oldRepositoryCommit, "--run-identity", runIdentity], {
+      cwd: plan.environment.workspace, encoding: "utf8", windowsHide: true,
+      env: { ...process.env, USERPROFILE: plan.environment.userProfile, APPDATA: plan.environment.appData, LOCALAPPDATA: plan.environment.localAppData, CODEX_HOME: plan.environment.codexHome, CHAT2CODEX_HOME: plan.environment.chat2codexHome, CHAT2CODEX_NOVICE_ISOLATION: "1" },
+    });
     const marker = result.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_CLEAN_WINDOWS_ATTESTATION "));
     if (result.status !== 0 || !marker) throw new Error("Integrated clean Windows lifecycle attestation failed: " + redactedTail(result.stderr));
     attestation = JSON.parse(marker.slice("NOVICE_CLEAN_WINDOWS_ATTESTATION ".length));

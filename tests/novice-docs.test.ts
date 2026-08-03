@@ -42,6 +42,12 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(cleanJob).toContain("Join-Path $npmRoot 'node_modules/@openai'");
     expect(cleanJob).toContain("Where-Object Name -EQ 'codex.exe'");
     for (const value of ["$environmentRoot", "--environment-root $environmentRoot", "--sha256 $metadata.sha256", "--repository-commit $metadata.repositoryCommit", "--run-identity $runIdentity", "CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT", "CHAT2CODEX_NOVICE_RUN_IDENTITY"]) expect(cleanJob).toContain(value);
+    const acceptance = await readFile(path.join(root, "scripts", "run-novice-acceptance.mjs"), "utf8");
+    const attestation = await readFile(path.join(root, "scripts", "novice-clean-windows-attestation.mjs"), "utf8");
+    expect(acceptance).toContain("--protected-real-codex-home");
+    expect(acceptance).toContain("USERPROFILE: plan.environment.userProfile");
+    expect(attestation).toContain("snapshotTree(protectedRealCodexHome)");
+    expect(attestation).toContain("Projected fresh Codex Home");
     for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);
     for (const value of ["old package frozen install failed", "old package build failed", "old package pack failed", "--old-commit $oldMetadata.repositoryCommit"]) expect(workflow).toContain(value);
     expect(cleanJob).not.toContain("novice-attestation-owned");
