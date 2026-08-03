@@ -7,22 +7,24 @@ action-time confirmation. Approval of one packet never authorizes another.
 
 ## Immutable candidate inputs
 
-- Candidate version: `0.8.0-novice.6`.
-- Source: `11919dddfb20d3510fa0587c42926630ed0ce7c7`.
-- Package: `chat2codex-0.8.0-novice.6.tgz`; 392,178 bytes; 131 files.
-- SHA-256: `81cdcb130550bff426e2386f8a921609ea7b3ad1255eec75b0c1cfa6bf784079`.
+- Candidate version: `0.8.0-novice.7`.
+- Source: `8df77f3187b1677b8e63f88a0268acb7f62156b3`.
+- Package: `chat2codex-0.8.0-novice.7.tgz`; 410,702 bytes; 131 files.
+- SHA-256: `951d75b1695cecc1ace3be5621e259c6ced52cadc93568a9d430a04874a05180`.
 - Reproduction: two new detached clean checkouts produced byte-identical archives.
-- Do not use superseded `.3`, `.4`, `.5`, or intermediate
-  `122d624`/`b216232`/`8ff7ee3`/`e917aa5` provenance.
+- Do not use superseded `.3`, `.4`, `.5`, `.6`, or intermediate
+  `122d624`/`b216232`/`8ff7ee3`/`e917aa5`/`11919dd` provenance.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements authority snapshot: `01e827b` (the non-authoritative audit lock;
   reread the live requirements ledger before every action).
 - Task 11 handoff: `3b0698c`.
-- Final temporary-Codex-Home config SHA-256: `a70084...db0ce`; exactly two
+- Final temporary-Codex-Home config SHA-256: `6419a1...20e1`; exactly two
   untrusted Hooks, one disabled/unstarted MCP definition, zero error/warning, and
   no `plugin/list`.
 - Final seven-primitives report: 160/160, zero residual process, SHA-256
-  `0f8400...5a93d`.
+  `83a447...9815`.
+- Package build toolchain: Node `24.14.0`, Bun `1.3.9`; the Windows workflow
+  rejects candidate version or SHA drift before artifact upload.
 
 Any byte, version, process, state, task, or target drift invalidates this packet and
 requires a fresh read-only inventory before action.
