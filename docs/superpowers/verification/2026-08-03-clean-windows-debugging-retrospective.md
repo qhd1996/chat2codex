@@ -37,7 +37,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 11:12–11:13 | `.8` / `0d60108` | [30781253268](https://github.com/qhd1996/chat2codex/actions/runs/30781253268), job `91586177348` | fast passed; native lifecycle failed on second install | Full log SHA-256 `1578ED3266DB9F11937ADDF2451DB97BF47B5FB7C95A98AC8D8257B0CA73CDAF`; existing lexical key path failed canonical-file equality |
 | 11:21–11:28 | `.8` / `46412aa` | [30781607399](https://github.com/qhd1996/chat2codex/actions/runs/30781607399), jobs `91587227286`, `91588078865` | repository job fully passed; clean job failed | Confirmed clean blocker `codex_cli_binary_missing`; failure artifact says cleanup complete, zero processes/users/task. Clean job log SHA-256 `78AE4E087AA3FD647E40F25A106569D1BE3596A09DDC065BDE4835C95FB42676` |
 | 11:32–11:34 | `.8` / `b7be7e7` | [30782067568](https://github.com/qhd1996/chat2codex/actions/runs/30782067568), job `91588578476` | native/fast passed; 30-run failed at repetition 2 | Full log SHA-256 `CD2FC090AB44F422AC59584EF010C46BE58EE875F01262981C682EA0B8C7309D`. Inner failed shard was not uploaded: exact sub-failure remains **unknown** |
-| 11:37–pending | `.8` / `e7d5f05` | [30782268855](https://github.com/qhd1996/chat2codex/actions/runs/30782268855), job `91589133547` | running; now always uploads repetition report | Current remaining remote blocker pending direct result |
+| 11:37–11:45 | `.8` / `e7d5f05` | [30782268855](https://github.com/qhd1996/chat2codex/actions/runs/30782268855), jobs `91589133547`, `91589934140` | repository job passed; clean job failed | Exact failure was `Qualifying attestation requires an untouched real Codex Home`; setup actions create runner `~/.codex` before the no-checkout job |
+| 11:39–11:48 | `.8` / `4ae9bb9` | [30782360782](https://github.com/qhd1996/chat2codex/actions/runs/30782360782), jobs `91589402258`, `91590274544` | repository job passed; clean job repeated same failure | Full clean log SHA-256 `8513BD57AC394B146D7CC60514C7550C5847F82E3E65810FC9AF9459C64BAE58`; cleanup artifact again proves zero residual |
+| 11:54–pending | `.8` / `d3e3078` | [30782944296](https://github.com/qhd1996/chat2codex/actions/runs/30782944296) | projected fresh profile/Home plus protected-runner-home snapshot | Current remote blocker pending direct result |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -63,6 +65,11 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
    official-registry install showed the executable below
    `node_modules/@openai/codex-win32-x64/vendor/.../codex.exe`. `b7be7e7` searches
    the closed `node_modules/@openai` subtree for exact `codex.exe`.
+6. **A GitHub hosted account is ephemeral but setup actions may pre-create
+   `~/.codex`.** Treating physical runner home as the fresh novice profile was too
+   strict and not the tested user boundary. `9d51611` runs the lifecycle under the
+   owned projected profile/Codex Home, requires that projected Home to start absent,
+   and snapshots the pre-existing runner Home before/after to prove no mutation.
 
 ### Inferences
 
@@ -144,14 +151,15 @@ model result was accepted without main-agent verification.
 - Clean Windows still has no repository checkout, requires a real Scheduled Task,
   exact archive hash/version, another-user ACL denial, real old-package chain,
   always-run cleanup, and zero-residual proof.
+- The hosted runner's pre-existing `.codex` is not deleted, renamed, or treated as
+  fresh; it is a protected external tree whose content hash must remain identical.
 - Historical failures and negative reports remain under `.tmp/` and GitHub Actions;
   no prior report was overwritten.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30782268855` must complete. If its 30-run fails, the new
-artifact will provide the first exact remote failed-shard payload; if repository
-passes, clean job must directly confirm the Codex optional-package fix and then all
+Current blocker: run `30782944296` must complete. Its clean job must directly confirm
+the projected fresh profile/Home boundary and protected runner-home snapshot, then all
 clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual rows. Estimated remaining
 CI time is 10–20 minutes per attempt; root-cause-dependent repair time is unknown
 until the retained report is read.
@@ -179,8 +187,8 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 15 through current run
-  `30782268855`; 14 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 17 through current run
+  `30782944296`; 16 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; one remote repetition failure whose
