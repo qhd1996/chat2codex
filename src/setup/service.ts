@@ -482,7 +482,7 @@ function windowsServiceIo(home: string): WindowsServiceIo {
     },
     taskExists: async (taskPath) => {
       const result = spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"], { encoding: "utf8", windowsHide: true });
-      if (result.error?.code === "ENOENT" || result.status === 1) return false;
+      if ((result.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || result.status === 1) return false;
       if (result.status === 0) return true;
       throw new Error("Windows task state is uncertain.", { cause: result.error });
     },
