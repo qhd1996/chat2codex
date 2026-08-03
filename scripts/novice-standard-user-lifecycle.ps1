@@ -77,6 +77,7 @@ finally {
   try { $residualProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.CommandLine -and $_.CommandLine -like ('*C2C-Native-' + $identity.Substring(0,8) + '*') }).Count } catch { $residualProcesses = -1; if (-not $cleanupFailure) { $cleanupFailure = 'process_query' } }
   $ownedRootExists = Test-Path -LiteralPath $ownedRoot
   $report = [ordered]@{schemaVersion=1;verdict=if(-not$failure-and-not$cleanupFailure-and$childExit-eq0-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists){'pass'}else{'fail'};summary=if($value){$value.summary}else{$null};failure=$failure;cleanup=[ordered]@{attempted=$true;succeeded=-not$cleanupFailure-and$residualUsers-eq0-and$residualProcesses-eq0-and-not$ownedRootExists;failure=$cleanupFailure;residualUsers=$residualUsers;residualProcesses=$residualProcesses;ownedRootExists=$ownedRootExists}}
+  [IO.Directory]::CreateDirectory((Split-Path $ReportPath -Parent)) | Out-Null
   [IO.File]::WriteAllText($ReportPath,(($report|ConvertTo-Json -Depth 8)+[Environment]::NewLine),[Text.UTF8Encoding]::new($false))
 }
 $stdout | Write-Host
