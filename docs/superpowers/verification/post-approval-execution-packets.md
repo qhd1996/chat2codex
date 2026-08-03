@@ -17,6 +17,11 @@ action-time confirmation. Approval of one packet never authorizes another.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements ledger: `e3553f9`.
 - Task 11 handoff: `3b0698c`.
+- Final temporary-Codex-Home config SHA-256: `a70084...db0ce`; exactly two
+  untrusted Hooks, one disabled/unstarted MCP definition, zero error/warning, and
+  no `plugin/list`.
+- Final seven-primitives report: 160/160, zero residual process, SHA-256
+  `0f8400...5a93d`.
 
 Any byte, version, process, state, task, or target drift invalidates this packet and
 requires a fresh read-only inventory before action.

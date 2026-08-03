@@ -56,15 +56,18 @@ historical evidence only. They must not be used for approval or installation.
 - The final `.6` extracted package preserves the same three reviewed Hook hashes.
   Its 131-file closed set, path/secret scan, exact-package profile projection,
   double lifecycle, migration, Gateway fail-closed, cleanup, and zero-residual
-  process proof passed. The earlier exact `.5` temporary-Codex-Home run generated
-  and strict-parsed a new temporary Codex Home using signed Codex CLI `0.146.0`
+  process proof passed. The final exact `.6` package generated and strict-parsed
+  a new temporary Codex Home using signed Codex CLI `0.146.0`
   (`bc343b...1fddb`): exactly two
   untrusted Hooks, zero Hook errors/warnings, one disabled/unstarted MCP
-  definition, and no `plugin/list`. The temporary config SHA-256 is
-  `31bc30b14f8f267bcfe19509e65bcbd7e21be06fcda70b06a4d0ed7a209093b9`.
-- Seven primitives passed 8/8 once and 160/160 over 20 fresh reruns with zero
-  failure and no residual test process. Report SHA-256 is
-  `2cb845e5a0ccf6c26aa27d5d3f438f3ab7db50c41fc23844da42607f41947b26`.
+  definition, and no `plugin/list`. The final temporary config SHA-256 is
+  `a7008492e443350c5960090ccc74b1675d54f33d99e6ede1dff5dec06c7db0ce`.
+  Its app-server process exited with zero matching residuals. A policy guard
+  rejected the explicit temporary-directory cleanup command, so this no-token
+  test Home remains preserved as local audit evidence and is not claimed deleted.
+- Seven primitives passed 8/8 once and 160/160 over 20 fresh final-source reruns
+  with zero failure and no residual test process. Final report SHA-256 is
+  `0f84007a13b7f503d4cf0fe8a6a008f0dcfe4f4d5752611178eb918afc15a93d`.
   Two earlier PowerShell wrapper attempts failed to parse Bun output and remain
   negative tool evidence; the route changed to direct Bun `spawnSync`.
 - Windows workflows resolve only immutable action commits: checkout
