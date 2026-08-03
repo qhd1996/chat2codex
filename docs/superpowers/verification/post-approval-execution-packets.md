@@ -8,13 +8,15 @@ ambiguous ownership, or an action outside the user's explicit authorization.
 
 ## Immutable candidate inputs
 
-- Candidate version: `0.8.0-novice.9`.
-- Source: `fded46f4a499d8e9c8151a2dce78a08bbd60887e`.
-- Package: `chat2codex-0.8.0-novice.9.tgz`; 394,556 bytes; 131 files.
-- SHA-256: `33afb36a44709f23b3b208bce12cbd488c8d14253c8dcf397d08d817eec54a3b`.
+- Candidate version: `0.8.0-novice.12`.
+- Source: `b6a82e1990cbdf4c259024f85977b24feb1fd6ef`.
+- Package: `chat2codex-0.8.0-novice.12.tgz`; 395,205 bytes; 131 files.
+- SHA-256: `ec3c7956e561ab95543cb0588befad0834bc8881a0232cad0ac25743d5d7e778`.
 - Reproduction: two new detached clean checkouts produced byte-identical archives.
-- Do not use superseded `.3` through `.8`, including `3871be1`; `.9` adds
-  continuous writer supervision and verifies the proper-lockfile directory lease.
+- Do not use superseded `.3` through `.11`. `.12` adds continuous writer
+  supervision, proper-lockfile directory-lease verification, non-privileged
+  owner-checked key ACL application, owner-only key-directory ACLs, and destructive
+  another-user denial probes.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements authority snapshot: `01e827b` (the non-authoritative audit lock;
   reread the live requirements ledger before every action).

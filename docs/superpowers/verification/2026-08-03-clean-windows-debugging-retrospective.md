@@ -427,3 +427,61 @@ from the exact `.9` archive with a timestamped byte-verified backup and automati
 v4 rollback. Estimated remaining engineering time is unchanged at 2–4 hours for
 local production/Desktop/Weixin evidence after elevation, plus 3–6 hours when a
 qualifying clean Windows environment is available.
+
+## 18:35–19:50 local ACL, UAC, and production attempts
+
+Classification: items explicitly marked **confirmed** have direct local evidence;
+items marked **unknown** remain hypotheses. No production failure was hidden by a
+successful rollback.
+
+- **Confirmed:** `.9` production preflight exposed that constructing a new
+  `FileSecurity` and setting the already-correct owner requires `WRITE_OWNER` on this
+  Windows volume. Direct .NET `SetAccessControl` failed for a normal user while a
+  DACL-only update succeeded. TDD commit `e835d76` first verifies the existing owner
+  SID and then replaces only the DACL. The exact product API subsequently produced
+  only current-user/SYSTEM/Administrators ACEs on a disposable file.
+- **Confirmed:** file-only ACLs were insufficient because the parent key directory
+  inherited `Authenticated Users: Modify`, allowing deletion/replacement risk. Commit
+  `6f3bba3` adds an owner-verified protected directory DACL with OI/CI inheritance and
+  checks it with the same closed allowlist. A real disposable directory and child
+  file both contained only current-user/SYSTEM/Administrators. Commit `7fe2e46` also
+  requires another-user read, delete, and replacement attempts to fail and preserves
+  the exact key hash.
+- Candidate `.12` / `b6a82e1` passed the stable gate with 917 pass, 8 documented
+  platform skips and 0 fail. Two detached clean worktrees produced byte-identical
+  archives: 131 files, 395,205 bytes, SHA-256
+  `EC3C7956E561AB95543CB0588BEFAD0834BC8881A0232CAD0AC25743D5D7E778`.
+  The exact archive then passed a non-elevated disposable Windows lifecycle:
+  owner-only directory plus three owner-only keys, task start, directory lock,
+  doctor exit 0, stop, uninstall with state preservation, and zero residual
+  task/root/process.
+- **Confirmed external blocker:** multiple visible UAC requests used the frozen
+  script (latest SHA-256
+  `3FCD480205A75FA91FC86674BA3A062936EF269AF4C3E28A07E3FD77D62E3A4A`)
+  and were canceled by the Windows security desktop after approximately 123.6–124.1
+  seconds. The elevated script never started. Every follow-up found zero temporary
+  user, task, root, profile, process, and result file. Haoda must click **Yes** during
+  that system window; after a successful click the expected run time is 2–4 minutes.
+- **Confirmed production safety outcome:** each failed `.9`/`.12` deployment retained
+  a timestamped owner-only backup and ultimately restored the exact `.4` state, env,
+  launcher and task. The latest independent recovery check observed one `.4` writer
+  PID 47212, a fresh directory lock, state SHA-256 `CB1BF1...52BD4`, schema 4,
+  4 tasks / 9 jobs / 4 delivered outbox, zero active/undelivered obligations, and
+  doctor exit 0. Candidate tasks were removed.
+- **Confirmed diagnostic evidence:** the exact `.12` state runtime converted a copy
+  of production schema v4 to v6, preserved all four task IDs and four delivered
+  outbox IDs, and wrote a byte-exact `.v4.bak`. The exact real `dist/index.js` also
+  started against a disposable v4 copy and reached adapter ready. An independent
+  Windows task flight recorder captured the candidate command line and schema-v6
+  state.
+- **Unknown:** the remaining difference that prevents the production candidate task
+  from satisfying the combined writer+lock+schema health gate. Four bounded
+  production attempts ended in explicit rollback; the last three rollback reports
+  were successful. The production retry line is stopped. No timeout was increased,
+  no test was skipped, and no ACL/health boundary was weakened.
+
+Routing remained `gpt-5.6-sol / ultra`. After two failed attempts each investigation
+changed path: remote CI to local package evidence; abstract lifecycle to real lock
+shape; product install to direct ACL reproduction; production retry to disposable
+v4 runtime/task probes and flight recording. Several subagent follow-ups returned
+empty payloads; their claims were not used. Goal remains active.
