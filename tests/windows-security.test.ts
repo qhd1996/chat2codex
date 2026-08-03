@@ -12,7 +12,7 @@ const administrators = "S-1-5-32-544";
 const allow = (identitySid: string, rights = 0x1f01ff, inherited = false) => ({ identitySid, accessControlType: "Allow", rights, inherited });
 const repositoryRoot = path.resolve(import.meta.dir, "..");
 
-test("loads the trusted inbox Security module before every ACL command", async () => {
+test("uses direct .NET ACL APIs without PowerShell module discovery", async () => {
   for (const relativePath of [
     "src/desktop-gateway/server.ts",
     "src/desktop-gateway/client.ts",
@@ -20,12 +20,8 @@ test("loads the trusted inbox Security module before every ACL command", async (
     "scripts/assert-private-windows-file.mjs",
   ]) {
     const source = await readFile(path.join(repositoryRoot, relativePath), "utf8");
-    const modulePath = source.search(/Modules(?:\\\\|\\)Microsoft\.PowerShell\.Security(?:\\\\|\\)Microsoft\.PowerShell\.Security\.psd1/u);
-    const explicitImport = source.indexOf("Import-Module -Name $securityModule -Force -ErrorAction Stop");
-    const aclCommand = source.search(/(?:Get|Set)-Acl/u);
-    expect(modulePath, relativePath).toBeGreaterThanOrEqual(0);
-    expect(explicitImport, relativePath).toBeGreaterThan(modulePath);
-    expect(aclCommand, relativePath).toBeGreaterThan(explicitImport);
+    expect(source, relativePath).toMatch(/\[System\.IO\.File\]::(?:Get|Set)AccessControl/u);
+    expect(source, relativePath).not.toMatch(/(?:Get|Set)-Acl|Import-Module|Microsoft\.PowerShell\.Security/u);
   }
 });
 
