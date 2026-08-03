@@ -59,7 +59,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 16:18–16:24 | `.8` / `8a04b3e` → `3120db0` | [30793010125](https://github.com/qhd1996/chat2codex/actions/runs/30793010125), jobs `91620355323`, `91621591908` | repository passed; clean failed | Advanced beyond another-user helper; second install SID PowerShell child failed empty. Clean log SHA-256 `E9C0402E470FF8A101943A0CAB571981BD7CD6F84AAF5F21D1470D22558B4A02`; zero residual artifact passed |
 | 16:31–16:39 | `.8` / `b0a9b22` → `a8fee1c` | [30793753462](https://github.com/qhd1996/chat2codex/actions/runs/30793753462), jobs `91622623891`, `91623994418` | repository passed; clean failed | Advanced through ACL/SID gates to Scheduled Task readiness; no ready file in 15 s. Clean log SHA-256 `A2B4A85184615541BFA975EAF2FC23DB677E62DD10246DC47DEE8C366947D308`; zero residual artifact passed |
 | 16:46–16:50 | `.8` / `4a344fc` → `2f6aefc` | [30794632293](https://github.com/qhd1996/chat2codex/actions/runs/30794632293), jobs [`91625320208`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91625320208), [`91626525352`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91626525352) | repository passed; clean failed | Readiness diagnostic itself threw `ReferenceError: logFile is not defined`, masking the Scheduled Task failure. Clean log SHA-256 `4880EA5BD82F49CA6669BDFB32CC64F5393A832E68F47EC6FB4A1A8E5F857464`; cleanup proved 0 processes, 0 users, 0 task and both owned roots absent |
-| 16:53–pending | `.8` / `80f8093` → `992dcaa` | [30795295379](https://github.com/qhd1996/chat2codex/actions/runs/30795295379), job [`91627379356`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91627379356) | candidate running | Correctly passes `logFile` into both readiness calls; repository job reached the required 30-repetition step; terminal result pending |
+| 16:53–17:01 | `.8` / `80f8093` → `992dcaa` | [30795295379](https://github.com/qhd1996/chat2codex/actions/runs/30795295379), jobs [`91627379356`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91627379356), [`91628441400`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91628441400) | repository passed; clean failed | Both calls accepted `logFile`, but no outer declaration existed; clean failed at the first call with `ReferenceError: logFile is not defined`. Log SHA-256 `309CBED0BC9C93BE888AD4C522FD8D89430F5DF402D901643B1C8061045DEC11`; cleanup again proved 0 processes/users/task and absent roots |
+| pending | `.8` / `8bc12c7` → `90c7367` | next candidate run not yet assigned | local RED→GREEN and clean-pack reproduction complete | Declares one `logFile`, binds the installer `--stderr`, both calls and diagnostic reader to that path. Two detached clean checkouts produced byte-equal packages; push/run pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -162,13 +163,15 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     another-user ACL, second install, and task registration, but no ready file
     appeared inside the unchanged 15 s boundary. `4a344fc` retains redacted verbose
     task status, exact writer count, and launcher log tail on that same failure.
-20. **The new readiness diagnostic did not receive its log path.** Run
+20. **The new readiness diagnostic did not receive a complete log-path data flow.** Run
     `30794632293` reached the same failure path, then `startTask()` referenced a
     free `logFile` and threw `ReferenceError` before emitting task/writer/log
-    evidence. `80f8093` adds `logFile` to the function signature and both call
-    sites; `992dcaa` binds the resulting 412,100-byte package to CI. This confirms
-    the diagnostic defect, but the underlying Scheduled Task start failure remains
-    **unknown** until the corrected hosted run preserves its original evidence.
+    evidence. `80f8093` added `logFile` to the function signature and both call
+    sites, but run `30795295379` proved the value was still undeclared at the first
+    call. `8bc12c7` now declares one path and reuses it for installer `--stderr`, both
+    calls and the diagnostic reader. This confirms both diagnostic defects, but the
+    underlying Scheduled Task start failure remains **unknown** until a corrected
+    hosted run preserves its original evidence.
 
 ### Inferences
 
@@ -218,7 +221,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `8a04b3e` explicit-credential process launch | hosted run `30792210012` passed the literal pipe to `whoami` | helper uses .NET process credentials, in-memory SID proof, an independent no-output key read, and rejects cmd metacharacters; hosted proof pending |
 | `b0a9b22` native current-user SID | hosted run `30793010125` advanced past the helper, then the PowerShell SID child failed empty | parser RED covered missing implementation; 40 pass, 2 platform skips, 0 fail plus typecheck; hosted proof pending |
 | `4a344fc` readiness diagnostics | hosted run `30793753462` reached task start but timed out without a ready file | tests require redacted task/writer/log diagnostics and retain the 15 s boundary; remote evidence pending |
-| `80f8093` readiness log binding | hosted run `30794632293` failed with `ReferenceError: logFile is not defined`; the new source-contract assertions fail against `4a344fc` because neither call nor signature carries `logFile` | both calls and the signature now carry the value; focused regression and hosted proof are required before this row is complete |
+| `80f8093`, superseded by `8bc12c7` readiness log binding | hosted run `30794632293` failed because the helper had no parameter; `30795295379` then failed at the first call because the value was undeclared; the final source-contract assertions fail against `80f8093` | one `logFile` declaration now feeds installer `--stderr`, both calls, the helper parameter and reader; 41/41 related tests, typecheck, contracts and build passed under Node 24.14.0/Bun 1.3.9; hosted proof pending |
 
 ## Environment differences and immutable candidate evidence
 
@@ -228,9 +231,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `80f8093` produced byte-equal 412,100-byte archives, SHA-256
-  `4B79EE41FB3C0FE498056D0BC8325D28D47B98DA7D90B676ABC82304DDB29DAF`,
-  131 files. Workflow binding commit is `992dcaa`.
+  source `8bc12c7` produced byte-equal 412,103-byte archives, SHA-256
+  `9A5813B90436A024074DB1080C63813F15E5CF07D657F4328216D583810E1A53`,
+  131 files. Workflow binding commit is `90c7367`.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -274,11 +277,11 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30795295379` must finish both repository and clean-package
-jobs. The clean job must directly confirm the another-user ACL helper plus every
-clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
-CI time is 10–20 minutes for this attempt; further repair time depends on its retained
-report if it fails.
+Current blocker: candidate `90c7367` must be pushed and finish both repository and
+clean-package jobs. The clean job must directly confirm the another-user ACL helper
+plus every clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated
+remaining CI time is 10–20 minutes for this attempt; further repair time depends on
+its retained report if it fails.
 
 Rollback is commit-scoped: revert only the offending fix/rebind pair and return the
 candidate branch to the last reviewed SHA. No production files were changed by this
@@ -307,17 +310,17 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 38 through current run
-  `30795295379`; 37 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 38 completed through run
+  `30795295379`, all preserved; the next candidate has not yet received a run ID.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 76 commits through
-  `992dcaa`, including package hash rebinds and one explicit revert.
-- Latest failed clean job `30794632293` zero-residual artifact: owned root false,
+- Product/test/workflow repair commits after `8df77f3`: 79 commits through
+  `90c7367`, including package hash rebinds and one explicit revert.
+- Latest failed clean job `30795295379` zero-residual artifact: owned root false,
   environment root false, matching processes 0, residual users 0, residual task
   false.
 - Final counts and the terminal run conclusion will be appended after the first full
