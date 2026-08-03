@@ -15,7 +15,8 @@ action-time confirmation. Approval of one packet never authorizes another.
 - Do not use superseded `.3`, `.4`, `.5`, or intermediate
   `122d624`/`b216232`/`8ff7ee3`/`e917aa5` provenance.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
-- Requirements ledger: `e3553f9`.
+- Requirements authority snapshot: `01e827b` (the non-authoritative audit lock;
+  reread the live requirements ledger before every action).
 - Task 11 handoff: `3b0698c`.
 - Final temporary-Codex-Home config SHA-256: `a70084...db0ce`; exactly two
   untrusted Hooks, one disabled/unstarted MCP definition, zero error/warning, and
