@@ -61,14 +61,14 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(anotherUserAcl).toContain("$secure.AppendChar($character)");
     expect(anotherUserAcl).toContain("$secure.MakeReadOnly()");
     expect(anotherUserAcl).toContain("Start-Process cmd.exe");
-    expect(anotherUserAcl).toContain("Start-Process whoami.exe");
-    expect(anotherUserAcl).toContain("@('/user', '/fo', 'csv', '/nh')");
-    expect(anotherUserAcl).toContain("-RedirectStandardOutput $identityPath");
+    expect(anotherUserAcl).toContain("whoami /user /fo csv /nh ^| findstr");
+    expect(anotherUserAcl).toContain("$createdUser.SID.Value + '\" >nul'");
     expect(anotherUserAcl).toContain("$createdUser.SID.Value");
-    expect(anotherUserAcl).toContain("Another-user denial probe identity is invalid.");
+    expect(anotherUserAcl).toContain("Another-user denial probe identity is invalid: exit");
     expect(anotherUserAcl).toContain("&|<>^%!");
     expect(anotherUserAcl).toContain(`$command = 'type "' + $keyPath + '" >nul'`);
     expect(anotherUserAcl).not.toContain("-EncodedCommand");
+    expect(anotherUserAcl).not.toContain("RedirectStandardOutput");
     expect(anotherUserAcl).toContain("$keyPath -notmatch '^[A-Za-z]:");
     expect(acceptance).toContain("spawnSync(node, [npmCli, \"root\", \"-g\"]");
     for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);
