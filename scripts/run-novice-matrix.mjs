@@ -20,7 +20,7 @@ const trackedDirty = run("git", ["status", "--porcelain", "--untracked-files=no"
 if (trackedDirty) throw new Error("Novice matrix requires clean committed tracked files.");
 const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
 const startedAt = new Date().toISOString();
-const tempRoot = path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid);
+const tempRoot = path.join(os.tmpdir(), ".novice-matrix-" + process.pid);
 await mkdir(tempRoot, { recursive: true }); await mkdir(path.dirname(reportPath), { recursive: true });
 const testFiles = [
   "tests/novice-scenarios.test.ts", "tests/novice-simulator.test.ts", "tests/novice-redaction.test.ts",

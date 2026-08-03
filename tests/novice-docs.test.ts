@@ -19,6 +19,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
     expect(matrix).toContain("tests/novice-package-matrix.test.ts");
+    expect(matrix).toContain(`path.join(os.tmpdir(), ".novice-matrix-" + process.pid)`);
+    expect(matrix).not.toContain(`path.join(path.dirname(reportPath), ".novice-matrix-" + process.pid)`);
     for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
     for (const value of ["Upload novice repetition evidence", ".tmp/novice-repository-30.json", "if: always()"]) expect(workflow).toContain(value);
     expect(workflow).not.toContain("Select-Object -Single");
@@ -28,7 +30,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     const parsed = YAML.parse(workflow);
     expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.8"]);
     expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_VERSION).toBe("0.8.0-novice.8");
-    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("04a89dc7d740096747a4b10a36a83ba5b7839a1c505087cfba4c4159f8bc09bb");
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("f3a99343dc4247533b90e4c89aa25411d9d181508d0797d76bcee01befe58953");
     const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
