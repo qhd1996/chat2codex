@@ -485,3 +485,49 @@ changed path: remote CI to local package evidence; abstract lifecycle to real lo
 shape; product install to direct ACL reproduction; production retry to disposable
 v4 runtime/task probes and flight recording. Several subagent follow-ups returned
 empty payloads; their claims were not used. Goal remains active.
+
+## 20:19–22:06 launcher, Task 12, and hosted lifecycle follow-up
+
+Classification: items marked confirmed have direct evidence; unknown items remain
+open. Times are Asia/Shanghai.
+
+- 20:19–20:31 confirmed: candidate .13 failed a disposable Scheduled Task with
+  spawn powershell.exe ENOENT. TDD commit 5c5ac2d added the running PowerShell
+  directory before the requested PATH. RED was one failed launcher assertion;
+  focused GREEN was 8 pass / 2 platform skips and full stable was 917 / 8 / 0.
+- 20:32–20:52 confirmed: .14 / 7d5e64e produced three byte-identical
+  395,341-byte, 131-file archives with SHA-256
+  8490BBA8EED61E56645E19E193C77EE637710D25CDC5790E7DF9D90CB761BA28.
+  Its package lifecycle passed owner-only key root and keys, one writer, directory
+  lock, doctor 0, state-preserving uninstall, and zero task/root/process.
+- 20:55–21:19 confirmed negative evidence: accepted UAC runs exposed harness
+  defects in missing-task reporting, the PowerShell HOME variable, and elevated
+  root ownership. The final ACL micro-probe SHA was B50D3742...B38A6; report SHA
+  A1203E1A...A448 proved stage=owner-read, owner/current hashes differed,
+  ownerMatchesCurrent=false, no DACL apply, and zero residual root. This disproved
+  the WRITE_OWNER hypothesis for that run; no product owner was seized.
+- 21:20–21:40 confirmed RED to GREEN: commit 0d9aeb3 added bounded structural ACL
+  diagnostics across PowerShell, Node, and CLI. It omits command, path, SID,
+  message, and key material. Full stable passed 922 / 8 / 0. Commit 8f9c8fb added
+  equivalent native-lifecycle stage/type/code/errno/HResult and cleanup status;
+  .16 stable passed 924 / 8 / 0.
+- 21:29–22:03 confirmed Task 12: .15 / 18cbb33 archive SHA
+  9EA80636...172D3 passed current-user lifecycle and 30 x 19 package scenarios
+  (570 pass, zero fail/skip/timeout/residual). Phase A froze a stopped service and
+  three key hashes with production state/env/launcher unchanged. Accepted UAC PID
+  50252 ran Phase B: all three keys denied another-user read/delete/replace and kept
+  exact hashes. Phase C proved state preservation, complete key rotation, final
+  uninstall, production unchanged, and zero user/profile/task/root/process. This is
+  current-host Task 12 evidence, not DIST-003 or installed Desktop/real Weixin.
+- 21:02–22:06 confirmed CI: runs 30816094624, 30819358611, and 30820105515 failed
+  only at Run native temporary lifecycle gate; fast/restart passed and clean-package
+  was dependency-skipped. Exact Bun 1.3.9 passed locally. Commits 4d2df00/e749898
+  publish only bounded failure detail as a check annotation and remove the false
+  missing-30-file secondary error while retaining real negative artifacts. Run
+  30821095614 was still running when this section was written.
+
+No timeout was extended, no test was skipped, and no ACL, writer, cleanup, archive,
+or cross-user boundary was weakened. Routing stayed gpt-5.6-sol / ultra. Remaining
+blockers are the hosted Windows conclusion, production deployment, real Codex Home
+Hook/MCP trust, Desktop restart and seven installed primitives, real Weixin E2E,
+and qualifying second-Windows DIST-003. Goal remains active.
