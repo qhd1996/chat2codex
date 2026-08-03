@@ -66,6 +66,8 @@ export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> 
   if (process.platform !== "win32") throw new Error("Windows ACL creation requires Windows.");
   const script = [
     "$ErrorActionPreference='Stop'",
+    "$securityModule=Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1'",
+    "Import-Module -Name $securityModule -Force -ErrorAction Stop",
     "$path=$env:CHAT2CODEX_PRIVATE_PATH",
     "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
     "$system=New-Object Security.Principal.SecurityIdentifier('S-1-5-18')",

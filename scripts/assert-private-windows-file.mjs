@@ -44,6 +44,8 @@ export async function inspectPrivateWindowsFile(filePath) {
   if (!samePath(await realpath(resolved), resolved)) throw new Error("Private file path must be canonical.");
   const powershell = [
     "$ErrorActionPreference='Stop'",
+    "$securityModule=Join-Path $PSHOME 'Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1'",
+    "Import-Module -Name $securityModule -Force -ErrorAction Stop",
     "$path=$env:CHAT2CODEX_ACL_PATH",
     "$acl=Get-Acl -LiteralPath $path",
     "$current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value",

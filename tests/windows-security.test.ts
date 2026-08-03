@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -10,6 +10,24 @@ const user = "S-1-5-21-1000-1000-1000-1001";
 const system = "S-1-5-18";
 const administrators = "S-1-5-32-544";
 const allow = (identitySid: string, rights = 0x1f01ff, inherited = false) => ({ identitySid, accessControlType: "Allow", rights, inherited });
+const repositoryRoot = path.resolve(import.meta.dir, "..");
+
+test("loads the trusted inbox Security module before every ACL command", async () => {
+  for (const relativePath of [
+    "src/desktop-gateway/server.ts",
+    "src/desktop-gateway/client.ts",
+    "src/setup/windows-private-files.ts",
+    "scripts/assert-private-windows-file.mjs",
+  ]) {
+    const source = await readFile(path.join(repositoryRoot, relativePath), "utf8");
+    const modulePath = source.search(/Modules(?:\\\\|\\)Microsoft\.PowerShell\.Security(?:\\\\|\\)Microsoft\.PowerShell\.Security\.psd1/u);
+    const explicitImport = source.indexOf("Import-Module -Name $securityModule -Force -ErrorAction Stop");
+    const aclCommand = source.search(/(?:Get|Set)-Acl/u);
+    expect(modulePath, relativePath).toBeGreaterThanOrEqual(0);
+    expect(explicitImport, relativePath).toBeGreaterThan(modulePath);
+    expect(aclCommand, relativePath).toBeGreaterThan(explicitImport);
+  }
+});
 
 describe("Windows private-file ACL policy", () => {
   test("accepts only the current owner, SYSTEM, and Administrators", () => {
@@ -45,6 +63,21 @@ nativeTest("reads a disposable private file without mutating its ACL", async () 
     await expect(inspectPrivateWindowsFile(file)).resolves.toMatchObject({ aceCount: expect.any(Number) });
     expect(aclSddl(file)).toBe(before);
   } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+nativeTest("reads the ACL when module autoload discovery is unavailable", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-private-acl-module-"));
+  const file = path.join(root, "token.key");
+  const previous = process.env.PSModulePath;
+  try {
+    await writeFile(file, "test-key");
+    setDisposableAcl(file, false);
+    process.env.PSModulePath = path.join(root, "missing-modules");
+    await expect(inspectPrivateWindowsFile(file)).resolves.toMatchObject({ aceCount: expect.any(Number) });
+  } finally {
+    if (previous === undefined) delete process.env.PSModulePath; else process.env.PSModulePath = previous;
     await rm(root, { recursive: true, force: true });
   }
 });

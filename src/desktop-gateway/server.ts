@@ -31,6 +31,8 @@ export interface GatewayTokenLoaderOptions {
 const execFileAsync = promisify(execFile);
 const windowsAclScript = String.raw`
 $ErrorActionPreference = 'Stop'
+$securityModule = Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+Import-Module -Name $securityModule -Force -ErrorAction Stop
 $tokenPath = [Environment]::GetEnvironmentVariable('CHAT2CODEX_GATEWAY_ACL_PATH', 'Process')
 if ([string]::IsNullOrWhiteSpace($tokenPath)) { throw 'Missing ACL inspection path' }
 $acl = Get-Acl -LiteralPath $tokenPath
