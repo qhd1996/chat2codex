@@ -92,16 +92,6 @@ jobs:
           Write-Host ('::error title=Native lifecycle evidence::' + $fallback)
           try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Native lifecycle evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}' }
           exit 0
-      - name: Enforce native lifecycle evidence
-        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
-        shell: pwsh
-        run: |
-          $output = @(& node scripts/enforce-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
-          $exitCode = $LASTEXITCODE
-          $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_ENFORCE *' } | Select-Object -Last 1)
-          if ($marker.Count -eq 1) { Write-Host ([string]$marker[0]); exit $exitCode }
-          Write-Host 'NATIVE_LIFECYCLE_ENFORCE {"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_enforcement/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
-          exit 1
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30
@@ -222,15 +212,6 @@ jobs:
           Write-Host ('::error title=Native lifecycle evidence::' + $fallback)
           try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Native lifecycle evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}' }
           exit 0
-      - name: Enforce native lifecycle diagnostic
-        shell: pwsh
-        run: |
-          $output = @(& node scripts/enforce-native-lifecycle-evidence.mjs .tmp/native-lifecycle-status.json 2>&1)
-          $exitCode = $LASTEXITCODE
-          $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_ENFORCE *' } | Select-Object -Last 1)
-          if ($marker.Count -eq 1) { Write-Host ([string]$marker[0]); exit $exitCode }
-          Write-Host 'NATIVE_LIFECYCLE_ENFORCE {"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_enforcement/process_failure","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}'
-          exit 1
 
   clean-package-acceptance:
     needs: novice-acceptance

@@ -56,6 +56,14 @@ test("packages every novice acceptance runtime asset and declares Node 20.19 min
   expect(packageJson.scripts["test:novice"]).toContain("tests/novice-package-matrix.test.ts");
 });
 
+test("packages the personal bootstrap controller receipt and operator docs", async () => {
+  const packageJson = JSON.parse(await Bun.file(path.join(repositoryRoot, "package.json")).text());
+  expect(packageJson.files).toContain("scripts/chat2codex-personal.ps1");
+  const result = Bun.spawnSync([process.execPath, path.join(repositoryRoot, "scripts", "verify-distribution-package.mjs"), repositoryRoot], { stdout: "pipe", stderr: "pipe" });
+  expect(result.exitCode).toBe(0);
+  for (const file of ["src/setup/personal-portable.ts", "src/setup/portable-receipt.ts", "docs/windows/lifecycle.md", "docs/windows/troubleshooting.md"]) expect(await Bun.file(path.join(repositoryRoot, file)).exists()).toBeTrue();
+});
+
 test("normalizes tracked text bytes for reproducible Windows package archives", async () => {
   const attributes = await Bun.file(path.join(repositoryRoot, ".gitattributes")).text();
   expect(attributes).toContain("* text=auto eol=lf");
@@ -70,6 +78,7 @@ async function fixture(): Promise<string> {
   const root = await mkdtemp(path.join(os.tmpdir(), "chat2codex-dist-package-"));
   await mkdir(path.join(root, "distribution"), { recursive: true });
   await mkdir(path.join(root, "scripts", "codex-hooks"), { recursive: true });
+  await mkdir(path.join(root, "dist", "setup"), { recursive: true });
   await mkdir(path.join(root, "docs", "windows"), { recursive: true });
   await mkdir(path.join(root, "docs", "quality"), { recursive: true });
   for (const file of ["lifecycle.md", "compatibility.md", "troubleshooting.md"]) await writeFile(path.join(root, "docs", "windows", file), "portable\n");
@@ -78,6 +87,9 @@ async function fixture(): Promise<string> {
   await writeFile(path.join(root, "docs", "quality", "novice-acceptance-runbook.md"), "unproven\n");
   await writeFile(path.join(root, "package.json"), JSON.stringify({ name: "chat2codex", version: "0.8.0-test.1" }));
   for (const file of ["hook-client.mjs", "stop-wake.mjs", "user-prompt-submit.mjs"]) await writeFile(path.join(root, "scripts", "codex-hooks", file), file);
+  await writeFile(path.join(root, "scripts", "chat2codex-personal.ps1"), "portable\n");
+  await writeFile(path.join(root, "dist", "setup", "personal-portable.js"), "export {};\n");
+  await writeFile(path.join(root, "dist", "setup", "portable-receipt.js"), "export {};\n");
   const { createHash } = await import("node:crypto");
   const hashes = Object.fromEntries(["hook-client.mjs", "stop-wake.mjs", "user-prompt-submit.mjs"].map((file) => ["scripts/codex-hooks/" + file, createHash("sha256").update(file).digest("hex")]));
   await writeFile(path.join(root, "LICENSE"), "MIT"); await writeFile(path.join(root, "THIRD_PARTY_NOTICES.md"), "notices");

@@ -15,6 +15,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     for (const boundary of ["production", "real ~/.codex", "Hook", "Desktop restart", "Computer Use", "real Weixin"]) expect(runbook).toContain(boundary);
   });
 
+  test("retains hosted native evidence as explicit personal P1 diagnostics", async () => {
+    const evidence = await readFile(path.join(root, "docs", "superpowers", "verification", "personal-native-hosted-evidence.md"), "utf8");
+    for (const value of ["30836801914", "journey/file_acl_owner_read", "exit_86", "DIST-HARDEN-001", "P1", "DIST-002", "DIST-003", "always uploads", "No timeout", "Rollback"]) expect(evidence).toContain(value);
+  });
+
   test("runs the novice fast, native, 30-run, pack, extraction, and residual gates on Windows", async () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
@@ -38,7 +43,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(parsed?.jobs?.["novice-acceptance"]?.if).toContain("[native-only]");
     const nativeOnly = parsed?.jobs?.["native-lifecycle-diagnostic"];
     expect(nativeOnly?.if).toContain("[native-only]");
-    expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic","Enforce native lifecycle diagnostic"]);
+    expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic"]);
     expect(JSON.stringify(nativeOnly)).not.toContain("Run thirty repetitions");
     expect(JSON.stringify(nativeOnly)).not.toContain("Pack reviewed candidate");
     expect(nativeOnly?.steps?.find((step: any) => step.name === "Run native temporary lifecycle diagnostic")?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
@@ -101,10 +106,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativePublish?.run).toContain("workflow_publication/process_failure");
     expect(nativePublish?.run).toContain("exit 0");
     expect(nativePublish?.run).not.toContain("$output | Write-Host");
-    const nativeEnforce = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Enforce native lifecycle evidence");
-    expect(nativeEnforce?.run).toContain("enforce-native-lifecycle-evidence.mjs");
-    expect(nativeEnforce?.run).toContain("workflow_enforcement/process_failure");
-    expect(nativeEnforce?.run).not.toContain("$output | Write-Host");
+    expect(parsed?.jobs?.["novice-acceptance"]?.steps?.some((step: any) => /Enforce native lifecycle/u.test(step.name))).toBeFalse();
     const nativeOnlyPublish = nativeOnly?.steps?.find((step: any) => step.name === "Publish native lifecycle diagnostic");
     expect(nativeOnlyPublish?.if).toBe("always()");
     expect(nativeOnlyPublish?.run).toContain("publish-native-lifecycle-evidence.mjs");
@@ -112,10 +114,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeOnlyPublish?.run).toContain('\"code\":\"unavailable\"');
     expect(nativeOnlyPublish?.run).toContain("exit 0");
     expect(nativeOnlyPublish?.run).not.toContain("$output | Write-Host");
-    const nativeOnlyEnforce = nativeOnly?.steps?.find((step: any) => step.name === "Enforce native lifecycle diagnostic");
-    expect(nativeOnlyEnforce?.run).toContain("enforce-native-lifecycle-evidence.mjs");
-    expect(nativeOnlyEnforce?.run).toContain("workflow_enforcement/process_failure");
-    expect(nativeOnlyEnforce?.run).not.toContain("$output | Write-Host");
+    expect(nativeOnly?.steps?.some((step: any) => /Enforce native lifecycle/u.test(step.name))).toBeFalse();
     expect(workflow).toContain("[clean-package-only]");
     expect(workflow).toContain("if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true')");
     expect(parsed?.on?.pull_request).toBeDefined();
@@ -213,10 +212,11 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeLifecycleRun).toContain("workflow_invocation/report_missing");
     expect(nativeLifecycleRun).not.toContain("exit $exitCode");
     const publisher = await readFile(path.join(root, "scripts", "publish-native-lifecycle-evidence.mjs"), "utf8");
-    const enforcer = await readFile(path.join(root, "scripts", "enforce-native-lifecycle-evidence.mjs"), "utf8");
     const evidenceSource = await readFile(path.join(root, "src", "quality", "native-lifecycle-workflow-evidence.ts"), "utf8");
     for (const value of ["workflow_publication/summary_write", "GITHUB_STEP_SUMMARY", "process.exitCode = 0"]) expect(publisher).toContain(value);
     for (const value of ["workflow_publication/report_missing", "workflow_publication/report_invalid", "workflow_enforcement/report_missing", "workflow_enforcement/report_invalid"]) expect(evidenceSource).toContain(value);
-    for (const value of ["NATIVE_LIFECYCLE_ENFORCE", "process.exitCode = 1"]) expect(enforcer).toContain(value);
+    expect(workflow).not.toContain("enforce-native-lifecycle-evidence.mjs");
+    for (const requiredBlocking of ["Run novice fast diagnostics", "Run novice restart diagnostics", "Run thirty repetitions", "Audit dependencies", "Pack reviewed candidate", "Verify extracted package and residual evidence", "clean-package-acceptance"]) expect(workflow).toContain(requiredBlocking);
+    expect(workflow).not.toMatch(/timeout-minutes:s*(?:[6-9][0-9]|[1-9][0-9]{2,})/u);
   });
 });

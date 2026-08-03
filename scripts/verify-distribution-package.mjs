@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const manifestKeys = ["codexCli", "desktop", "hooks", "node", "packageRoots", "packageVersion", "provenance", "requiredDocs", "schemaVersion", "stateSchemas", "windows"];
 const forbiddenPath = /(?:C:[\/]Users[\/]dada|F:[\/](?:workspace|Chat2Codex|codex)|\bdada\b)/iu;
 const secret = /(?:AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{30,}|(?:^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|Bearer[ \t]+[A-Za-z0-9._~+/-]{20,})/u;
+const personalPortableAssets = ["scripts/chat2codex-personal.ps1", "dist/setup/personal-portable.js", "dist/setup/portable-receipt.js"];
 
 export async function validateDistributionTree(rootInput) {
   const root = path.resolve(rootInput);
@@ -25,6 +26,7 @@ export async function validateDistributionTree(rootInput) {
   const requiredDocs = manifest.requiredDocs;
   if (!Array.isArray(requiredDocs) || requiredDocs.length !== 6) throw new Error("Distribution required docs list is invalid.");
   for (const relative of requiredDocs) await regular(root, relative).catch(() => { throw new Error(`Missing distribution docs: ${String(relative)}`); });
+  for (const relative of personalPortableAssets) await regular(root, relative).catch(() => { throw new Error(`Missing personal portable runtime asset: ${String(relative)}`); });
   const hooks = object(manifest.hooks, "Hook hashes");
   if (Object.keys(hooks).length !== 3) throw new Error("Distribution must declare exactly three Hook hashes.");
   for (const [relative, expected] of Object.entries(hooks)) {
