@@ -46,6 +46,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     const attestation = await readFile(path.join(root, "scripts", "novice-clean-windows-attestation.mjs"), "utf8");
     expect(acceptance).toContain("--protected-real-codex-home");
     expect(acceptance).toContain("USERPROFILE: plan.environment.userProfile");
+    expect(acceptance).toContain("directory === plan.environment.codexHome");
+    expect(acceptance).toContain("plan.qualifyingEnvironment");
     expect(attestation).toContain("snapshotTree(protectedRealCodexHome)");
     expect(attestation).toContain("Projected fresh Codex Home");
     for (const value of ["47c2272faf764904a5c8cba903b05b679b20a0cb", "0.8.0-orchestrator.4", "novice-supported-old-package", "--old-archive $oldArchive.FullName", "--old-sha256 $oldMetadata.sha256", "--old-version $oldMetadata.version"]) expect(workflow).toContain(value);

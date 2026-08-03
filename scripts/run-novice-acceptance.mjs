@@ -42,7 +42,10 @@ export async function planNoviceIsolation(input) {
 export async function runNoviceArchiveAcceptance(input) {
   const plan = await planNoviceIsolation(input);
   if (input.dryRun === true) return { plan, qualifying: false, verdict: "package_smoke" };
-  for (const directory of Object.values(plan.environment)) await mkdir(directory, { recursive: true });
+  for (const directory of Object.values(plan.environment)) {
+    if (plan.qualifyingEnvironment && directory === plan.environment.codexHome) continue;
+    await mkdir(directory, { recursive: true });
+  }
   const npm = input.npmCommand ?? "npm";
   const installArgs = ["install", "--ignore-scripts", "--no-audit", "--no-fund", "--prefix", plan.environment.npmPrefix, plan.archive];
   const invocation = await planNpmInvocation({ command: npm, args: installArgs, platform: process.platform, pathValue: process.env.PATH, nodeCommand: input.nodeCommand ?? process.execPath });
