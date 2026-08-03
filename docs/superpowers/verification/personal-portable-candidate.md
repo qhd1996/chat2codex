@@ -34,6 +34,9 @@ archive differed from the retained `.17` expected hash and therefore would have
 failed at `candidate_archive_hash_mismatch`; no unbound candidate was pushed.
 A fourth detached clean reproduction at `85e2dae` produced the same 138-file,
 437,577-byte archive and SHA-256 after the CI classification fix.
+A fifth detached clean reproduction at `d953e7c` after the bounded-diagnostic
+change produced the same 138-file, 437,577-byte archive and SHA-256. The package
+verifier passed and the detached tracked tree remained clean.
 
 ## Windows CI stop-loss evidence
 
@@ -62,6 +65,24 @@ that an exception before or during the first package repetition escaped the old
 report boundary; it is not recorded as a confirmed root cause. The next candidate
 must first prove bounded reports for preflight, missing/invalid shard, package
 repetition, validation, and cleanup failures before any new full CI.
+
+Commit `d953e7c9deff4414d28df97515bd930f7d86b2ca` closes that diagnostic
+stop-loss gate without changing package bytes. Real subprocess TDD proves
+initial-report failure stops before any shard; tracked-dirty, missing-shard, and
+invalid-shard failures each write a fixed stage/code report; prior bounded
+failure history survives early failure; and a hollow schema-5 pass is rejected by
+the publisher. The original 30-run command remains blocking while an always-run
+publisher emits only complete-validator output or a fixed fallback.
+
+Exact Bun 1.3.9 / Node 24.14.0 validation at `d953e7c` produced: 10 focused
+diagnostic/documentation passes; 75 novice passes; 1,030 full stable passes, 8
+documented conditional skips, 0 failures; typecheck, contracts, build, OpenSpec
+4/4, authority, and distribution verifier pass. A clean committed 1 x 19 run
+passed, followed by 30 x 19 with 1,950 pass and zero fail/skip/timeout/residual.
+The 30-run report SHA-256 is
+`0a2e99a7bf8ecf4a9c64b46fb20a9ff46fde9d12915166d197fc3ce18a4db902`;
+the publisher independently revalidated it before emitting pass. Zero matching
+matrix temporary roots remained.
 
 ## Current acceptance boundary
 

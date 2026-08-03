@@ -712,3 +712,50 @@ reproduction, then one corrected full-CI attempt.
 - No timeout, skip, retry loop, or security relaxation was introduced. Routing
   remains `gpt-5.6-sol / ultra`, already the maximum tier; after the second remote
   failure the path changed from candidate reruns to local diagnostic-chain TDD.
+
+### 06:08-06:22 bounded diagnostic RED to GREEN and candidate revalidation
+
+- RED: the original runner produced no report for tracked-dirty, missing-shard,
+  or invalid-shard subprocess fixtures. Its report-write-failure path still ran
+  the shard, its placeholder overwrote prior failure history, and the first
+  publisher implementation accepted a hollow 30-element array as pass.
+- Confirmed local causes: report creation sat after multiple throw sites; the
+  placeholder was written before reading history; `reportReady` was set before
+  the first durable write; and the publisher checked only shallow pass fields. A
+  first GREEN attempt also exposed a top-level-await temporal-dead-zone error for
+  `MatrixFailure`; moving the class definition before execution fixed that exact
+  implementation defect.
+- GREEN commit `d953e7c`: closed stage/code enums cover initialization, runtime,
+  scenarios, Git, package, temp setup, spawn, shard report, package report,
+  repetition/final validation, and cleanup. Reports contain no stdout, stderr,
+  path, SID, token, prompt, or identity. The publisher reuses the full schema-5
+  validator and always exits zero only after emitting bounded annotation/summary;
+  the original 30-run step still owns the blocking exit.
+- Focused Bun 1.3.9 / Node 24.14.0 evidence: 10 diagnostic/documentation tests,
+  then 75 novice tests, all passed. Typecheck, contracts, OpenSpec 4/4, authority,
+  distribution, and build passed. Full stable was 1,030 pass / 8 documented
+  conditional skips / 0 fail.
+- Committed-tree 1 x 19 completed in 10.2 seconds. Committed-tree 30 x 19
+  completed in 194.6 seconds with 1,950 pass and zero fail, skip, timeout, or
+  residual. Validator and publisher passed; report SHA-256 is
+  `0a2e99a7bf8ecf4a9c64b46fb20a9ff46fde9d12915166d197fc3ce18a4db902`;
+  matching temp roots after the run were zero. A PowerShell evidence summarizer
+  initially used an invalid nested-property expression and printed null totals;
+  it did not affect the runner exit. A separate explicit-loop read produced the
+  counts above.
+- A detached clean `d953e7c` frozen install/build/pack/extract/verify reproduced
+  138 entries, 437,577 bytes, and exact candidate SHA-256
+  `87d115436e521131fdfba59e65f1b1ed71533d694511301bcdbb2ad57f8157a7`;
+  tracked residuals were zero.
+- Routing: main and reviewers used `gpt-5.6-sol / ultra`, already maximum. Two
+  repeated remote failures caused the investigation path change; later review
+  agents returned empty payloads, so empty messages were rejected as evidence and
+  the main Agent independently re-read the diff and ran every gate. No timeout was
+  lengthened, no blocking check was skipped, and no ACL/security boundary changed.
+- Remaining blocker: one new full Windows CI must prove the hosted failure stage or
+  pass the full repository and clean-package jobs. After that, the critical path
+  is qualifying clean Windows DIST-003, production, real Hook/MCP, Desktop seven
+  primitives, Haoda-only real-Weixin E2E, and final matrix audit. Estimate remains
+  1-2 engineering days when clean Windows and Desktop are available. Repository
+  rollback is revert of `d953e7c`; package/runtime rollback remains the named
+  receipt and exact backup-hash path.
