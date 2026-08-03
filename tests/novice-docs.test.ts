@@ -28,9 +28,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
     const parsed = YAML.parse(workflow);
-    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.15"]);
-    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_VERSION).toBe("0.8.0-novice.15");
-    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("9ea80636fec0f47fadea9f6276223873970408ed84e18f6f47e53e8b303172d3");
+    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.16"]);
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_VERSION).toBe("0.8.0-novice.16");
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toBe("95526a4e4e298b30e81298978cb05b52317c8f1716fcffe0e6aa699597c35e25");
     const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
     expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
