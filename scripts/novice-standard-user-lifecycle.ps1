@@ -38,11 +38,15 @@ try {
   $created = $true
   $createdSid = (Get-LocalUser -Name $userName -ErrorAction Stop).SID.Value
   $arguments = @('-NoLogo','-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass','-File',(Quote-TaskArgument $worker),'-NodeBin',(Quote-TaskArgument $NodeBin),'-LifecycleScript',(Quote-TaskArgument $lifecycleScript),'-OwnedRoot',(Quote-TaskArgument $ownedRoot),'-ProfilePath',(Quote-TaskArgument $profilePath),'-ReportPath',(Quote-TaskArgument $childReport)) -join ' '
-  $stage = 'scheduled_task/register'
+  $stage = 'scheduled_task/action'
   $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments -WorkingDirectory $PSScriptRoot
+  $stage = 'scheduled_task/settings'
   $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::FromMinutes(1)) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  $stage = 'scheduled_task/register'
   Register-ScheduledTask -TaskName $taskName -Action $action -Settings $settings -User ($env:COMPUTERNAME + '\' + $userName) -Password $plain -RunLevel Limited | Out-Null
+  $stage = 'scheduled_task/export'
   $registeredXml = Export-ScheduledTask -TaskName $taskName -ErrorAction Stop
+  $stage = 'scheduled_task/verify'
   if ($registeredXml -notmatch '<LogonType>Password</LogonType>' -or $registeredXml -notmatch '<RunLevel>LeastPrivilege</RunLevel>') { throw 'Scheduled Task principal is not password-logon least-privilege.' }
   if ($registeredXml -match [Regex]::Escape($plain)) { throw 'Scheduled Task action exposes the password.' }
   $stage = 'scheduled_task/start'

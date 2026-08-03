@@ -78,7 +78,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).toContain("ProfilesDirectory");
     expect(standardUserScript).not.toContain("Join-Path 'C:\\Users'");
     expect(standardUserScript).toContain("code=('exit_' + $childExit)");
-    for (const value of ["scheduled_task/register", "scheduled_task/start", "scheduled_task/exit", "scheduled_task/report_missing"]) expect(standardUserScript).toContain(value);
+    for (const value of ["scheduled_task/action", "scheduled_task/settings", "scheduled_task/register", "scheduled_task/export", "scheduled_task/verify", "scheduled_task/start", "scheduled_task/exit", "scheduled_task/report_missing"]) expect(standardUserScript).toContain(value);
     expect(standardUserScript).toContain("if (Test-Path -LiteralPath $profilePath) { throw 'Exact diagnostic profile already exists.' }");
     expect(standardUserScript).toContain("if ($created -and $createdSid)");
     expect(standardUserScript).not.toContain("Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue");
