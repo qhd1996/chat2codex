@@ -52,7 +52,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 13:43–13:52 | `.8` / `227e618` → `ff5502e` | [30788022310](https://github.com/qhd1996/chat2codex/actions/runs/30788022310), jobs `91605441460`, `91606400624` | repository passed; clean failed | Original create error now visible: task XML `(1,40) unable to switch the encoding`; clean log SHA-256 `3B15E549CE315D90A626C818CC00AA4BBFB5CCFC65675526693BC262F64E0B46`; zero residual artifact passed |
 | 13:54–14:12 | `.8` / `c744f51`, `f490e6a` → `4bea083` | [30788904261](https://github.com/qhd1996/chat2codex/actions/runs/30788904261), jobs `91608153209`, `91609245138` | repository passed; clean failed | Advanced past task registration; another-interactive-user ACL helper failed. Clean log SHA-256 `57721CB6829153B0766DA9FC9C229968D3FCB658E018C086E6F38552D681E1C2`; zero residual artifact passed |
 | 14:17–14:24 | `.8` / `4b4ce65` → `be6742f` | [30789668320](https://github.com/qhd1996/chat2codex/actions/runs/30789668320), jobs `91610363631`, `91611452428` | repository passed; clean failed | Redacted helper error confirmed `ConvertTo-SecureString` module autoload failure; clean log SHA-256 `40F8479029ED6B79AED591B18F316929A3DF4B2928B093E24053AF8C6EC8EBD5`; zero residual artifact passed |
-| 14:29–pending | `.8` / `79591c2` → `7f83ed6` | [30790277747](https://github.com/qhd1996/chat2codex/actions/runs/30790277747), job `91612127542` | candidate running | Module-free .NET SecureString helper; terminal remote result pending |
+| 14:29–14:36 | `.8` / `79591c2` → `7f83ed6` | [30790277747](https://github.com/qhd1996/chat2codex/actions/runs/30790277747), jobs `91612127542`, `91613255856` | repository passed; clean failed | Helper user launched but unexpected exit code was still generic; clean log SHA-256 `24B3C5684F5BC7DFD29F61159FAB3FB2785FE17138BA8AD642C700E85F58EF81`; zero residual artifact passed |
+| 14:43–pending | `.8` / `9f46d55` → `3afd717` | [30791096324](https://github.com/qhd1996/chat2codex/actions/runs/30791096324), job `91614605402` | candidate running | Separate whoami SID proof before cmd key read; terminal remote result pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -121,6 +122,12 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     `Microsoft.PowerShell.Security`; the helper still had not reached user creation
     or key access. `79591c2` constructs a read-only .NET `SecureString` directly and
     retains the same password lifetime and cleanup boundary.
+14. **A magic child exit code was not sufficient proof that another-user code
+    executed.** Run `30790277747` returned an unexpected code after user creation,
+    but did not identify the child security principal. `9f46d55` first launches
+    `whoami.exe` with the temporary credential, verifies its SID against the created
+    local user, and only then runs an independent `cmd.exe` read of the controlled
+    key. Any wrong identity or launch failure remains fail-closed.
 
 ### Inferences
 
@@ -164,6 +171,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `f490e6a` task XML encoding | rendering test failed 3 pass / 1 fail; native probe reproduced hosted `(1,40) unable to switch the encoding` for UTF-8 declaration with and without BOM | 26/26 task/lifecycle tests; native variants all create/query/delete after declaration removal; no test task remained |
 | `4b4ce65` PowerShell 5.1 another-user helper | hosted run `30788904261` stopped at another-user denial; local helper reproduced missing `IsPathFullyQualified` before user creation | source contract and distribution tests 8/8; local helper advances to the non-admin user-creation boundary; hosted proof pending |
 | `79591c2` module-free SecureString | hosted run `30789668320` failed before user creation because `ConvertTo-SecureString` could not autoload its module | source/distribution tests 8/8; local helper advances to non-admin `New-LocalUser` boundary; hosted proof pending |
+| `9f46d55` identity-verified ACL child | hosted run `30790277747` reported only an unexpected magic exit code | tests require separate `whoami.exe` SID proof, cmd read, path metacharacter rejection, no encoded PowerShell; hosted proof pending |
 
 ## Environment differences and immutable candidate evidence
 
@@ -173,9 +181,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `79591c2` produced byte-equal 411,704-byte archives, SHA-256
-  `E4234C002894F2FC92908AECF8F25000C4BBCC856D302A481BB40B2AC39132CB`,
-  131 files. Workflow binding commit is `7f83ed6`.
+  source `9f46d55` produced byte-equal 411,879-byte archives, SHA-256
+  `123B5AC8A30134019AC0B82659DA73A9C2E750464A342C21E6A88988E3029159`,
+  131 files. Workflow binding commit is `3afd717`.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -219,7 +227,7 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30790277747` must finish both repository and clean-package
+Current blocker: run `30791096324` must finish both repository and clean-package
 jobs. The clean job must directly confirm the another-user ACL helper plus every
 clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
 CI time is 10–20 minutes for this attempt; further repair time depends on its retained
@@ -248,16 +256,16 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 31 through current run
-  `30790277747`; 30 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 32 through current run
+  `30791096324`; 31 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 55 commits through
-  `7f83ed6`, including package hash rebinds and one explicit revert.
+- Product/test/workflow repair commits after `8df77f3`: 58 commits through
+  `3afd717`, including package hash rebinds and one explicit revert.
 - Clean job `30781607399` zero-residual artifact: owned root false, environment root
   false, matching processes 0, residual users 0, residual task false.
 - Final counts and the terminal run conclusion will be appended after the first full
