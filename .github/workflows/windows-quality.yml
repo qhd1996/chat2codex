@@ -62,7 +62,7 @@ jobs:
           if ($exitCode -ne 0) {
             $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_FAIL *' } | Select-Object -Last 1)
             $message = if ($marker.Count -eq 1) { [string]$marker[0] } else { 'native_lifecycle_diagnostic_missing' }
-            $message = $message.Replace('%','%25').Replace([char]13,'%0D').Replace([char]10,'%0A')
+            $message = $message.Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
             Write-Host ('::error::' + $message)
             exit $exitCode
           }
@@ -80,7 +80,7 @@ jobs:
         run: |
           $source = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw
           $value = $source | ConvertFrom-Json
-          $message = $source.Trim().Replace('%','%25').Replace([char]13,'%0D').Replace([char]10,'%0A')
+          $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
           if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle evidence::' + $message) }
           else { Write-Host ('::notice title=Native lifecycle evidence::' + $message) }
       - name: Run thirty repetitions
