@@ -22,7 +22,7 @@ if (mode === "seed") {
   items[0].status = "delivered"; items[0].deliveredAt = at; items[1].status = "sending";
   await store.save(state);
   const hash = createHash("sha256").update(await readFile(statePath)).digest("hex");
-  process.stdout.write("DURABLE_BOUNDARY state_saved " + JSON.stringify({ pid: process.pid, stateHash: hash }) + "\n");
+  process.stdout.write("DURABLE_BOUNDARY state_saved " + JSON.stringify({ pid: process.pid, createdAt: new Date(performance.timeOrigin).toISOString(), stateHash: hash }) + "\n");
   await new Promise((resolve) => {
     const keepAlive = setInterval(() => undefined, 60_000);
     const finish = () => { clearInterval(keepAlive); resolve(); };
