@@ -49,6 +49,7 @@ describe("Windows launcher rendering", () => {
     });
     expect(source).toContain("$env:CHAT2CODEX_ENV = 'C:\\Users\\O''Brien\\.chat2codex\\.env'");
     expect(source).toContain("$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'");
+    expect(source).toContain("$env:PATH = $PSHOME + [IO.Path]::PathSeparator + 'C:\\Program Files\\nodejs;C:\\Windows\\System32'");
     expect(source).toContain("[IO.Directory]::CreateDirectory('C:\\Users\\O''Brien\\.chat2codex\\.data\\logs') | Out-Null");
     expect(source).toContain("Set-Location -LiteralPath 'C:\\Users\\O''Brien\\.chat2codex'");
     expect(source).toContain("& 'C:\\Program Files\\nodejs\\node.exe' 'C:\\Users\\O''Brien\\AppData");

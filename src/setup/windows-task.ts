@@ -64,7 +64,7 @@ export function renderWindowsLauncher(input: WindowsLauncherDefinition): string 
     `$env:CHAT2CODEX_LOG_FILE = ${psQuote(logFile)}`,
     "$env:CHAT2CODEX_SERVICE_RESTART_ENABLED = 'true'",
     "$env:NODE_ENV = 'production'",
-    `$env:PATH = ${psQuote(input.pathEnv)}`,
+    `$env:PATH = $PSHOME + [IO.Path]::PathSeparator + ${psQuote(input.pathEnv)}`,
     `$launcherStdout = ${psQuote(launcherStdout)}`,
     `$launcherStderr = ${psQuote(launcherStderr)}`,
     `[IO.Directory]::CreateDirectory(${psQuote(path.win32.dirname(logFile))}) | Out-Null`,
