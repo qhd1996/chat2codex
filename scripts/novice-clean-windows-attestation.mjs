@@ -53,10 +53,11 @@ const envFile = path.join(home, ".env");
 const statePath = path.join(home, ".data", "state.json");
 const readyPath = path.join(home, ".data", "service-ready.json");
 const stopPath = path.join(home, ".data", "service-stop.request");
+const logFile = path.join(home, ".data", "logs", "probe.log");
 const entrypoint = path.join(packageRoot, "scripts", "novice-service-probe.mjs");
 const cli = path.join(packageRoot, "dist", "index.js");
 const taskPath = "\\Chat2Codex\\" + taskName;
-const baseArgs = ["--target", "windows-task", "--project-dir", home, "--entrypoint", entrypoint, "--env", envFile, "--node-bin", process.execPath, "--path", process.env.PATH ?? "", "--windows-task-name", taskName, "--windows-launcher", path.join(home, ".service", "windows", "launcher.ps1"), "--stderr", path.join(home, ".data", "logs", "probe.log")];
+const baseArgs = ["--target", "windows-task", "--project-dir", home, "--entrypoint", entrypoint, "--env", envFile, "--node-bin", process.execPath, "--path", process.env.PATH ?? "", "--windows-task-name", taskName, "--windows-launcher", path.join(home, ".service", "windows", "launcher.ps1"), "--stderr", logFile];
 const commands = [];
 let completed = false;
 try {

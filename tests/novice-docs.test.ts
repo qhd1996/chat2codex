@@ -58,6 +58,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(attestation).toContain("Scheduled Task readiness deadline exceeded: ");
     expect(attestation).toContain("queryTaskDiagnostic(taskPath)");
     expect(attestation).toContain("readRedactedLogTail(logFile)");
+    expect(attestation).toContain(`const logFile = path.join(home, ".data", "logs", "probe.log")`);
+    expect(attestation).toContain(`"--stderr", logFile`);
     expect(attestation).toContain("startTask(taskPath, readyPath, stopPath, statePath, logFile, commands)");
     expect(attestation).toContain("async function startTask(taskPath, readyPath, stopPath, statePath, logFile, commands)");
     expect(attestation).toContain(`"; writers=" + writers`);
