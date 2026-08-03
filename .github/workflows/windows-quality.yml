@@ -34,8 +34,10 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Build candidate before package-bound novice tests
         run: bun run build
-      - name: Run novice fast gate
-        run: bun run test:novice
+      - name: Run novice fast diagnostics
+        run: bun test tests/novice-scenarios.test.ts tests/novice-real-upgrade.test.ts tests/novice-simulator.test.ts tests/novice-redaction.test.ts tests/novice-fresh-journey.test.ts tests/novice-upgrade-journey.test.ts tests/novice-daily-use.test.ts tests/novice-recovery.test.ts tests/novice-evidence.test.ts tests/novice-package-matrix.test.ts tests/outbox-retry-scheduler.test.ts tests/properties/novice-actions.property.test.ts tests/properties/novice-lifecycle.property.test.ts --max-concurrency=1
+      - name: Run novice restart diagnostics
+        run: bun test tests/novice-restart.test.ts --max-concurrency=1
       - name: Run native temporary lifecycle gate
         run: bun scripts/novice-native-lifecycle-probe.mjs
       - name: Run thirty repetitions

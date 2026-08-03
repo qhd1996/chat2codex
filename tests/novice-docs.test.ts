@@ -19,7 +19,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     const workflow = await readFile(path.join(root, ".github", "workflows", "windows-quality.yml"), "utf8");
     const matrix = await readFile(path.join(root, "scripts", "run-novice-matrix.mjs"), "utf8");
     expect(matrix).toContain("tests/novice-package-matrix.test.ts");
-    for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "bun run test:novice", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
+    for (const value of ["windows-latest", "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7", "actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7", 'node-version: "24"', "oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2", "bun-version: 1.3.9", "bun install --frozen-lockfile", "Run novice fast diagnostics", "Run novice restart diagnostics", "bun run test:novice:30", "novice-native-lifecycle-probe.mjs", "bun audit", "bun pm pack", "verify-distribution-package.mjs", "residual"]) expect(workflow).toContain(value);
     for (const value of ["Upload novice repetition evidence", ".tmp/novice-repository-30.json", "if: always()"]) expect(workflow).toContain(value);
     expect(workflow).not.toContain("Select-Object -Single");
     expect(workflow).toContain("Select-Object -First 1");
@@ -59,7 +59,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(cleanJob).not.toContain("Where-Object Name -Like 'C2CN*'");
     const repositorySteps = parsed?.jobs?.["novice-acceptance"]?.steps ?? [];
     const buildIndex = repositorySteps.findIndex((step: any) => step.name === "Build candidate before package-bound novice tests");
-    const fastIndex = repositorySteps.findIndex((step: any) => step.name === "Run novice fast gate");
+    const fastIndex = repositorySteps.findIndex((step: any) => step.name === "Run novice fast diagnostics");
     expect(buildIndex).toBeGreaterThan(-1);
     expect(buildIndex).toBeLessThan(fastIndex);
     expect(repositorySteps[buildIndex]?.run).toBe("bun run build");
