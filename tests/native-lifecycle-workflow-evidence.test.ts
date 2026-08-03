@@ -46,6 +46,15 @@ describe("native lifecycle workflow evidence", () => {
     } finally { await rm(temporary, { recursive: true, force: true }); }
   });
 
+  test("preserves only bounded Windows launch codes", () => {
+    const invalid = "workflow_publication/report_invalid" as const;
+    const cleanup = { attempted: true, succeeded: true, failure: null, residualUsers: 0, residualProcesses: 0, profileExists: false, ownedRootExists: false };
+    for (const code of ["win32_1385", "hresult_-2147024891", "exit_5"]) {
+      expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "fail", failure: { stage: "standard_user_wrapper/root_create/process_start", code }, cleanup }, invalid).failure?.code).toBe(code);
+    }
+    expect(publicNativeLifecycleEvidence({ schemaVersion: 1, verdict: "fail", failure: { stage: "standard_user_wrapper/root_create/process_start", code: "win32_secret" }, cleanup }, invalid).failure?.code).toBe("unavailable");
+  });
+
   test("publishes fixed missing and invalid fallbacks with exit zero", async () => {
     const temporary = await mkdtemp(path.join(os.tmpdir(), "c2c-native-fallback-"));
     try {

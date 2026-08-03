@@ -8,7 +8,7 @@ export interface PublicNativeLifecycleEvidence {
 }
 
 const safeStage = /^[a-z0-9_]+(?:\/[a-z0-9_]+){0,3}$/u;
-const safeCode = /^(?:unavailable|exit_-?\d+|[A-Z][A-Z0-9_]{0,63})$/u;
+const safeCode = /^(?:unavailable|exit_-?\d+|win32_\d+|hresult_-?\d+|[A-Z][A-Z0-9_]{0,63})$/u;
 
 function fallback(stage: "workflow_publication/report_missing" | "workflow_publication/report_invalid" | "workflow_enforcement/report_missing" | "workflow_enforcement/report_invalid"): PublicNativeLifecycleEvidence {
   return { schemaVersion: 1, verdict: "fail", failure: { stage, code: "unavailable" }, cleanup: { attempted: false, succeeded: false } };

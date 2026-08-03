@@ -1,6 +1,10 @@
 param([Parameter(Mandatory=$true)][string]$NodeBin,[Parameter(Mandatory=$true)][string]$ReportPath)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+class LaunchFailure : System.Exception {
+  [string]$Code
+  LaunchFailure([string]$code) : base('Standard-user process launch failed.') { $this.Code = $code }
+}
 $identity = $env:GITHUB_SHA
 if ($identity -notmatch '^[a-f0-9]{40}$') { $identity = 'local' + ([Guid]::NewGuid().ToString('N')) }
 $userName = 'C2CN' + $identity.Substring(0,8)
@@ -35,7 +39,15 @@ function Start-AsUser([string]$file,[string]$arguments,[hashtable]$environment) 
   foreach($item in $environment.GetEnumerator()) { $info.EnvironmentVariables[$item.Key] = [string]$item.Value }
   $process = New-Object Diagnostics.Process
   $process.StartInfo = $info
-  if (-not $process.Start()) { throw 'Standard-user process did not start.' }
+  try {
+    if (-not $process.Start()) { throw [LaunchFailure]::new('unavailable') }
+  } catch {
+    if ($_.Exception -is [LaunchFailure]) { throw }
+    $candidate = $_.Exception
+    while ($candidate.InnerException) { $candidate = $candidate.InnerException }
+    $code = if ($candidate -is [ComponentModel.Win32Exception]) { 'win32_' + [int]$candidate.NativeErrorCode } elseif ($candidate.HResult) { 'hresult_' + [int]$candidate.HResult } else { 'unavailable' }
+    throw [LaunchFailure]::new($code)
+  }
   $out = $process.StandardOutput.ReadToEnd()
   $err = $process.StandardError.ReadToEnd()
   if (-not $process.WaitForExit(15000)) { $process.Kill(); $process.WaitForExit(); throw 'Standard-user process exceeded the fixed diagnostic bound.' }
@@ -56,10 +68,13 @@ try {
   $cmd = Join-Path $env:SystemRoot 'System32\cmd.exe'
   $make = Start-AsUser $cmd ('/d /c mkdir "' + $ownedRoot + '"') @{ USERPROFILE=$profilePath; HOME=$profilePath }
   if ($make.ExitCode -ne 0) {
-    $failure = [ordered]@{stage='standard_user_wrapper/root_create';exceptionType='ProcessFailure';code=('exit_' + $make.ExitCode);errno=$null;hResult=$null}
+    $failure = [ordered]@{stage='standard_user_wrapper/root_create/exit';exceptionType='ProcessFailure';code=('exit_' + $make.ExitCode);errno=$null;hResult=$null}
     throw 'Standard-user root creation failed.'
   }
-  if (-not (Test-Path -LiteralPath $ownedRoot -PathType Container)) { throw 'Standard-user root creation failed.' }
+  if (-not (Test-Path -LiteralPath $ownedRoot -PathType Container)) {
+    $failure = [ordered]@{stage='standard_user_wrapper/root_create/missing';exceptionType='ProcessFailure';code='unavailable';errno=$null;hResult=$null}
+    throw 'Standard-user root creation failed.'
+  }
   $owner = [IO.Directory]::GetAccessControl($ownedRoot,[Security.AccessControl.AccessControlSections]::Owner).GetOwner([Security.Principal.SecurityIdentifier])
   $stage = 'owner_check'
   if ($owner.Value -ne $createdSid) { throw 'Standard-user root owner differs.' }
@@ -74,7 +89,12 @@ try {
   if (-not (Test-Path -LiteralPath $childReport -PathType Leaf)) { throw 'Standard-user lifecycle report is missing.' }
   $value = Get-Content -LiteralPath $childReport -Raw | ConvertFrom-Json
   if ($childExit -ne 0 -or $value.verdict -ne 'pass') { $failure = $value.failure }
-} catch { if (-not $failure) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} } }
+} catch {
+  if (-not $failure) {
+    if ($_.Exception -is [LaunchFailure]) { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage+'/process_start');exceptionType='LaunchFailure';code=$_.Exception.Code;errno=$null;hResult=[int]$_.Exception.HResult} }
+    else { $failure = [ordered]@{stage=('standard_user_wrapper/'+$stage);exceptionType=$_.Exception.GetType().FullName;code='unavailable';errno=$null;hResult=[int]$_.Exception.HResult} }
+  }
+}
 finally {
   $cleanupFailure = $null
   try { if ($created -and (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)) { Remove-LocalUser -Name $userName -ErrorAction Stop } } catch { $cleanupFailure = 'user_cleanup' }

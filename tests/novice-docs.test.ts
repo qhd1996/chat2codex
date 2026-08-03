@@ -65,6 +65,9 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(standardUserScript).toContain("ProfilesDirectory");
     expect(standardUserScript).not.toContain("Join-Path 'C:\\Users'");
     expect(standardUserScript).toContain("code=('exit_' + $make.ExitCode)");
+    for (const value of ["LaunchFailure", "InnerException", "ComponentModel.Win32Exception", "NativeErrorCode", "win32_", "hresult_", "$stage+'/process_start", "root_create/exit", "root_create/missing"]) expect(standardUserScript).toContain(value);
+    expect(standardUserScript).not.toContain("$make.Stderr");
+    expect(standardUserScript).not.toContain("$make.Stdout");
     expect(standardUserScript).toContain("if (Test-Path -LiteralPath $profilePath) { throw 'Exact diagnostic profile already exists.' }");
     expect(standardUserScript).toContain("if ($created -and $createdSid)");
     expect(standardUserScript).not.toContain("Remove-Item -LiteralPath $profilePath -Recurse -Force -ErrorAction SilentlyContinue");
