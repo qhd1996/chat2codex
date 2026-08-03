@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cleanWindowsFailureLine } from "./clean-windows-failure-evidence.mjs";
 
 const args = process.argv.slice(2);
 const read = (flag) => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
@@ -60,9 +61,12 @@ const taskPath = "\\Chat2Codex\\" + taskName;
 const baseArgs = ["--target", "windows-task", "--project-dir", home, "--entrypoint", entrypoint, "--env", envFile, "--node-bin", process.execPath, "--path", process.env.PATH ?? "", "--windows-task-name", taskName, "--windows-launcher", path.join(home, ".service", "windows", "launcher.ps1"), "--stderr", logFile];
 const commands = [];
 let completed = false;
+let stage = "root_create";
 try {
+  stage = "root_create";
   await mkdir(workspace, { recursive: true });
   await mkdir(path.dirname(statePath), { recursive: true });
+  stage = "state_seed";
   await writeFile(statePath, JSON.stringify({ schemaVersion: 6, adapters: {} }, null, 2) + "\n", { flag: "wx" });
   await writeFile(envFile, [
     "CHAT2CODEX_NOVICE_SERVICE_PROBE=1", "CHAT2CODEX_HOME=" + slash(home), "CHAT2CODEX_NOVICE_SERVICE_READY_PATH=" + slash(readyPath), "CHAT2CODEX_NOVICE_SERVICE_STOP_PATH=" + slash(stopPath),
@@ -70,37 +74,41 @@ try {
     "CODEX_WORKDIR=" + slash(workspace), "BRIDGE_STATE_PATH=" + slash(statePath), "ATTACHMENT_DOWNLOAD_DIR=" + slash(path.join(home, ".data", "attachments")),
     "ALLOW_DIRECT_MESSAGES=false", "ALLOW_GROUPS=false", "CODEX_APPROVAL_POLICY=on-request", "CODEX_RUN_TIMEOUT_MS=60000", "CODEX_APPROVAL_TIMEOUT_MS=60000",
   ].join("\n") + "\n", { flag: "wx" });
-  const prior = queryTask(taskPath);
+  stage = "task_precheck"; const prior = queryTask(taskPath);
   if (prior.exists) throw new Error("Novice task already exists before attestation.");
-  runCli(["service", "install", ...baseArgs], commands);
-  const firstKeys = await keyFingerprints(home);
-  const anotherInteractiveUserDenied = verifyAnotherUserDenied(path.join(home, ".secrets", "desktop-gateway", "prompt-hook.key"), taskName);
-  runCli(["service", "install", ...baseArgs], commands);
-  const installedFiles = await hashInstalledFiles(home, packageRoot);
-  const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
-  const doctor = runCli(["doctor", "--env", envFile], commands, true);
+  stage = "install_1"; runCli(["service", "install", ...baseArgs], commands);
+  stage = "keys_1"; const firstKeys = await keyFingerprints(home);
+  stage = "another_user_acl"; const anotherInteractiveUserDenied = verifyAnotherUserDenied(path.join(home, ".secrets", "desktop-gateway", "prompt-hook.key"), taskName);
+  stage = "install_2"; runCli(["service", "install", ...baseArgs], commands);
+  stage = "installed_hashes"; const installedFiles = await hashInstalledFiles(home, packageRoot);
+  stage = "start_1"; const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
+  stage = "doctor"; const doctor = runCli(["doctor", "--env", envFile], commands, true);
   if (doctor.status !== 0) throw new Error("Installed doctor failed.");
-  await stopTask(stopPath, first, commands);
-  const second = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
+  stage = "stop_1"; await stopTask(stopPath, first, commands);
+  stage = "start_2"; const second = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
+  stage = "restart_identity";
   if (second.pid === first.pid && second.createdAt === first.createdAt) throw new Error("Scheduled Task restart reused one process identity.");
-  await stopTask(stopPath, second, commands);
-  runCli(["service", "uninstall", ...baseArgs], commands);
-  runCli(["service", "uninstall", ...baseArgs], commands);
+  stage = "stop_2"; await stopTask(stopPath, second, commands);
+  stage = "uninstall_1"; runCli(["service", "uninstall", ...baseArgs], commands);
+  stage = "uninstall_2"; runCli(["service", "uninstall", ...baseArgs], commands);
+  stage = "task_absent_1";
   if (queryTask(taskPath).exists) throw new Error("Scheduled Task remained after double uninstall.");
-  if (await readFile(statePath, "utf8").then((value) => !value.includes('"schemaVersion": 6')).catch(() => true)) throw new Error("User state was not preserved.");
-  runCli(["service", "install", ...baseArgs], commands);
-  const secondKeys = await keyFingerprints(home);
+  stage = "state_preserved"; if (await readFile(statePath, "utf8").then((value) => !value.includes('"schemaVersion": 6')).catch(() => true)) throw new Error("User state was not preserved.");
+  stage = "install_3"; runCli(["service", "install", ...baseArgs], commands);
+  stage = "keys_2"; const secondKeys = await keyFingerprints(home);
+  stage = "key_rotation";
   if (firstKeys.length !== 3 || secondKeys.length !== 3 || firstKeys.some((value) => secondKeys.includes(value))) throw new Error("Reinstall did not rotate three fresh keys.");
-  runCli(["service", "uninstall", ...baseArgs], commands);
+  stage = "uninstall_3"; runCli(["service", "uninstall", ...baseArgs], commands);
+  stage = "task_absent_2";
   if (queryTask(taskPath).exists) throw new Error("Scheduled Task remained after final uninstall.");
-  if (await lstat(projectedRealCodexHome).catch(() => null)) throw new Error("Attestation changed the projected fresh Codex Home.");
+  stage = "protected_checks"; if (await lstat(projectedRealCodexHome).catch(() => null)) throw new Error("Attestation changed the projected fresh Codex Home.");
   if (await snapshotTree(protectedRealCodexHome) !== protectedRealCodexHomeBefore) throw new Error("Attestation changed the protected real Codex Home.");
   if (await snapshotTree(protectedGlobalNpmRoot) !== protectedGlobalNpmRootBefore) throw new Error("Attestation changed the protected global npm root.");
   if (await lstat(productionRoot).catch(() => null)) throw new Error("Attestation changed the excluded production path.");
-  await rm(ownedRoot, { recursive: true, force: true });
+  stage = "owned_root_cleanup"; await rm(ownedRoot, { recursive: true, force: true });
   const ownedRootRemoved = !(await lstat(ownedRoot).catch(() => null));
   if (!ownedRootRemoved) throw new Error("Attestation owned root remained after cleanup.");
-  const attestation = {
+  stage = "attestation_build"; const attestation = {
     environmentKind: rehearsal ? "local_rehearsal" : "equivalent_isolated_windows", archiveSha256, repositoryCommit, oldArchiveSha256, oldRepositoryCommit, runIdentityHash: sha256(runIdentity), ownedEnvironmentHash: sha256(environmentRoot.toLocaleLowerCase()),
     githubActions, runnerEnvironment,
     freshProfile: !rehearsal && realCodexHomeAbsentBefore,
@@ -118,6 +126,10 @@ try {
   attestation.attestationHash = sha256(JSON.stringify(attestation));
   completed = true;
   process.stdout.write("NOVICE_CLEAN_WINDOWS_ATTESTATION " + JSON.stringify(attestation) + "\n");
+} catch (error) {
+  const code = error && typeof error === "object" && error.failureDetail?.exitCode === 86 ? "exit_86" : "failed";
+  process.stderr.write(cleanWindowsFailureLine({ stage, code }) + "\n");
+  throw error;
 } finally {
   if (!completed) {
     spawnSync("schtasks.exe", ["/End", "/TN", taskPath], { windowsHide: true });

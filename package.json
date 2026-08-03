@@ -39,6 +39,7 @@
     "scripts/novice-state-runtime-probe.mjs",
     "scripts/novice-another-user-acl.ps1",
     "scripts/chat2codex-personal.ps1",
+    "scripts/clean-windows-failure-evidence.mjs",
     "scripts/process-identity.mjs",
     "docs/quality/novice-acceptance-runbook.md",
     "docs/windows/novice-troubleshooting.md"

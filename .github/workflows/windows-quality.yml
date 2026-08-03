@@ -277,7 +277,7 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path candidate -Force | Out-Null
-          [ordered]@{ verdict = 'fail'; failureCode = 'job_incomplete'; reportPresent = $false; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath candidate/clean-run-status.json -Encoding utf8
+          [ordered]@{ verdict = 'fail'; failureCode = 'job_incomplete'; failureStage = 'unavailable'; failureDetailCode = 'unavailable'; reportPresent = $false; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath candidate/clean-run-status.json -Encoding utf8
       - name: Set up Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
@@ -312,6 +312,8 @@ jobs:
           $env:CHAT2CODEX_NOVICE_ENVIRONMENT_ROOT = $environmentRoot
           $env:CHAT2CODEX_NOVICE_RUN_IDENTITY = $runIdentity
           $failureCode = $null
+          $failureStage = $null
+          $failureDetailCode = $null
           try {
             $metadata = Get-Content -LiteralPath candidate/candidate-metadata.json -Raw | ConvertFrom-Json
             $archive = Get-Item -LiteralPath (Join-Path candidate $metadata.archiveName)
@@ -335,6 +337,15 @@ jobs:
             $acceptanceExit = $LASTEXITCODE
             if ($acceptanceExit -ne 0) {
               $acceptanceText = ($acceptanceOutput | ForEach-Object { [string]$_ }) -join "`n"
+              $failureMarker = @($acceptanceOutput | Where-Object { [string]$_ -like 'NOVICE_CLEAN_WINDOWS_FAILURE *' } | Select-Object -Last 1)
+              if ($failureMarker.Count -eq 1) {
+                try {
+                  $bounded = ([string]$failureMarker[0]).Substring('NOVICE_CLEAN_WINDOWS_FAILURE '.Length) | ConvertFrom-Json
+                  $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
+                  $allowedDetailCodes = @('failed','exit_86','unavailable')
+                  if ($bounded.schemaVersion -eq 1 -and $allowedStages -contains [string]$bounded.stage -and $allowedDetailCodes -contains [string]$bounded.code) { $failureStage = [string]$bounded.stage; $failureDetailCode = [string]$bounded.code }
+                } catch {}
+              }
               if ($acceptanceText -like '*Scheduled Task readiness deadline exceeded*') { throw 'attestation_task_readiness' }
               if ($acceptanceText -like '*Another-interactive-user ACL denial probe failed*') { throw 'attestation_another_user_acl' }
               if ($acceptanceText -like '*Attestation owned root remained after cleanup*') { throw 'attestation_owned_root_cleanup' }
@@ -348,7 +359,7 @@ jobs:
             $failureCode = if ($_.Exception.Message -match '^[a-z0-9_]+$') { $_.Exception.Message } else { 'clean_package_acceptance_failed' }
             throw
           } finally {
-            [ordered]@{ verdict = if ($failureCode) { 'fail' } else { 'pass' }; failureCode = $failureCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
+            [ordered]@{ verdict = if ($failureCode) { 'fail' } else { 'pass' }; failureCode = $failureCode; failureStage = if ($failureStage) { $failureStage } else { 'unavailable' }; failureDetailCode = if ($failureDetailCode) { $failureDetailCode } else { 'unavailable' }; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $false } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
           }
       - name: Finalize exact owned cleanup and zero-residual proof
         if: always()
@@ -403,7 +414,7 @@ jobs:
           $proof | ConvertTo-Json | Set-Content -LiteralPath $proofPath -Encoding utf8
           $status = Get-Content -LiteralPath $runStatus -Raw | ConvertFrom-Json
           $cleanupComplete = $proof.InspectionComplete -and -not $proof.OwnedRootExists -and -not $proof.EnvironmentRootExists -and $proof.MatchingProcesses -eq 0 -and $proof.ResidualTestUsers -eq 0 -and -not $proof.ResidualTask
-          [ordered]@{ verdict = $status.verdict; failureCode = $status.failureCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $cleanupComplete } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
+          [ordered]@{ verdict = $status.verdict; failureCode = $status.failureCode; failureStage = $status.failureStage; failureDetailCode = $status.failureDetailCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $cleanupComplete } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
           if (-not $cleanupComplete) { throw 'clean_package_cleanup_incomplete' }
       - name: Upload redacted clean-package evidence
         if: always()
@@ -420,13 +431,17 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          $fallback = [ordered]@{ schemaVersion=1; verdict='fail'; failureCode='clean_package_evidence_unavailable'; cleanup=[ordered]@{ InspectionComplete=$false; CleanupErrorCodes=@('unavailable'); OwnedRootExists=$true; EnvironmentRootExists=$true; MatchingProcesses=-1; ResidualTestUsers=-1; ResidualTask=$true } }
+          $fallback = [ordered]@{ schemaVersion=1; verdict='fail'; failureCode='clean_package_evidence_unavailable'; failure=[ordered]@{stage='unavailable';code='unavailable'}; cleanup=[ordered]@{ InspectionComplete=$false; CleanupErrorCodes=@('unavailable'); OwnedRootExists=$true; EnvironmentRootExists=$true; MatchingProcesses=-1; ResidualTestUsers=-1; ResidualTask=$true } }
           try {
             $status = Get-Content -LiteralPath candidate/clean-run-status.json -Raw -ErrorAction Stop | ConvertFrom-Json
             $proof = Get-Content -LiteralPath candidate/zero-residual-proof.json -Raw -ErrorAction Stop | ConvertFrom-Json
             $allowed = @('job_incomplete','archive_size_mismatch','archive_hash_mismatch','old_archive_hash_mismatch','candidate_extract_failed','candidate_package_invalid','codex_cli_install_failed','codex_cli_binary_missing','attestation_task_readiness','attestation_another_user_acl','attestation_owned_root_cleanup','attestation_lifecycle_failed','novice_acceptance_failed','novice_evidence_invalid','clean_package_acceptance_failed')
             $failureCode = if ($status.failureCode -and $allowed -contains [string]$status.failureCode) { [string]$status.failureCode } elseif ($status.verdict -eq 'pass') { $null } else { 'clean_package_acceptance_failed' }
-            $public = [ordered]@{ schemaVersion=1; verdict=if ($status.verdict -eq 'pass' -and $status.cleanupComplete) {'pass'} else {'fail'}; failureCode=$failureCode; cleanup=[ordered]@{ InspectionComplete=[bool]$proof.InspectionComplete; CleanupErrorCodes=@($proof.CleanupErrorCodes | ForEach-Object { if ([string]$_ -match '^[a-z0-9_]+$') {[string]$_} else {'unavailable'} }); OwnedRootExists=[bool]$proof.OwnedRootExists; EnvironmentRootExists=[bool]$proof.EnvironmentRootExists; MatchingProcesses=[int]$proof.MatchingProcesses; ResidualTestUsers=[int]$proof.ResidualTestUsers; ResidualTask=[bool]$proof.ResidualTask } }
+            $allowedStages = @('root_create','state_seed','task_precheck','install_1','keys_1','another_user_acl','install_2','installed_hashes','start_1','doctor','stop_1','start_2','restart_identity','stop_2','uninstall_1','uninstall_2','task_absent_1','state_preserved','install_3','keys_2','key_rotation','uninstall_3','task_absent_2','protected_checks','owned_root_cleanup','attestation_build','unavailable')
+            $allowedDetailCodes = @('failed','exit_86','unavailable')
+            $publicStage = if ($allowedStages -contains [string]$status.failureStage) {[string]$status.failureStage} else {'unavailable'}
+            $publicDetailCode = if ($allowedDetailCodes -contains [string]$status.failureDetailCode) {[string]$status.failureDetailCode} else {'unavailable'}
+            $public = [ordered]@{ schemaVersion=1; verdict=if ($status.verdict -eq 'pass' -and $status.cleanupComplete) {'pass'} else {'fail'}; failureCode=$failureCode; failure=if ($status.verdict -eq 'pass') {$null} else {[ordered]@{stage=$publicStage;code=$publicDetailCode}}; cleanup=[ordered]@{ InspectionComplete=[bool]$proof.InspectionComplete; CleanupErrorCodes=@($proof.CleanupErrorCodes | ForEach-Object { if ([string]$_ -match '^[a-z0-9_]+$') {[string]$_} else {'unavailable'} }); OwnedRootExists=[bool]$proof.OwnedRootExists; EnvironmentRootExists=[bool]$proof.EnvironmentRootExists; MatchingProcesses=[int]$proof.MatchingProcesses; ResidualTestUsers=[int]$proof.ResidualTestUsers; ResidualTask=[bool]$proof.ResidualTask } }
           } catch { $public = $fallback }
           $json = $public | ConvertTo-Json -Compress -Depth 6
           $escaped = $json.Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')

@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { validateNoviceEvidence } from "./verify-novice-evidence.mjs";
 import { runRealUpgradeProbe } from "./novice-real-upgrade-probe.mjs";
+import { cleanWindowsFailureLine, parseCleanWindowsFailureOutput } from "./clean-windows-failure-evidence.mjs";
 
 const qualifyingKinds = new Set(["clean_windows_vm", "equivalent_isolated_windows"]);
 
@@ -69,7 +70,10 @@ export async function runNoviceArchiveAcceptance(input) {
       env: { ...process.env, USERPROFILE: plan.environment.userProfile, APPDATA: plan.environment.appData, LOCALAPPDATA: plan.environment.localAppData, CODEX_HOME: plan.environment.codexHome, CHAT2CODEX_HOME: plan.environment.chat2codexHome, CHAT2CODEX_NOVICE_ISOLATION: "1" },
     });
     const marker = result.stdout.trim().split(/\r?\n/u).findLast((line) => line.startsWith("NOVICE_CLEAN_WINDOWS_ATTESTATION "));
-    if (result.status !== 0 || !marker) throw new Error("Integrated clean Windows lifecycle attestation failed: " + redactedTail(result.stderr));
+    if (result.status !== 0 || !marker) {
+      process.stderr.write(cleanWindowsFailureLine(parseCleanWindowsFailureOutput(String(result.stderr ?? "") + "\n" + String(result.stdout ?? ""))) + "\n");
+      throw new Error("Integrated clean Windows lifecycle attestation failed.");
+    }
     attestation = JSON.parse(marker.slice("NOVICE_CLEAN_WINDOWS_ATTESTATION ".length));
   }
   const repetitions = plan.qualifyingEnvironment ? 30 : 1;
