@@ -194,21 +194,45 @@ jobs:
           try { $userHash = ([BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($taskName)))).Replace('-', '').ToLowerInvariant() } finally { $hasher.Dispose() }
           $userName = 'C2CN' + $userHash.Substring(0, 8)
           $taskPath = '\Chat2Codex\' + $taskName
-          $deleteTask = Start-Process -FilePath schtasks.exe -ArgumentList @('/Delete', '/TN', $taskPath, '/F') -Wait -PassThru -WindowStyle Hidden
-          if (Get-LocalUser -Name $userName -ErrorAction SilentlyContinue) { Remove-LocalUser -Name $userName -ErrorAction Continue }
+          $cleanupErrors = [Collections.Generic.List[string]]::new()
+          try { $deleteTask = Start-Process -FilePath schtasks.exe -ArgumentList @('/Delete', '/TN', $taskPath, '/F') -Wait -PassThru -WindowStyle Hidden } catch { $cleanupErrors.Add('clean_package_task_delete_launch_failed') }
+          try {
+            $existingUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName)
+            if ($existingUsers.Count -gt 1) { throw 'ambiguous cleanup user' }
+            if ($existingUsers.Count -eq 1) { Remove-LocalUser -Name $userName -ErrorAction Stop }
+          } catch { $cleanupErrors.Add('clean_package_user_cleanup_uncertain') }
           $needle = 'novice-owned-environment'
-          $matching = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
-          foreach ($process in $matching) { Stop-Process -Id $process.ProcessId -Force -ErrorAction Continue }
-          if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction Continue }
-          $remaining = @(Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
-          $residualUsers = @(Get-LocalUser -Name $userName -ErrorAction SilentlyContinue)
-          $queryTask = Start-Process -FilePath schtasks.exe -ArgumentList @('/Query', '/TN', $taskPath) -Wait -PassThru -WindowStyle Hidden
-          $residualTask = $queryTask.ExitCode -eq 0
+          try {
+            $matching = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') })
+            foreach ($process in $matching) { Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop }
+          } catch { $cleanupErrors.Add('clean_package_process_cleanup_uncertain') }
+          try { if (Test-Path -LiteralPath $ownedRoot) { Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction Stop } } catch { $cleanupErrors.Add('clean_package_root_cleanup_uncertain') }
+          $ownedRootExists = $true
+          $environmentRootExists = $true
+          $remainingCount = -1
+          $residualUserCount = -1
+          $residualTask = $true
+          try { $ownedRootExists = Test-Path -LiteralPath $ownedRoot -ErrorAction Stop } catch { $cleanupErrors.Add('clean_package_owned_root_query_uncertain') }
+          try { $environmentRootExists = Test-Path -LiteralPath $environmentRoot -ErrorAction Stop } catch { $cleanupErrors.Add('clean_package_environment_root_query_uncertain') }
+          try { $remainingCount = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -like ('*' + $needle + '*') }).Count } catch { $cleanupErrors.Add('clean_package_process_query_uncertain') }
+          try { $residualUserCount = @(Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName).Count } catch { $cleanupErrors.Add('clean_package_user_query_uncertain') }
+          try {
+            $taskList = @(& schtasks.exe @('/Query', '/FO', 'CSV', '/NH') 2>&1)
+            $taskListExitCode = $LASTEXITCODE
+            if ($taskListExitCode -ne 0) { throw 'task enumeration failed' }
+            $taskNames = @($taskList | Where-Object { $_ -is [string] -and $_.Trim() } | ForEach-Object {
+              $row = ConvertFrom-Csv -InputObject $_ -Header TaskName, NextRunTime, Status
+              if (-not $row.TaskName) { throw 'task enumeration parse failed' }
+              $row.TaskName
+            })
+            $residualTask = @($taskNames | Where-Object { $_ -ieq $taskPath }).Count -gt 0
+          } catch { $cleanupErrors.Add('clean_package_task_query_uncertain') }
+          $inspectionComplete = $cleanupErrors.Count -eq 0
           $reportHash = if (Test-Path -LiteralPath $report) { (Get-FileHash -Algorithm SHA256 -LiteralPath $report).Hash.ToLowerInvariant() } else { $null }
-          $proof = [ordered]@{ OwnedRootExists = Test-Path -LiteralPath $ownedRoot; EnvironmentRootExists = Test-Path -LiteralPath $environmentRoot; MatchingProcesses = $remaining.Count; ResidualTestUsers = $residualUsers.Count; ResidualTask = $residualTask; ReportSha256 = $reportHash }
+          $proof = [ordered]@{ InspectionComplete = $inspectionComplete; CleanupErrorCodes = @($cleanupErrors); OwnedRootExists = $ownedRootExists; EnvironmentRootExists = $environmentRootExists; MatchingProcesses = $remainingCount; ResidualTestUsers = $residualUserCount; ResidualTask = $residualTask; ReportSha256 = $reportHash }
           $proof | ConvertTo-Json | Set-Content -LiteralPath $proofPath -Encoding utf8
           $status = Get-Content -LiteralPath $runStatus -Raw | ConvertFrom-Json
-          $cleanupComplete = -not $proof.OwnedRootExists -and -not $proof.EnvironmentRootExists -and $proof.MatchingProcesses -eq 0 -and $proof.ResidualTestUsers -eq 0 -and -not $proof.ResidualTask
+          $cleanupComplete = $proof.InspectionComplete -and -not $proof.OwnedRootExists -and -not $proof.EnvironmentRootExists -and $proof.MatchingProcesses -eq 0 -and $proof.ResidualTestUsers -eq 0 -and -not $proof.ResidualTask
           [ordered]@{ verdict = $status.verdict; failureCode = $status.failureCode; reportPresent = Test-Path -LiteralPath $report; cleanupComplete = $cleanupComplete } | ConvertTo-Json | Set-Content -LiteralPath $runStatus -Encoding utf8
           if (-not $cleanupComplete) { throw 'clean_package_cleanup_incomplete' }
       - name: Upload redacted clean-package evidence

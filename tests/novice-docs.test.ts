@@ -38,7 +38,22 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(parsed?.on?.pull_request).toBeDefined();
     const parsedSteps = parsed?.jobs?.["clean-package-acceptance"]?.steps;
     expect(Array.isArray(parsedSteps)).toBe(true);
-    expect(parsedSteps.find((step: any) => step.name === "Finalize exact owned cleanup and zero-residual proof")?.if).toBe("always()");
+    const cleanupStep = parsedSteps.find((step: any) => step.name === "Finalize exact owned cleanup and zero-residual proof");
+    expect(cleanupStep?.if).toBe("always()");
+    for (const value of [
+      "Get-LocalUser -ErrorAction Stop | Where-Object Name -EQ $userName",
+      "Remove-LocalUser -Name $userName -ErrorAction Stop",
+      "Get-CimInstance Win32_Process -ErrorAction Stop",
+      "Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop",
+      "Remove-Item -LiteralPath $ownedRoot -Recurse -Force -ErrorAction Stop",
+      "@('/Query', '/FO', 'CSV', '/NH')",
+      "$taskListExitCode -ne 0",
+      "clean_package_task_query_uncertain",
+      "InspectionComplete",
+      "CleanupErrorCodes",
+    ]) expect(cleanupStep?.run).toContain(value);
+    expect(cleanupStep?.run).not.toContain("$absentTaskExitCodes");
+    expect(cleanupStep?.run).not.toContain("SilentlyContinue");
     expect(parsedSteps.find((step: any) => step.name === "Upload redacted clean-package evidence")?.if).toBe("always()");
     for (const value of ["needs: novice-acceptance", "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4", "@openai/codex@0.146.0", "C2C_RUNNER_ENVIRONMENT", "--environment-kind equivalent_isolated_windows", "--fresh-profile", "--repository-absent", "--prior-package-absent", "--repository-commit", "--run-identity", "--codex-bin", "--report", "--cleanup", "verify-novice-evidence.mjs", "OwnedRootExists", "MatchingProcesses"]) expect(cleanJob).toContain(value);
     expect(cleanJob).toContain("Join-Path $npmRoot 'node_modules/@openai'");
