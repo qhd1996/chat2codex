@@ -376,3 +376,54 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
   platform skips / 0 fail.
 - Final counts and the terminal run conclusion will be appended after the first full
   green repository + clean-package run.
+
+## 18:00–18:23 lifecycle follow-up and local elevation result
+
+Classification: the lifecycle defects below are **confirmed root causes**. The UAC
+result is a **confirmed external interaction failure**, not a product failure. A
+qualifying second-machine/resettable-VM result remains **unknown**.
+
+- `3871be1` stopped an existing writer before upgrade and restored a writer on one
+  rollback path, but success returned after task registration without starting the
+  replacement writer. Its rollback restart accepted writer count alone and did not
+  require the state lock or a parseable schema. An unhealthy replacement could also
+  remain while prior bytes were restored.
+- TDD RED: three new lifecycle tests failed for exactly those missing behaviors.
+  GREEN commit `508fae0` starts and verifies the replacement when an online writer
+  existed, stops a failed replacement before rollback, and requires one exact writer,
+  a proper-lockfile lease, and a parseable state schema before declaring restored
+  health.
+- A real-I/O review then found that proper-lockfile creates `<state>.lock` with
+  `mkdir`, while the first health implementation checked `isFile()`. The production
+  read-only observation confirmed `F:/Chat2Codex/data/state.json.lock` is a directory.
+  A new RED source contract failed; changing the check to `isDirectory()` made the
+  focused gate GREEN.
+- Focused verification after the fix: 71 pass, 0 fail. TypeScript product and
+  contract projects both exited 0. Full stable verification first recorded 916 pass,
+  8 platform skips, 1 fail because the shell resolved unsupported Node 16.17.0 and
+  TypeScript's extensionless launcher failed. Source Hook hashes all still matched.
+  With supported Node 24.14.0 at the front of PATH, the exact Hook-pack test passed
+  and the full stable gate completed with 917 pass, 8 documented platform skips,
+  0 fail. No timeout, skip, or boundary relaxation was added.
+- Candidate bind commit `fded46f` advances the immutable package to
+  `0.8.0-novice.9`. Two new detached clean worktrees independently produced 131
+  files, 394,556 bytes and identical SHA-256
+  `33AFB36A44709F23B3B208BCE12CBD488C8D14253C8DCF397D08D817EEC54A3B`.
+- A PowerShell 5.1 administrator rehearsal script was parsed and reviewed with
+  SHA-256 `0DAFCACEABB7DCC18C763AB873563F8DCED1F45EF16F5E33A02B814960A8C2A0`.
+  It scopes mutation to `Chat2Codex-Novice-fded46f`, one `C2CN...` user, and
+  `C:/C2C-Novice-fded46f`, with `finally` cleanup and production hash/process
+  comparison. Two UAC launches were attempted; each returned "The operation was
+  canceled by the user" after wall times 123.7 s and 123.6 s. The elevated script
+  never started and emitted no report. Direct follow-up observed zero matching test
+  users, no test task, no owned root and no result file. Production PID 10448 and
+  state SHA-256 `CB1BF1...52BD4` were unchanged. The two-attempt escalation boundary
+  was honored; no third UAC was generated.
+
+Current blockers are therefore: administrator acceptance for the local cross-user
+ACL/Task 12 rehearsal; a real second machine or resettable VM for `DIST-003`; and
+the later installed Desktop/real Weixin rows. Production deployment can proceed only
+from the exact `.9` archive with a timestamped byte-verified backup and automatic
+v4 rollback. Estimated remaining engineering time is unchanged at 2–4 hours for
+local production/Desktop/Weixin evidence after elevation, plus 3–6 hours when a
+qualifying clean Windows environment is available.

@@ -2,18 +2,19 @@
 
 Date: 2026-08-03 Asia/Shanghai
 
-Status: **prepared, not authorized or executed.** Each packet requires its own
-action-time confirmation. Approval of one packet never authorizes another.
+Status: **blanket authorization received; execution remains evidence-gated.** The
+main Agent may execute these packets in order, but still stops on target drift,
+ambiguous ownership, or an action outside the user's explicit authorization.
 
 ## Immutable candidate inputs
 
-- Candidate version: `0.8.0-novice.7`.
-- Source: `8df77f3187b1677b8e63f88a0268acb7f62156b3`.
-- Package: `chat2codex-0.8.0-novice.7.tgz`; 410,702 bytes; 131 files.
-- SHA-256: `951d75b1695cecc1ace3be5621e259c6ced52cadc93568a9d430a04874a05180`.
+- Candidate version: `0.8.0-novice.9`.
+- Source: `fded46f4a499d8e9c8151a2dce78a08bbd60887e`.
+- Package: `chat2codex-0.8.0-novice.9.tgz`; 394,556 bytes; 131 files.
+- SHA-256: `33afb36a44709f23b3b208bce12cbd488c8d14253c8dcf397d08d817eec54a3b`.
 - Reproduction: two new detached clean checkouts produced byte-identical archives.
-- Do not use superseded `.3`, `.4`, `.5`, `.6`, or intermediate
-  `122d624`/`b216232`/`8ff7ee3`/`e917aa5`/`11919dd` provenance.
+- Do not use superseded `.3` through `.8`, including `3871be1`; `.9` adds
+  continuous writer supervision and verifies the proper-lockfile directory lease.
 - Hook hashes: `97d50e...d9f00`, `96e6d6...9169`, `9388dd...45e6`.
 - Requirements authority snapshot: `01e827b` (the non-authoritative audit lock;
   reread the live requirements ledger before every action).
@@ -23,7 +24,8 @@ action-time confirmation. Approval of one packet never authorizes another.
   no `plugin/list`.
 - Final seven-primitives report: 160/160, zero residual process, SHA-256
   `83a447...9815`.
-- Package build toolchain: Node `24.14.0`, Bun `1.3.9`; the Windows workflow
+- Package build toolchain: Node `24.14.0`, Bun `1.3.14` locally (workflow remains
+  pinned to Bun `1.3.9`); the Windows workflow
   rejects candidate version or SHA drift before artifact upload.
 
 Any byte, version, process, state, task, or target drift invalidates this packet and
