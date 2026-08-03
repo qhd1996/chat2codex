@@ -50,7 +50,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 13:06–13:14 | `.8` / `a886723` | [30786190323](https://github.com/qhd1996/chat2codex/actions/runs/30786190323), jobs `91600064025`, `91600972255` | repository passed; clean failed | Direct rollback error: `/Delete` said task file not found |
 | 13:19–13:28 | `.8` / `f027400` | [30786862444](https://github.com/qhd1996/chat2codex/actions/runs/30786862444), jobs `91601967155`, `91602866836` | repository passed all 30 repetitions; clean repeated rollback error | Confirmed: rollback treated an already-absent task as incomplete and masked the original `/Create` error; clean log SHA-256 `989150EC03E1FED604B4A4019560E65E1CB20888949D5F5DF19602DDDCCD32E0` |
 | 13:43–13:52 | `.8` / `227e618` → `ff5502e` | [30788022310](https://github.com/qhd1996/chat2codex/actions/runs/30788022310), jobs `91605441460`, `91606400624` | repository passed; clean failed | Original create error now visible: task XML `(1,40) unable to switch the encoding`; clean log SHA-256 `3B15E549CE315D90A626C818CC00AA4BBFB5CCFC65675526693BC262F64E0B46`; zero residual artifact passed |
-| 13:54–14:02 | `.8` / `c744f51`, `f490e6a` → `4bea083` | [30788904261](https://github.com/qhd1996/chat2codex/actions/runs/30788904261) | candidate running | Matrix temp-root and task XML encoding repairs; terminal remote result pending |
+| 13:54–14:12 | `.8` / `c744f51`, `f490e6a` → `4bea083` | [30788904261](https://github.com/qhd1996/chat2codex/actions/runs/30788904261), jobs `91608153209`, `91609245138` | repository passed; clean failed | Advanced past task registration; another-interactive-user ACL helper failed. Clean log SHA-256 `57721CB6829153B0766DA9FC9C229968D3FCB658E018C086E6F38552D681E1C2`; zero residual artifact passed |
+| 14:17–pending | `.8` / `4b4ce65` → `be6742f` | [30789668320](https://github.com/qhd1996/chat2codex/actions/runs/30789668320), job `91610363631` | candidate running | PowerShell 5.1 helper compatibility and redacted diagnostics; terminal remote result pending |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -107,6 +108,13 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     UTF-16LE+BOM and UTF-8 without an XML declaration both created, queried, and
     deleted unique tasks. `f490e6a` retains UTF-8 atomic writes and removes only the
     declaration, avoiding a new binary snapshot/rollback protocol.
+12. **The another-user helper used a .NET API unavailable to Windows PowerShell
+    5.1.** Local execution failed before user creation because
+    `[IO.Path]::IsPathFullyQualified` does not exist in that runtime. `4b4ce65`
+    replaces it with a closed local-drive absolute-path pattern and carries only
+    redacted helper stderr into failure evidence. A local non-admin rerun advanced
+    to the expected `New-LocalUser: Access denied`; the hosted elevated result is
+    pending.
 
 ### Inferences
 
@@ -148,6 +156,7 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `227e618` authoritative rollback absence | new regression failed with 18 pass / 1 fail: expected original `create result uncertain`, received rollback-incomplete delete error | 22/22 lifecycle tests; 46/46 related Windows tests; stable suite 906 pass, 8 documented platform skips, 0 fail; present and query-uncertain negatives remain closed |
 | `c744f51` OS-temp matrix execution | two complete matrix starts failed at repetition 1 with .NET `UnauthorizedAccessException`; minimal ACL probe failed on repository F:\ `.tmp` and passed on OS temp | focused package/native probes passed; a subsequent 30×19 run passed but overlapped the next XML source edit and is retained as non-final evidence |
 | `f490e6a` task XML encoding | rendering test failed 3 pass / 1 fail; native probe reproduced hosted `(1,40) unable to switch the encoding` for UTF-8 declaration with and without BOM | 26/26 task/lifecycle tests; native variants all create/query/delete after declaration removal; no test task remained |
+| `4b4ce65` PowerShell 5.1 another-user helper | hosted run `30788904261` stopped at another-user denial; local helper reproduced missing `IsPathFullyQualified` before user creation | source contract and distribution tests 8/8; local helper advances to the non-admin user-creation boundary; hosted proof pending |
 
 ## Environment differences and immutable candidate evidence
 
@@ -157,9 +166,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
 - Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `f490e6a` produced byte-equal 411,670-byte archives, SHA-256
-  `2074E3D902F03EFE37C545DC89F53AB7BFEA64F1DCD35F5DE1D976906883643A`,
-  131 files. Workflow binding commit is `4bea083`.
+  source `4b4ce65` produced byte-equal 411,651-byte archives, SHA-256
+  `50C21CF729F403F1CA444B98361DBEF82D6741B123921036B8696DAF3F20D257`,
+  131 files. Workflow binding commit is `be6742f`.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -203,8 +212,8 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: run `30788904261` must finish both repository and clean-package
-jobs. The clean job must directly confirm the task XML repair plus every
+Current blocker: run `30789668320` must finish both repository and clean-package
+jobs. The clean job must directly confirm the another-user ACL helper plus every
 clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated remaining
 CI time is 10–20 minutes for this attempt; further repair time depends on its retained
 report if it fails.
@@ -232,16 +241,16 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 29 through current run
-  `30788904261`; 28 completed before it, all preserved.
+- Remote Windows workflow attempts listed here: 30 through current run
+  `30789668320`; 29 completed before it, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
-  encoding; local repository-volume ACL mismatch; one remote
+  encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 49 commits through
-  `4bea083`, including package hash rebinds and one explicit revert.
+- Product/test/workflow repair commits after `8df77f3`: 52 commits through
+  `be6742f`, including package hash rebinds and one explicit revert.
 - Clean job `30781607399` zero-residual artifact: owned root false, environment root
   false, matching processes 0, residual users 0, residual task false.
 - Final counts and the terminal run conclusion will be appended after the first full
