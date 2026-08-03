@@ -3,7 +3,7 @@ name: Windows quality
 on:
   push:
     branches:
-      - candidate/novice-0.8.0-novice.14
+      - candidate/novice-0.8.0-novice.15
   pull_request:
   workflow_dispatch:
     inputs:
@@ -20,8 +20,8 @@ permissions:
   contents: read
 
 env:
-  C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.14
-  C2C_EXPECTED_CANDIDATE_SHA256: 8490bba8eed61e56645e19e193c77ee637710d25cdc5790e7df9d90cb761ba28
+  C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.15
+  C2C_EXPECTED_CANDIDATE_SHA256: 9ea80636fec0f47fadea9f6276223873970408ed84e18f6f47e53e8b303172d3
   C2C_CLEAN_PACKAGE_ONLY: ${{ (github.event_name == 'workflow_dispatch' && inputs.gate == 'clean-package') || (github.event_name == 'push' && contains(github.event.head_commit.message, '[clean-package-only]')) }}
 
 jobs:
