@@ -445,13 +445,9 @@ function run(
 function windowsServiceIo(home: string): WindowsServiceIo {
   return {
     currentUserSid: async () => {
-      const { stdout } = await execFileAsync("powershell.exe", [
-        "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
-        "[Security.Principal.WindowsIdentity]::GetCurrent().User.Value",
-      ], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
-      const sid = stdout.trim();
-      if (!/^S-[0-9]+(?:-[0-9]+)+$/u.test(sid)) throw new Error("Could not determine the current Windows user SID.");
-      return sid;
+      const { stdout } = await execFileAsync("whoami.exe", ["/user", "/fo", "csv", "/nh"],
+        { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
+      return parseWindowsWhoamiSid(stdout);
     },
     now: () => new Date(), packageVersion: readPackageVersion,
     readText: async (filePath) => fs.readFile(filePath, "utf8").catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? null : Promise.reject(error)),
@@ -500,6 +496,12 @@ function windowsServiceIo(home: string): WindowsServiceIo {
       return stdout;
     },
   };
+}
+
+export function parseWindowsWhoamiSid(source: string): string {
+  const matches = source.match(/\bS-[0-9]+(?:-[0-9]+)+\b/gu) ?? [];
+  if (matches.length !== 1) throw new Error("Could not determine the current Windows user SID.");
+  return matches[0]!;
 }
 
 function assertPlatform(expected: NodeJS.Platform, target: ServiceTarget): void {

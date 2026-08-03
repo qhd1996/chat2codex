@@ -6,6 +6,7 @@ import {
   defaultServiceTarget,
   renderLaunchdPlist,
   renderSystemdUnit,
+  parseWindowsWhoamiSid,
   systemdUnitPath,
 } from "../src/setup/service.js";
 
@@ -77,5 +78,12 @@ describe("service setup", () => {
   test("uses an absolute Node executable for the Windows task by default", () => {
     const options = createServiceOptions({ target: "windows-task" });
     expect(path.win32.isAbsolute(options.nodeBin) || path.isAbsolute(options.nodeBin)).toBe(true);
+  });
+
+  test("parses exactly one SID from locale-independent whoami output", () => {
+    expect(parseWindowsWhoamiSid(`"DESKTOP\\User","S-1-5-21-1-2-3-1001"\r\n`)).toBe("S-1-5-21-1-2-3-1001");
+    expect(() => parseWindowsWhoamiSid("")).toThrow(/SID/i);
+    expect(() => parseWindowsWhoamiSid("S-1-5-18 S-1-5-32-544")).toThrow(/SID/i);
+    expect(() => parseWindowsWhoamiSid("S-1-bad")).toThrow(/SID/i);
   });
 });
