@@ -11,7 +11,7 @@ const repositoryRoot = path.resolve(import.meta.dir, "..");
 describe("distribution package contract", () => {
   test("validates the repository package inputs and portable release manifest", async () => {
     await expect(validateDistributionTree(repositoryRoot)).resolves.toMatchObject({
-      packageVersion: "0.8.0-novice.6", hookCount: 3, forbiddenHits: 0,
+      packageVersion: "0.8.0-novice.7", hookCount: 3, forbiddenHits: 0,
     });
   });
 
@@ -43,6 +43,7 @@ describe("distribution package contract", () => {
 test("packages every novice acceptance runtime asset and declares Node 20.19 minimum", async () => {
   const packageJson = JSON.parse(await Bun.file(path.join(repositoryRoot, "package.json")).text());
   expect(packageJson.engines.node).toBe(">=20.19.0");
+  expect(packageJson.packageManager).toBe("bun@1.3.9");
   for (const asset of [
     "quality/scenarios/novice-daily-use.json", "quality/evidence/novice-acceptance-template.json",
     "scripts/verify-novice-evidence.mjs", "scripts/run-novice-acceptance.mjs", "scripts/novice-windows-worker.mjs",

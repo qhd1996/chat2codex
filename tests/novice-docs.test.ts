@@ -25,7 +25,12 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(workflow).not.toMatch(/(?:npm|bun)\s+(?:install|add)\s+-g|openspec\s+(?:init|update|archive)/iu);
     const cleanJob = workflow.slice(workflow.indexOf("  clean-package-acceptance:"));
     const parsed = YAML.parse(workflow);
-    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.6"]);
+    expect(parsed?.on?.push?.branches).toEqual(["candidate/novice-0.8.0-novice.7"]);
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_VERSION).toBe("0.8.0-novice.7");
+    expect(parsed?.env?.C2C_EXPECTED_CANDIDATE_SHA256).toMatch(/^(?!0{64})[a-f0-9]{64}$/u);
+    const packageJson = JSON.parse(await readFile(path.join(root, "package.json"), "utf8"));
+    expect(packageJson.packageManager).toBe("bun@" + parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Set up Bun")?.with?.["bun-version"]);
+    for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
     expect(parsed?.on?.workflow_dispatch).toBeDefined();
     expect(parsed?.on?.pull_request).toBeDefined();
     const parsedSteps = parsed?.jobs?.["clean-package-acceptance"]?.steps;

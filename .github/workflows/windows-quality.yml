@@ -3,12 +3,16 @@ name: Windows quality
 on:
   push:
     branches:
-      - candidate/novice-0.8.0-novice.6
+      - candidate/novice-0.8.0-novice.7
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
+
+env:
+  C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.7
+  C2C_EXPECTED_CANDIDATE_SHA256: ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 
 jobs:
   novice-acceptance:
@@ -49,6 +53,9 @@ jobs:
           $report = Get-Content .tmp/novice-repository-30.json -Raw | ConvertFrom-Json
           if (($report.repetitions | Where-Object { $_.counts.residualProcesses -ne 0 }).Count -ne 0) { throw 'residual process evidence' }
           $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive.FullName).Hash.ToLowerInvariant()
+          $packageVersion = (Get-Content -LiteralPath .tmp/package/package/package.json -Raw | ConvertFrom-Json).version
+          if ($packageVersion -ne $env:C2C_EXPECTED_CANDIDATE_VERSION) { throw 'candidate_version_mismatch' }
+          if ($sha256 -ne $env:C2C_EXPECTED_CANDIDATE_SHA256) { throw 'candidate_archive_hash_mismatch' }
           $metadata = [ordered]@{ repositoryCommit = '${{ github.sha }}'; archiveName = $archive.Name; archiveSize = $archive.Length; sha256 = $sha256 }
           $metadata | ConvertTo-Json | Set-Content -LiteralPath .tmp/package/candidate-metadata.json -Encoding utf8
       - name: Upload reviewed package only
