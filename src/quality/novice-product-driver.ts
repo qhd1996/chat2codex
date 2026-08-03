@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import type { AuthoritativeCodexThread } from "../agent/codex-runner.js";
@@ -284,6 +284,8 @@ function sha256(value: Uint8Array): string { return createHash("sha256").update(
 
 export async function runNoviceDailyUseJourney(options: { root: string }) {
   const root = path.resolve(options.root);
+  await mkdir(root, { recursive: true });
+  const canonicalRoot = await realpath(root);
   const routeKinds = ["work", "travel", "personal", "finance", "ai_lab", "learning"] as const;
   const routes: Record<string, string> = {};
   for (const kind of routeKinds) {
@@ -326,7 +328,7 @@ export async function runNoviceDailyUseJourney(options: { root: string }) {
   const structuredValue = textInteractionPolicy.getMcpOptionValue({
     status: "pending", updatedAt: at, request: { id: "structured", serverName: "synthetic", threadId: task.threadId!, turnId: "turn", message: "Select mode", mode: "form", fields: [{ name: "mode", title: "Mode", description: null, required: true, type: "enum", default: null, options: [{ value: "conservative", title: "Conservative" }] }] },
   }, "mode", 0);
-  return { taskIds: tasks.map((item) => item.taskId), taskStatuses: tasks.map((item) => item.status), recentRequests: tasks.flatMap((item) => item.recentRequests), workspaceKinds: workspaceRouter.list().map((item) => item.kind), workspaceContained: workspaceRouter.list().every((item) => !path.relative(root, item.root).startsWith("..")), planMode: job.collaborationMode, approvalAllowed, permissionAllowed, structuredValue, outboxKinds: outbox.map((item) => item.kind), outboxSequences: outbox.map((item) => item.sequence), deliveredIds, duplicateAcknowledgements, codexRuns: 1 };
+  return { taskIds: tasks.map((item) => item.taskId), taskStatuses: tasks.map((item) => item.status), recentRequests: tasks.flatMap((item) => item.recentRequests), workspaceKinds: workspaceRouter.list().map((item) => item.kind), workspaceContained: workspaceRouter.list().every((item) => !path.relative(canonicalRoot, item.root).startsWith("..")), planMode: job.collaborationMode, approvalAllowed, permissionAllowed, structuredValue, outboxKinds: outbox.map((item) => item.kind), outboxSequences: outbox.map((item) => item.sequence), deliveredIds, duplicateAcknowledgements, codexRuns: 1 };
 }
 
 export async function runNoviceNetworkRecoveryJourney() {
