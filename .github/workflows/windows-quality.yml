@@ -53,19 +53,25 @@ jobs:
         run: bun test tests/novice-restart.test.ts --max-concurrency=1
       - name: Run native temporary lifecycle gate
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
+        continue-on-error: true
         shell: pwsh
         env:
           C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
         run: |
-          $output = @(& pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin (Get-Command node).Source -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT 2>&1)
+          $nodeBin = (Get-Command node -ErrorAction Stop).Source
+          $output = @(& pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin $nodeBin -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT 2>&1)
           $exitCode = $LASTEXITCODE
           $output | ForEach-Object { Write-Host ([string]$_) }
+          if (-not (Test-Path -LiteralPath $env:C2C_NATIVE_LIFECYCLE_REPORT)) {
+            $fallback = [ordered]@{ schemaVersion=1; verdict='fail'; summary=$null; failure=[ordered]@{stage='workflow_invocation/report_missing';exceptionType='ProcessFailure';code=('exit_'+$exitCode);errno=$null;hResult=$null};cleanup=[ordered]@{attempted=$false;succeeded=$false} }
+            New-Item -ItemType Directory -Path (Split-Path $env:C2C_NATIVE_LIFECYCLE_REPORT -Parent) -Force | Out-Null
+            $fallback | ConvertTo-Json -Compress -Depth 6 | Set-Content -LiteralPath $env:C2C_NATIVE_LIFECYCLE_REPORT -Encoding utf8
+          }
           if ($exitCode -ne 0) {
             $marker = @($output | Where-Object { [string]$_ -like 'NATIVE_LIFECYCLE_FAIL *' } | Select-Object -Last 1)
             $message = if ($marker.Count -eq 1) { [string]$marker[0] } else { 'native_lifecycle_diagnostic_missing' }
             $message = $message.Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
             Write-Host ('::error::' + $message)
-            exit $exitCode
           }
       - name: Upload native lifecycle evidence
         if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
@@ -84,6 +90,13 @@ jobs:
           $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
           if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle evidence::' + $message) }
           else { Write-Host ('::notice title=Native lifecycle evidence::' + $message) }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ('Native lifecycle evidence:' + [Environment]::NewLine + $source.Trim())
+      - name: Enforce native lifecycle evidence
+        if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
+        shell: pwsh
+        run: |
+          $value = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw | ConvertFrom-Json
+          if ($value.verdict -ne 'pass') { exit 1 }
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30
@@ -172,10 +185,19 @@ jobs:
       - name: Build candidate
         run: bun run build
       - name: Run native temporary lifecycle diagnostic
+        continue-on-error: true
         shell: pwsh
         env:
           C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
-        run: pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin (Get-Command node).Source -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT
+        run: |
+          $nodeBin = (Get-Command node -ErrorAction Stop).Source
+          & pwsh -NoProfile -NonInteractive -File scripts/novice-standard-user-lifecycle.ps1 -NodeBin $nodeBin -ReportPath $env:C2C_NATIVE_LIFECYCLE_REPORT
+          $exitCode = $LASTEXITCODE
+          if (-not (Test-Path -LiteralPath $env:C2C_NATIVE_LIFECYCLE_REPORT)) {
+            $fallback = [ordered]@{ schemaVersion=1; verdict='fail'; summary=$null; failure=[ordered]@{stage='workflow_invocation/report_missing';exceptionType='ProcessFailure';code=('exit_'+$exitCode);errno=$null;hResult=$null};cleanup=[ordered]@{attempted=$false;succeeded=$false} }
+            New-Item -ItemType Directory -Path (Split-Path $env:C2C_NATIVE_LIFECYCLE_REPORT -Parent) -Force | Out-Null
+            $fallback | ConvertTo-Json -Compress -Depth 6 | Set-Content -LiteralPath $env:C2C_NATIVE_LIFECYCLE_REPORT -Encoding utf8
+          }
       - name: Upload native lifecycle diagnostic
         if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -193,6 +215,12 @@ jobs:
           $message = $source.Trim().Replace('%','%25').Replace([string][char]13,'%0D').Replace([string][char]10,'%0A')
           if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle diagnostic::' + $message) }
           else { Write-Host ('::notice title=Native lifecycle diagnostic::' + $message) }
+          Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value ('Native lifecycle evidence:' + [Environment]::NewLine + $source.Trim())
+      - name: Enforce native lifecycle diagnostic
+        shell: pwsh
+        run: |
+          $value = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw | ConvertFrom-Json
+          if ($value.verdict -ne 'pass') { exit 1 }
 
   clean-package-acceptance:
     needs: novice-acceptance

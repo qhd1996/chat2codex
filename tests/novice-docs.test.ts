@@ -38,7 +38,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(parsed?.jobs?.["novice-acceptance"]?.if).toContain("[native-only]");
     const nativeOnly = parsed?.jobs?.["native-lifecycle-diagnostic"];
     expect(nativeOnly?.if).toContain("[native-only]");
-    expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic"]);
+    expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic","Enforce native lifecycle diagnostic"]);
     expect(JSON.stringify(nativeOnly)).not.toContain("Run thirty repetitions");
     expect(JSON.stringify(nativeOnly)).not.toContain("Pack reviewed candidate");
     expect(nativeOnly?.steps?.find((step: any) => step.name === "Run native temporary lifecycle diagnostic")?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
@@ -56,6 +56,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeStep?.run).toContain("native_lifecycle_diagnostic_missing");
     expect(nativeStep?.env?.C2C_NATIVE_LIFECYCLE_REPORT).toBe(".tmp/native-lifecycle-status.json");
     expect(nativeStep?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
+    expect(nativeStep?.["continue-on-error"]).toBe(true);
+    expect(nativeStep?.run).toContain("workflow_invocation/report_missing");
     const standardUserScript = await readFile(path.join(root, "scripts", "novice-standard-user-lifecycle.ps1"), "utf8");
     for (const value of ["New-LocalUser", "ProcessStartInfo", ".UserName", "novice-native-lifecycle-built.mjs", "Remove-LocalUser", "residualUsers", "residualProcesses", "ownedRootExists"]) expect(standardUserScript).toContain(value);
     expect(standardUserScript).not.toContain("-Timeout");
@@ -66,6 +68,8 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativePublish?.if).toBe("always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");
     expect(nativePublish?.run).toContain("Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw");
     expect(nativePublish?.run).toContain("::error title=Native lifecycle evidence::");
+    expect(nativePublish?.run).toContain("$env:GITHUB_STEP_SUMMARY");
+    expect(parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Enforce native lifecycle evidence")?.run).toContain("exit 1");
     expect(workflow).toContain("[clean-package-only]");
     expect(workflow).toContain("if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true')");
     expect(parsed?.on?.pull_request).toBeDefined();
@@ -160,6 +164,7 @@ describe("novice acceptance documentation and Windows CI", () => {
     const nativeLifecycleRun = repositorySteps.find((step: any) => step.name === "Run native temporary lifecycle gate")?.run;
     expect(nativeLifecycleRun).toContain("scripts/novice-standard-user-lifecycle.ps1");
     expect(nativeLifecycleRun).toContain("NATIVE_LIFECYCLE_FAIL");
-    expect(nativeLifecycleRun).toContain("exit $exitCode");
+    expect(nativeLifecycleRun).toContain("workflow_invocation/report_missing");
+    expect(nativeLifecycleRun).not.toContain("exit $exitCode");
   });
 });
