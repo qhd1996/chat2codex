@@ -512,8 +512,7 @@ export function parseWindowsTaskNames(source: string): string[] {
     if (!name.startsWith("\\")) throw new Error("Windows task enumeration is malformed.");
     return name;
   });
-  if (new Set(names.map((name) => name.toLocaleLowerCase())).size !== names.length) throw new Error("Windows task enumeration is ambiguous.");
-  return names;
+  return [...new Map(names.map((name) => [name.toLocaleLowerCase(), name])).values()];
 }
 
 

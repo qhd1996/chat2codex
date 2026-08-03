@@ -46,6 +46,7 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
   if (priorManifest && [input.launcherPath, input.taskXmlPath].some((filePath) => snapshots.get(filePath) === null)) {
     throw new Error("Prior Windows task rollback material is missing. Repair or uninstall the prior service before upgrading.");
   }
+  if (priorManifest) verifyPriorOwnedHashes(priorManifest, snapshots, input);
   const priorTaskExisted = await io.taskExists(taskPath);
   if (!priorManifest && priorTaskExisted) throw new Error("An unmanaged same-name Windows task exists; refusing to overwrite task ownership.");
   if (priorManifest && priorTaskExisted) {
@@ -54,6 +55,7 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
       throw new Error("Prior Windows task launcher differs from the installation manifest; ownership is uncertain.");
     }
   }
+  if (priorManifest) await io.stopWriters(priorManifest.entrypoint);
   let createdKeys: string[] = [];
   let registrationAttempted = false;
   try {
@@ -145,6 +147,10 @@ export async function uninstallWindowsUserTask(manifestPath: string, io: Windows
   const manifest = parseWindowsInstallationManifest(value, home);
   const taskPath = windowsTaskPath(manifest.taskName);
   for (const filePath of [...manifest.ownedFiles, ...manifest.ownedKeyFiles, manifest.envFile]) await io.assertOwnedPath(filePath);
+  if (await io.taskExists(taskPath)) {
+    const taskXml = await io.runFile("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]);
+    if (!taskXml.trim() || taskLauncherPath(taskXml).toLocaleLowerCase() !== manifest.launcherPath.toLocaleLowerCase()) throw new Error("Windows task launcher differs from the installation manifest; refusing uninstall.");
+  }
   await io.stopWriters(manifest.entrypoint);
   if (await io.taskExists(taskPath)) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]);
   if (await io.taskExists(taskPath)) throw new Error("Windows task remained after deletion.");
@@ -163,6 +169,13 @@ function absolute(value: string, label: string): string {
   return path.win32.normalize(value);
 }
 function sha256(value: string): string { return createHash("sha256").update(value).digest("hex"); }
+function verifyPriorOwnedHashes(manifest: WindowsInstallationManifestV1, snapshots: Map<string, string | null>, input: WindowsServiceInstallInput): void {
+  const expected = { "launcher.ps1": snapshots.get(input.launcherPath), "task.xml": snapshots.get(input.taskXmlPath) };
+  for (const [name, source] of Object.entries(expected)) {
+    const recorded = manifest.hashes[name];
+    if (!recorded || source === null || source === undefined || sha256(source) !== recorded) throw new Error(`Prior Windows rollback material hash differs: ${name}`);
+  }
+}
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
 function parsePriorManifest(source: string | null | undefined, home: string): WindowsInstallationManifestV1 | undefined {
   if (!source) return undefined;
