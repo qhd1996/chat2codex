@@ -11,7 +11,7 @@ const repositoryRoot = path.resolve(import.meta.dir, "..");
 describe("distribution package contract", () => {
   test("validates the repository package inputs and portable release manifest", async () => {
     await expect(validateDistributionTree(repositoryRoot)).resolves.toMatchObject({
-      packageVersion: "0.8.0-novice.17", hookCount: 3, forbiddenHits: 0,
+      packageVersion: "0.8.0-novice.18", hookCount: 3, forbiddenHits: 0,
     });
   });
 
