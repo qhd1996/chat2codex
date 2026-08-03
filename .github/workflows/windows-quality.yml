@@ -3,7 +3,7 @@ name: Windows quality
 on:
   push:
     branches:
-      - candidate/novice-0.8.0-novice.7
+      - candidate/novice-0.8.0-novice.8
   pull_request:
   workflow_dispatch:
 
@@ -11,8 +11,8 @@ permissions:
   contents: read
 
 env:
-  C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.7
-  C2C_EXPECTED_CANDIDATE_SHA256: 5ef6f2af93af73a33845b6eb0713b8f2b6e1282e15e839c5e2f1e0068b2e6e70
+  C2C_EXPECTED_CANDIDATE_VERSION: 0.8.0-novice.8
+  C2C_EXPECTED_CANDIDATE_SHA256: 71f002eac7d6235b49091ca5d13eb1435d7d2c6abd219a24b4b0e7d885f342c0
 
 jobs:
   novice-acceptance:
