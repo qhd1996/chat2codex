@@ -654,3 +654,36 @@ Desktop seven primitives, Haoda-only real-Weixin E2E, and final matrix audit. Th
 remaining estimate stays 1–2 engineering days when clean Windows and Desktop are
 available. Repository rollback is revert of 0b5c081; runtime rollback continues to
 use the named receipt and exact backup hashes. Goal remains active.
+
+## 2026-08-04 05:23-05:42 novice.18 freeze and CI stop-loss
+
+- Confirmed official toolchain: GitHub release `bun-v1.3.9` published the
+  40,809,955-byte Windows x64 zip with SHA-256
+  `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
+  Its extracted bun.exe and the local cache were byte-identical at SHA-256
+  `2d901f3dea0a14c7acc4434622bf43b20250f1c787b3795dae0635c2e139a067`.
+- Three detached clean worktrees using Bun 1.3.9 and Node 24.14.0 produced
+  byte-identical 138-file, 437,577-byte novice.18 archives with SHA-256
+  `87d115436e521131fdfba59e65f1b1ed71533d694511301bcdbb2ad57f8157a7`.
+- Full Windows run 30854454515 on `61ee173` failed only at Run thirty
+  repetitions after the standalone native diagnostic retained the known
+  `journey/file_acl_owner_read` / `exit_86` P1 result with complete cleanup.
+  Clean-package was dependency-skipped. Public annotations had no detailed 30-run
+  error; run-log download returned 403 and the public step endpoint disconnected.
+- Confirmed root cause: every repository repetition re-ran the same hosted-owner
+  sensitive native probe, so P1 evidence still determined a blocking P0 verdict.
+  TDD required the blocking runner to omit that probe while the standalone
+  workflow diagnostic remained. Commit `85e2dae` implements the separation.
+- Exact Bun 1.3.9 GREEN after the fix: one repetition recorded 65 P0 passes and
+  19 scenarios; 30 repetitions recorded 1,950 passes and zero fail, skip, timeout,
+  or residual. Report SHA-256 is
+  `b260538b422d54fabc79756b8e1751def7a84aca12d35ba233f7defddae94863`.
+  Full stable remained 1,023 pass / 8 documented conditional skips / 0 fail.
+- A concurrent main-worktree pack is invalid evidence because stable and pack
+  both wrote ignored dist bytes. SHA `593e64...f3fe` is rejected. A detached clean
+  `85e2dae` worktree reproduced the reviewed candidate hash exactly.
+
+No timeout was extended, no blocking P0 scenario, property, or package proof was
+removed, and the P1 native diagnostic was not skipped. Routing remained
+gpt-5.6-sol / ultra; investigation changed to exact-step evidence, local Bun 1.3.9
+reproduction, then one corrected full-CI attempt.

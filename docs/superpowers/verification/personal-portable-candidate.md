@@ -1,7 +1,7 @@
 # Personal portable candidate 0.8.0-novice.18
 
-Status: frozen repository candidate; Windows CI and clean-Windows DIST-003 are
-still pending.
+Status: frozen repository candidate; corrected Windows CI and clean-Windows
+DIST-003 are still pending.
 
 ## Source and toolchain
 
@@ -32,6 +32,25 @@ The final workflow binds branch `candidate/novice-0.8.0-novice.18`, version
 `0.8.0-novice.18`, and the exact SHA-256 above. Before binding, the new `.18`
 archive differed from the retained `.17` expected hash and therefore would have
 failed at `candidate_archive_hash_mismatch`; no unbound candidate was pushed.
+A fourth detached clean reproduction at `85e2dae` produced the same 138-file,
+437,577-byte archive and SHA-256 after the CI classification fix.
+
+## Windows CI stop-loss evidence
+
+Initial full run [30854454515](https://github.com/qhd1996/chat2codex/actions/runs/30854454515)
+on `61ee173` passed checkout, tool setup, frozen install, build, novice fast,
+restart, and standalone native diagnostics. The native diagnostic retained the
+known P1 hosted-owner failure `journey/file_acl_owner_read` / `exit_86` with zero
+task, user, process, profile, or root residuals. The following 30-repetition step
+failed in about six seconds because `run-novice-matrix.mjs` invoked that same P1
+native probe again inside every P0 repository repetition.
+
+Commit `85e2dae` removes only the duplicate P1 invocation. The standalone native
+diagnostic and its public annotation remain unchanged. Exact Bun 1.3.9 local
+RED-to-GREEN evidence is 30 repetitions x 19 scenarios, 1,950 P0 test passes,
+zero fail/skip/timeout/residual, report SHA-256
+`b260538b422d54fabc79756b8e1751def7a84aca12d35ba233f7defddae94863`.
+The latest full stable gate is 1,023 pass, 8 documented platform skips, 0 fail.
 
 ## Current acceptance boundary
 
