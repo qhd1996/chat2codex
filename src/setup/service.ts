@@ -481,9 +481,10 @@ function windowsServiceIo(home: string): WindowsServiceIo {
       return writers.length;
     },
     taskExists: async (taskPath) => {
-      const script = "$ErrorActionPreference='Stop';$s=New-Object -ComObject 'Schedule.Service';$s.Connect();$p=$env:C2C_TASK_PATH;$i=$p.LastIndexOf('\');$folder=if($i -le 0){'\'}else{$p.Substring(0,$i)};$name=$p.Substring($i+1);try{$null=$s.GetFolder($folder).GetTask($name);'true'}catch [Runtime.InteropServices.COMException]{$h=[uint32]$_.Exception.HResult;if($h -in @(0x80070002,0x80070003,0x8004130F)){'false'}else{throw}}";
-      try { const { stdout } = await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8", timeout: 30_000, maxBuffer: 64 * 1024, windowsHide: true, env: { ...process.env, C2C_TASK_PATH: taskPath } }); const value=stdout.trim(); if(value!=="true"&&value!=="false")throw new Error("invalid task state"); return value==="true"; }
-      catch (error) { throw new Error("Windows task state is uncertain.", { cause: error }); }
+      const result = spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"], { encoding: "utf8", windowsHide: true });
+      if (result.error?.code === "ENOENT" || result.status === 1) return false;
+      if (result.status === 0) return true;
+      throw new Error("Windows task state is uncertain.", { cause: result.error });
     },
     ensureGatewayKeys: () => ensureWindowsGatewayKeys({
       root: path.join(home, ".secrets", "desktop-gateway"),

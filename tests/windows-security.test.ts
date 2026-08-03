@@ -25,6 +25,13 @@ test("uses direct .NET ACL APIs without PowerShell module discovery", async () =
   }
 });
 
+test("uses schtasks query exit codes instead of Task Scheduler COM discovery", async () => {
+  const source = await readFile(path.join(repositoryRoot, "src/setup/service.ts"), "utf8");
+  expect(source).toContain('spawnSync("schtasks.exe", ["/Query", "/TN", taskPath, "/XML"]');
+  expect(source).toContain('result.error?.code === "ENOENT"');
+  expect(source).not.toContain("Schedule.Service");
+});
+
 describe("Windows private-file ACL policy", () => {
   test("accepts only the current owner, SYSTEM, and Administrators", () => {
     expect(assertPrivateWindowsAcl({ ownerSid: user, currentUserSid: user, aces: [allow(user), allow(system), allow(administrators)] })).toEqual({ ownerSid: user, aceCount: 3 });
