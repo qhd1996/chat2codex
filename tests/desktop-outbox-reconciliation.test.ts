@@ -150,7 +150,7 @@ describe("Desktop outbox reconciliation", () => {
       expect((await store.load()).desktopGateway!.bindings.binding!.lastReconciledTurnIndex).toBe(0);
       router.configureDesktopControlCommitments({ takeover: "b".repeat(64), release_request: "c".repeat(64) });
       for (let attempt = 0; attempt < 100; attempt++) {
-        if ((await store.load()).desktopGateway!.bindings.binding!.lastReconciledTurnIndex === 1) break;
+        if ((await store.load()).desktopGateway!.bindings.binding!.lastReconciledTurnIndex === 1 && sent.includes("Desktop result")) break;
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
       const finalState = await store.load();
