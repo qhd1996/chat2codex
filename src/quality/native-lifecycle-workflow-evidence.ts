@@ -4,6 +4,7 @@ export interface PublicNativeLifecycleEvidence {
   schemaVersion: 1;
   verdict: "pass" | "fail";
   failure: null | { stage: string; code: string };
+  execution?: { identity: "current_runner"; logonType: "Interactive"; runLevel: "Limited"; administrator: false; sidMatched: true; profileMode: "disposable_env" };
   cleanup: { attempted: boolean; succeeded: boolean; residualTasks?: number; residualUsers?: number; residualProcesses?: number; profileExists?: boolean; ownedRootExists?: boolean };
 }
 
@@ -37,8 +38,12 @@ export function publicNativeLifecycleEvidence(value: unknown, invalidStage: Para
   if (typeof rawCleanup.profileExists === "boolean") cleanup.profileExists = rawCleanup.profileExists;
   if (typeof rawCleanup.ownedRootExists === "boolean") cleanup.ownedRootExists = rawCleanup.ownedRootExists;
   if (source.verdict === "pass") {
+    const rawExecution = source.execution && typeof source.execution === "object" ? source.execution as Record<string, unknown> : null;
+    const execution = rawExecution && rawExecution.identity === "current_runner" && rawExecution.logonType === "Interactive" && rawExecution.runLevel === "Limited" && rawExecution.administrator === false && rawExecution.sidMatched === true && rawExecution.profileMode === "disposable_env"
+      ? { identity: "current_runner" as const, logonType: "Interactive" as const, runLevel: "Limited" as const, administrator: false as const, sidMatched: true as const, profileMode: "disposable_env" as const }
+      : null;
     const summary = source.summary && typeof source.summary === "object" ? source.summary as Record<string, unknown> : null;
-    const qualifying = summary
+    const qualifying = execution && summary
       && summary.installAttempts === 2
       && summary.uninstallAttempts === 2
       && summary.uninstallNoopCount === 1
@@ -59,6 +64,7 @@ export function publicNativeLifecycleEvidence(value: unknown, invalidStage: Para
       && cleanup.profileExists === false
       && cleanup.ownedRootExists === false;
     if (!qualifying) return fallback(invalidStage);
+    return { schemaVersion: 1, verdict: "pass", execution, failure: null, cleanup };
   }
   return { schemaVersion: 1, verdict: source.verdict, failure: source.verdict === "fail" ? { stage: stage!, code } : null, cleanup };
 }
