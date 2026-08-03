@@ -53,6 +53,8 @@ jobs:
       - name: Run native temporary lifecycle gate
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         shell: pwsh
+        env:
+          C2C_NATIVE_LIFECYCLE_REPORT: .tmp/native-lifecycle-status.json
         run: |
           $output = @(& bun scripts/novice-native-lifecycle-probe.mjs 2>&1)
           $exitCode = $LASTEXITCODE
@@ -64,6 +66,14 @@ jobs:
             Write-Host ('::error::' + $message)
             exit $exitCode
           }
+      - name: Upload native lifecycle evidence
+        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: novice-native-lifecycle-evidence
+          path: .tmp/native-lifecycle-status.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30

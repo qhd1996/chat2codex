@@ -47,6 +47,10 @@ describe("novice acceptance documentation and Windows CI", () => {
     expect(nativeStep?.run).toContain("NATIVE_LIFECYCLE_FAIL");
     expect(nativeStep?.run).toContain("::error::");
     expect(nativeStep?.run).toContain("native_lifecycle_diagnostic_missing");
+    expect(nativeStep?.env?.C2C_NATIVE_LIFECYCLE_REPORT).toBe(".tmp/native-lifecycle-status.json");
+    const nativeUpload = parsed?.jobs?.["novice-acceptance"]?.steps?.find((step: any) => step.name === "Upload native lifecycle evidence");
+    expect(nativeUpload?.if).toBe("always() && hashFiles('.tmp/native-lifecycle-status.json') != ''");
+    expect(nativeUpload?.with?.path).toBe(".tmp/native-lifecycle-status.json");
     expect(workflow).toContain("[clean-package-only]");
     expect(workflow).toContain("if ($env:C2C_CLEAN_PACKAGE_ONLY -ne 'true')");
     expect(parsed?.on?.pull_request).toBeDefined();
