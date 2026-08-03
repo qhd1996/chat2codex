@@ -74,6 +74,15 @@ jobs:
           path: .tmp/native-lifecycle-status.json
           if-no-files-found: error
           retention-days: 14
+      - name: Publish native lifecycle evidence
+        if: always() && hashFiles('.tmp/native-lifecycle-status.json') != ''
+        shell: pwsh
+        run: |
+          $source = Get-Content -LiteralPath .tmp/native-lifecycle-status.json -Raw
+          $value = $source | ConvertFrom-Json
+          $message = $source.Trim().Replace('%','%25').Replace([char]13,'%0D').Replace([char]10,'%0A')
+          if ($value.verdict -eq 'fail') { Write-Host ('::error title=Native lifecycle evidence::' + $message) }
+          else { Write-Host ('::notice title=Native lifecycle evidence::' + $message) }
       - name: Run thirty repetitions
         if: env.C2C_CLEAN_PACKAGE_ONLY != 'true'
         run: bun run test:novice:30
