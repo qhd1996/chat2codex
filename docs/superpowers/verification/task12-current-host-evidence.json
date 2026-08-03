@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "verdict": "current_host_task12_pass",
+  "qualifyingDist003": false,
+  "candidate": {
+    "version": "0.8.0-novice.15",
+    "commit": "18cbb336dd3ad91dbdc8258d62673cd86f7a7d13",
+    "archiveSize": 396943,
+    "archiveFiles": 132,
+    "archiveSha256": "9ea80636fec0f47fadea9f6276223873970408ed84e18f6f47e53e8b303172d3"
+  },
+  "phaseA": {
+    "lifecycle": "pass",
+    "doctorExitCode": 0,
+    "singleWriter": true,
+    "directoryLock": true,
+    "ownerOnlyKeyCount": 3,
+    "statePreserved": true,
+    "repetitions": 30,
+    "scenariosPerRepetition": 19,
+    "scenarioPasses": 570,
+    "fail": 0,
+    "skip": 0,
+    "timeout": 0,
+    "residualProcesses": 0
+  },
+  "phaseB": {
+    "elevatedProcessId": 50252,
+    "keyCount": 3,
+    "readDenied": 3,
+    "deleteDenied": 3,
+    "replaceDenied": 3,
+    "keyHashesUnchanged": true,
+    "temporaryUsers": 0,
+    "temporaryProfiles": 0
+  },
+  "phaseC": {
+    "statePreserved": true,
+    "allKeysRotated": true,
+    "finalUninstall": true,
+    "productionUnchanged": true,
+    "residualTasks": 0,
+    "residualRoots": 0,
+    "residualProcesses": 0
+  },
+  "rawEvidence": [
+    { "name": "candidate15-lifecycle-report.json", "sha256": "60d7a38cef3dc12005de243e2e8625a5b17d2eda23818cacf1d502e5a50df15f" },
+    { "name": "task12-n15-worker-report.json", "sha256": "1b7dfe6aeb43066bae34c80c12d7407682c12bd7f3d6e7449849bab55663d791" },
+    { "name": "task12-n15-handoff.json", "sha256": "57d8ad0bb777b641525fbc12ed64476bce8f041ffabc05ee405b5442c33a8b78" },
+    { "name": "task12-n15-phase-b-result.json", "sha256": "daa3acb9d778f9d7169ac1ca395a13773470459bc0b3ac3a686f5961c7e0f49b" },
+    { "name": "task12-n15-phase-c-result.json", "sha256": "0f79daa872d6ef59f7395bba295d43bd86e9c6af1d2aa495a3d4c44c2103e862" }
+  ],
+  "remaining": [
+    "hosted Windows native lifecycle artifact inner cause",
+    "production deployment",
+    "real Codex Home Hook and MCP trust",
+    "Desktop restart and seven installed primitives",
+    "real Weixin text image file retry restart dedup",
+    "qualifying second Windows DIST-003"
+  ]
+}
