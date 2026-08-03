@@ -16,6 +16,7 @@ export interface EnsureWindowsGatewayKeysOptions {
   inspectRootAcl: (rootPath: string) => Promise<unknown>;
   applyAcl: (filePath: string) => Promise<void>;
   inspectAcl: (filePath: string) => Promise<unknown>;
+  createPrivateFile?: (filePath: string, content: string) => Promise<void>;
 }
 
 const execFileAsync = promisify(execFile);
@@ -54,7 +55,7 @@ export async function ensureWindowsGatewayKeys(options: EnsureWindowsGatewayKeys
         const encoded = raw.toString("base64url");
         if (materials.has(encoded)) throw new Error("Gateway key generator produced duplicate material.");
         materials.add(encoded);
-        await writeFile(filePath, encoded + "\n", { encoding: "utf8", flag: "wx", mode: 0o600 });
+        await (options.createPrivateFile ?? defaultPrivateFileCreator)(filePath, encoded + "\n");
         created.push(filePath);
         await options.applyAcl(filePath);
         await options.inspectAcl(filePath);
@@ -68,6 +69,32 @@ export async function ensureWindowsGatewayKeys(options: EnsureWindowsGatewayKeys
     await Promise.all(created.map((filePath) => rm(filePath, { force: true })));
     throw error;
   }
+}
+
+async function defaultPrivateFileCreator(filePath: string, content: string): Promise<void> {
+  if (process.platform === "win32") return createOwnerOnlyWindowsFile(filePath, content);
+  await writeFile(filePath, content, { encoding: "utf8", flag: "wx", mode: 0o600 });
+}
+
+export async function createOwnerOnlyWindowsFile(filePath: string, content: string): Promise<void> {
+  if (process.platform !== "win32") throw new Error("Owner-only Windows file creation requires Windows.");
+  if (!path.isAbsolute(filePath) || typeof content !== "string" || Buffer.byteLength(content, "utf8") > 4096) throw new Error("Owner-only Windows file creation input is invalid.");
+  const body = [
+    "$created=$false",
+    "$stage='identity'",
+    "$path=$env:CHAT2CODEX_PRIVATE_PATH",
+    "$user=[Security.Principal.WindowsIdentity]::GetCurrent().User",
+    "$system=New-Object Security.Principal.SecurityIdentifier('S-1-5-18')",
+    "$admins=New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')",
+    "$acl=New-Object Security.AccessControl.FileSecurity",
+    "$acl.SetOwner($user)",
+    "$acl.SetAccessRuleProtection($true,$false)",
+    "foreach($sid in @($user,$system,$admins)){ $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','Allow'))) }",
+    "$stage='create'",
+    "$stream=New-Object IO.FileStream($path,[IO.FileMode]::CreateNew,[Security.AccessControl.FileSystemRights]::FullControl,[IO.FileShare]::None,4096,[IO.FileOptions]::WriteThrough,$acl);$created=$true",
+    "try{$stage='stdin';$reader=New-Object IO.StreamReader([Console]::OpenStandardInput(),[Text.UTF8Encoding]::new($false));$text=$reader.ReadToEnd();$bytes=[Text.UTF8Encoding]::new($false).GetBytes($text);$stream.Write($bytes,0,$bytes.Length);$stream.Flush($true)}finally{$stream.Dispose()}",
+  ].join(";");
+  await runWindowsAclCommand("file_create", filePath, body, content);
 }
 
 export async function applyOwnerOnlyWindowsAcl(filePath: string): Promise<void> {
@@ -113,8 +140,13 @@ export async function applyOwnerOnlyWindowsDirectoryAcl(directoryPath: string): 
 }
 
 async function applyWindowsAcl(stage: "file_acl" | "directory_acl", targetPath: string, body: string): Promise<void> {
+  await runWindowsAclCommand(stage, targetPath, body);
+}
+
+async function runWindowsAclCommand(stage: "file_acl" | "directory_acl" | "file_create", targetPath: string, body: string, input?: string): Promise<void> {
   const diagnostic = [
     "$record=$_",
+    ...(stage === "file_create" ? ["if($stream){try{$stream.Dispose()}catch{}}", "if($created){try{[IO.File]::Delete($path)}catch{}}"] : []),
     "$native=if($record.Exception.PSObject.Properties['NativeErrorCode']){[int]$record.Exception.NativeErrorCode}else{$null}",
     "$detail=[ordered]@{stage=('" + stage + "_'+$stage);exceptionType=$record.Exception.GetType().FullName;hResult=[int]$record.Exception.HResult;nativeCode=$native;fullyQualifiedErrorId=[string]$record.FullyQualifiedErrorId;category=[string]$record.CategoryInfo.Category}",
     "[Console]::Error.WriteLine(($detail|ConvertTo-Json -Compress -Depth 3))",
@@ -122,13 +154,23 @@ async function applyWindowsAcl(stage: "file_acl" | "directory_acl", targetPath: 
   ].join(";");
   const script = "$ErrorActionPreference='Stop';try{" + body + "}catch{" + diagnostic + "}";
   try {
-    await execFileAsync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script], {
-      windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8",
-      env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: targetPath },
-    });
+    const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script];
+    const options = { windowsHide: true, timeout: 10_000, maxBuffer: 64 * 1024, encoding: "utf8" as const, env: { ...process.env, CHAT2CODEX_PRIVATE_PATH: targetPath } };
+    if (input === undefined) await execFileAsync("powershell.exe", args, options);
+    else await execFileWithInput("powershell.exe", args, options, input);
   } catch (error) {
     throw windowsAclApplicationError(stage, error);
   }
+}
+
+function execFileWithInput(command: string, args: string[], options: Parameters<typeof execFile>[2], input: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = execFile(command, args, options, (error, stdout, stderr) => {
+      if (error) reject(Object.assign(error, { stdout, stderr }));
+      else resolve();
+    });
+    child.stdin?.end(input, "utf8");
+  });
 }
 
 class WindowsAclApplicationError extends Error {
@@ -164,7 +206,7 @@ function parsePowerShellAclDetail(stderr: string): Record<string, unknown> {
     if (!line.trim().startsWith("{")) continue;
     try {
       const value = JSON.parse(line);
-      if (isRecord(value) && typeof value.stage === "string" && /^(?:directory|file)_acl_(?:owner_read|dacl_apply)$/u.test(value.stage)) return value;
+      if (isRecord(value) && typeof value.stage === "string" && /^(?:(?:directory|file)_acl_(?:owner_read|dacl_apply)|file_create_(?:identity|create|stdin))$/u.test(value.stage)) return value;
     } catch { /* use bounded fallback below */ }
   }
   return { exceptionType: "PowerShellDiagnosticUnavailable", fullyQualifiedErrorId: "unavailable", category: "unavailable" };

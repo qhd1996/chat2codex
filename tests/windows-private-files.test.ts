@@ -4,7 +4,8 @@ import path from "node:path";
 
 import { describe, expect, test } from "bun:test";
 
-import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { applyOwnerOnlyWindowsAcl, applyOwnerOnlyWindowsDirectoryAcl, canonicalizeWindowsGatewayKeyRoot, createOwnerOnlyWindowsFile, ensureWindowsGatewayKeys, gatewayKeyRoles } from "../src/setup/windows-private-files.js";
+import { inspectWindowsTokenAcl, requireOwnerOnlyWindowsTokenAcl } from "../src/desktop-gateway/server.js";
 
 describe("Windows Gateway private files", () => {
   const windowsTest = process.platform === "win32" ? test : test.skip;
@@ -15,6 +16,34 @@ describe("Windows Gateway private files", () => {
     try {
       await (await import("node:fs/promises")).mkdir(directory);
       await expect(applyOwnerOnlyWindowsDirectoryAcl(directory)).resolves.toBeUndefined();
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  windowsTest("atomically creates a current-user owner-only file without exposing content through argv or env", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-atomic-key-"));
+    const file = path.join(parent, "key.txt");
+    const secret = "atomic-secret-canary-" + Date.now() + "\n";
+    try {
+      await createOwnerOnlyWindowsFile(file, secret);
+      expect(await readFile(file, "utf8")).toBe(secret);
+      const report = await inspectWindowsTokenAcl(file);
+      expect(() => requireOwnerOnlyWindowsTokenAcl(report)).not.toThrow();
+      expect(report.ownerSid).toBe(report.currentUserSid);
+      expect(JSON.stringify(process.argv)).not.toContain(secret.trim());
+      expect(JSON.stringify(process.env)).not.toContain(secret.trim());
+    } finally { await rm(parent, { recursive: true, force: true }); }
+  });
+
+  windowsTest("never overwrites a preexisting file during owner-only creation", async () => {
+    const parent = await mkdtemp(path.join(os.tmpdir(), "chat2codex-atomic-existing-"));
+    const file = path.join(parent, "key.txt");
+    try {
+      await writeFile(file, "preserve-me\n");
+      const error = await createOwnerOnlyWindowsFile(file, "replacement\n").then(() => null, (value) => value);
+      expect(error?.failureDetail).toMatchObject({ stage: "file_create_create", exceptionType: expect.any(String) });
+      expect(await readFile(file, "utf8")).toBe("preserve-me\n");
+      expect(JSON.stringify(error?.failureDetail)).not.toContain(file);
+      expect(JSON.stringify(error?.failureDetail)).not.toContain("replacement");
     } finally { await rm(parent, { recursive: true, force: true }); }
   });
 
