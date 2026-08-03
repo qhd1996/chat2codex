@@ -32,18 +32,20 @@ requires a fresh read-only inventory before action.
 Separate confirmation: **production process stop/start**. This does not deploy the
 candidate.
 
-Current read-only target snapshot:
+Current read-only target snapshot (refreshed 2026-08-03 09:04 Asia/Shanghai):
 
 - Scheduled Task: `Chat2Codex-Weixin`, action
   `F:/Chat2Codex/Start-Chat2Codex.ps1`; state `Ready`; result `0x1`.
 - Orphan chain: `cmd.exe` PID 33440 created
   `2026-08-02T03:40:06.3342960Z` → `node.exe` PID 10448 created
   `2026-08-02T03:40:06.4096280Z`.
-- Installed package `0.8.0-orchestrator.4`; state schema 4.
+- Installed package `0.8.0-orchestrator.4`; package manifest SHA-256
+  `AD2038...6DEDA7`; launcher SHA-256 `1205DC...33CCC`; state schema 4.
 - State SHA-256:
   `CB1BF1F39ACDE7DADCAE52679C650236197C8570EDC7A253E5A1326E04552BD4`.
 - Obligations: 0 non-terminal jobs, pending outbox/messages/drafts/clarifications,
-  and Desktop bindings.
+  and Desktop bindings. One historical `interrupted` job is terminal by the
+  product contract; its only outbox record is delivered.
 
 After approval: recheck the exact identities and obligations; stop only the exact
 orphan subtree; start the existing Scheduled Task; prove one new managed chain,
