@@ -553,3 +553,15 @@ and qualifying second-Windows DIST-003. Goal remains active.
   artifact is read or an equivalent local RED is obtained. Production dry-run for
   .17 passed with script SHA-256 35FB994B...FCA9, but production write is withheld
   while this CI blocker remains open.
+
+### 22:29 production .17 attempt and rollback
+
+- The dry-run-pinned .17 transaction created a byte-verified owner-only backup and
+  attempted the production transition once. The candidate did not reach the combined
+  one-writer + directory-lock + schema-v6 gate in 30 seconds. No timeout was changed.
+- Automatic rollback succeeded with no reported cleanup error. Failure report SHA-256
+  is 0037A10DE4F84A092B502EE816B62FCF047615CCB0BD0880560ADE78B9FCA7B2.
+- Independent postcheck observed restored .4 Node writer PID 9408, doctor exit 0,
+  directory lock, schema 4, exact state/env/launcher hashes, 4 tasks / 9 jobs /
+  4 delivered outbox, zero active/undelivered/pending/drafts/clarifications, and no
+  candidate task. Production retry is stopped.
