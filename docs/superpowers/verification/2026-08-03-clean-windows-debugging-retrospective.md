@@ -759,3 +759,32 @@ reproduction, then one corrected full-CI attempt.
   1-2 engineering days when clean Windows and Desktop are available. Repository
   rollback is revert of `d953e7c`; package/runtime rollback remains the named
   receipt and exact backup-hash path.
+
+### 06:24-06:31 third full run and diagnostic path change
+
+- Full run [30858505352](https://github.com/qhd1996/chat2codex/actions/runs/30858505352)
+  on `9f31d88` passed checkout, Node/Bun setup, frozen install, build, fast,
+  restart, native artifact, and both new matrix evidence publication steps. The
+  blocking 30-run step failed in four seconds; clean-package was dependency-skipped.
+- Direct public annotation is schema 1 fail, repository
+  `9f31d885c8fa86acc9723771aff627a068a7bc17`, zero completed repetitions,
+  `repetition/package_report` / `invalid` / repetition 1, cleanup attempted and
+  succeeded. Artifact `8873403050` is the 373-byte matrix report. This confirms
+  the failure occurs inside the first package repetition after a valid shard; it
+  does not yet identify the inner probe.
+- Separate native artifact `8873401029` and public annotation again report
+  `journey/file_acl_owner_read` / `exit_86` with zero task/user/process/profile/root
+  residuals. The matching ACL pattern is evidence for the next hypothesis, not a
+  claim that both jobs share an exact call site.
+- Stop-loss path changed again: no fourth full run. The next candidate adds only
+  repository-script propagation of an already-bounded `failureDetail` ACL stage
+  and a `[matrix-only]` one-repetition diagnostic job. It does not modify product
+  source or npm package bytes. Real subprocess RED-to-GREEN requires fixed
+  `repetition/package_report/<acl-stage>` / `exit_86`, cleanup true, no raw output
+  or paths, plus an always-run artifact and blocking enforce step. Only that
+  targeted hosted job may run next.
+- A main-worktree pack during this WIP again produced rejected SHA-256
+  `593e64a5...6f3fe`. Content comparison found 19 CRLF/working-tree byte
+  differences, including generated protocol/docs files; it is the same invalid
+  evidence class already recorded above, not a new candidate. Only a detached
+  committed clean build may verify the frozen `87d11543...57a7` archive.

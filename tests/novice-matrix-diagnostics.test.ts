@@ -77,6 +77,18 @@ describe("novice matrix bounded diagnostics", () => {
     expectBounded(report, fixture.root);
   });
 
+  test("preserves a bounded package lifecycle ACL stage without exposing diagnostics", async () => {
+    const fixture = await createFixture("package-detail");
+
+    const result = runMatrix(fixture.root, fixture.report);
+    const report = await readJson(fixture.report);
+
+    expect(result.exitCode).not.toBe(0);
+    expect(report?.failure).toEqual({ stage: "repetition/package_report/file_acl_owner_read", code: "exit_86", repetition: 1 });
+    expect(report?.cleanup).toEqual({ attempted: true, succeeded: true });
+    expectBounded(report, fixture.root);
+  });
+
   test("publishes only bounded matrix evidence while retaining a blocking verdict", async () => {
     const temporary = await mkdtemp(path.join(os.tmpdir(), "c2c-matrix-publish-"));
     temporaryRoots.push(temporary);
@@ -119,7 +131,7 @@ describe("novice matrix bounded diagnostics", () => {
   });
 });
 
-async function createFixture(mode: "missing" | "invalid" | "marker") {
+async function createFixture(mode: "missing" | "invalid" | "marker" | "package-detail") {
   const root = await mkdtemp(path.join(os.tmpdir(), "c2c-matrix-fixture-"));
   temporaryRoots.push(root);
   await mkdir(path.join(root, "quality", "scenarios"), { recursive: true });
@@ -129,8 +141,14 @@ async function createFixture(mode: "missing" | "invalid" | "marker") {
   await writeFile(path.join(root, "tracked.txt"), "clean\n");
   const shardSource = mode === "missing" ? "process.exitCode = 0;\n"
     : mode === "invalid" ? "import { writeFile } from 'node:fs/promises'; const a=process.argv.slice(2); await writeFile(a[a.indexOf('--report')+1], '{');\n"
+    : mode === "package-detail" ? "import { writeFile } from 'node:fs/promises'; const a=process.argv.slice(2); await writeFile(a[a.indexOf('--report')+1], JSON.stringify({reportedPass:1,reportedFail:0,reportedSkip:0,timedOut:false,residualChildren:0,residualRoot:false,stdoutTail:'',stderrTail:''}));\n"
     : "import { writeFile } from 'node:fs/promises'; await writeFile('shard-ran', 'yes');\n";
   await writeFile(path.join(root, "scripts", "run-test-shard.mjs"), shardSource);
+  if (mode === "package-detail") {
+    await mkdir(path.join(root, "src", "quality"), { recursive: true });
+    await writeFile(path.join(root, "src", "quality", "novice-package-matrix.ts"),
+      "export async function runNovicePackageRepetition(){throw Object.assign(new Error('private path and SID'),{failureDetail:{stage:'file_acl_owner_read',exitCode:86,fullyQualifiedErrorId:'private identity'}})}\n");
+  }
   git(root, ["init"]);
   git(root, ["add", "."]);
   git(root, ["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "-m", "fixture"]);

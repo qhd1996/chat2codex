@@ -45,11 +45,28 @@ describe("novice acceptance documentation and Windows CI", () => {
     for (const value of ["C2C_EXPECTED_CANDIDATE_VERSION", "C2C_EXPECTED_CANDIDATE_SHA256", "candidate_version_mismatch", "candidate_archive_hash_mismatch"]) expect(workflow).toContain(value);
     expect(parsed?.on?.workflow_dispatch).toBeDefined();
     expect(parsed?.jobs?.["novice-acceptance"]?.if).toContain("[native-only]");
+    expect(parsed?.jobs?.["novice-acceptance"]?.if).toContain("[matrix-only]");
     const nativeOnly = parsed?.jobs?.["native-lifecycle-diagnostic"];
     expect(nativeOnly?.if).toContain("[native-only]");
     expect(nativeOnly?.steps?.map((step: any) => step.name)).toEqual(["Check out repository","Set up Node","Set up Bun","Install frozen dependencies","Build candidate","Run native temporary lifecycle diagnostic","Upload native lifecycle diagnostic","Publish native lifecycle diagnostic"]);
     expect(JSON.stringify(nativeOnly)).not.toContain("Run thirty repetitions");
     expect(JSON.stringify(nativeOnly)).not.toContain("Pack reviewed candidate");
+    const matrixOnly = parsed?.jobs?.["matrix-repetition-diagnostic"];
+    expect(matrixOnly?.if).toContain("[matrix-only]");
+    expect(matrixOnly?.steps?.map((step: any) => step.name)).toEqual([
+      "Check out repository", "Set up Node", "Set up Bun", "Install frozen dependencies", "Build candidate",
+      "Run one matrix repetition diagnostic", "Upload one matrix repetition diagnostic",
+      "Publish one matrix repetition diagnostic", "Enforce one matrix repetition diagnostic",
+    ]);
+    expect(matrixOnly?.steps?.find((step: any) => step.name === "Run one matrix repetition diagnostic")?.["continue-on-error"]).toBe(true);
+    expect(matrixOnly?.steps?.find((step: any) => step.name === "Run one matrix repetition diagnostic")?.run).toContain("--repetitions 1");
+    expect(matrixOnly?.steps?.find((step: any) => step.name === "Upload one matrix repetition diagnostic")?.if).toContain("always()");
+    expect(matrixOnly?.steps?.find((step: any) => step.name === "Publish one matrix repetition diagnostic")?.if).toBe("always() && steps.matrix.outcome == 'failure'");
+    const matrixEnforce = matrixOnly?.steps?.find((step: any) => step.name === "Enforce one matrix repetition diagnostic");
+    expect(matrixEnforce?.if).toBe("always()");
+    expect(matrixEnforce?.run).toContain("matrix_diagnostic_failed");
+    expect(JSON.stringify(matrixOnly)).not.toContain("Run thirty repetitions");
+    expect(JSON.stringify(matrixOnly)).not.toContain("Pack reviewed candidate");
     expect(nativeOnly?.steps?.find((step: any) => step.name === "Run native temporary lifecycle diagnostic")?.run).toContain("scripts/novice-standard-user-lifecycle.ps1");
     expect(parsed?.on?.workflow_dispatch?.inputs?.gate?.options).toEqual(["full", "clean-package"]);
     expect(parsed?.env?.C2C_CLEAN_PACKAGE_ONLY).toContain("inputs.gate == 'clean-package'");

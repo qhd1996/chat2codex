@@ -14,12 +14,14 @@ const allowedStages = new Set([
   "repetition/validation", "final/validation", "cleanup/temp_root",
   "workflow_publication/report_missing", "workflow_publication/report_invalid",
   "workflow_publication/summary_write", "workflow_publication/process_failure",
+  ...packageFailureStages().map((stage) => "repetition/package_report/" + stage),
 ]);
 const allowedCodes = new Set([
   "invalid_arguments", "report_unavailable", "bun_required", "read_failed",
   "invalid", "command_failed", "tracked_dirty", "create_failed",
   "spawn_failed", "missing", "mismatch", "repetition_failed",
   "validation_failed", "cleanup_failed", "unavailable",
+  "exit_86",
 ]);
 
 let published = await readPublicEvidence(reportPath);
@@ -49,3 +51,4 @@ async function readPublicEvidence(file) {
   return { schemaVersion: 1, verdict: "fail", repositoryCommit: /^[a-f0-9]{40}$/u.test(value.repositoryCommit) ? value.repositoryCommit : null, repetitionsCompleted: Number.isSafeInteger(value.repetitionsCompleted) && value.repetitionsCompleted >= 0 && value.repetitionsCompleted <= 30 ? value.repetitionsCompleted : 0, failure: { stage, code, repetition }, cleanup: { attempted: value.cleanup?.attempted === true, succeeded: value.cleanup?.succeeded === true } };
 }
 function fallback(stage) { return { schemaVersion: 1, verdict: "fail", repositoryCommit: null, repetitionsCompleted: 0, failure: { stage, code: "unavailable", repetition: null }, cleanup: { attempted: false, succeeded: false } }; }
+function packageFailureStages() { return ["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply"]; }

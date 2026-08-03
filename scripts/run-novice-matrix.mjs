@@ -11,12 +11,14 @@ const stages = new Set([
   "preflight/package", "preflight/temp_setup", "repetition/spawn",
   "repetition/shard_report", "repetition/package_report",
   "repetition/validation", "final/validation", "cleanup/temp_root",
+  ...packageFailureStages().map((stage) => "repetition/package_report/" + stage),
 ]);
 const codes = new Set([
   "invalid_arguments", "report_unavailable", "bun_required", "read_failed",
   "invalid", "command_failed", "tracked_dirty", "create_failed",
   "spawn_failed", "missing", "mismatch", "repetition_failed",
   "validation_failed", "cleanup_failed", "unavailable",
+  "exit_86",
 ]);
 class MatrixFailure extends Error {
   constructor(stage, code, repetition = null) { super(stage + "/" + code); this.stage = stage; this.code = code; this.repetition = repetition; }
@@ -100,7 +102,10 @@ if (reportReady) {
       if (stateHashes.length === 0) stateHashes.push(hashText(repositoryCommit + ":" + index + ":repository-state-observation"));
       let packageReport;
       try { packageReport = await extractPackageExecutionReport(scenarioIds, index, packageJson.version); }
-      catch { throw new MatrixFailure("repetition/package_report", "invalid", index); }
+      catch (error) {
+        const bounded = publicPackageFailure(error);
+        throw bounded ? new MatrixFailure("repetition/package_report/" + bounded.stage, bounded.code, index) : new MatrixFailure("repetition/package_report", "invalid", index);
+      }
       if (!packageReport) throw new MatrixFailure("repetition/package_report", "mismatch", index);
       const record = { index, seed: 2026080200 + index, startedAt: repetitionStartedAt, completedAt: new Date().toISOString(), verdict: result.status === 0 && counts.fail === 0 && counts.skip === 0 && counts.timeout === 0 && counts.residualProcesses === 0 ? "pass" : "fail", counts, scenarioIds: [...scenarioIds], scenarioExecutions: packageReport.scenarioExecutions ?? [], stateHashes, commands: [command.map(redactCommandPart).join(" ")], processProof: null };
       records.push(record);
@@ -141,6 +146,8 @@ function normalizeFailure(error) {
   if (error instanceof MatrixFailure && stages.has(error.stage) && codes.has(error.code)) return error;
   return new MatrixFailure("final/validation", "unavailable");
 }
+function packageFailureStages() { return ["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply"]; }
+function publicPackageFailure(error) { const detail = error && typeof error === "object" && !Array.isArray(error) && error.failureDetail && typeof error.failureDetail === "object" ? error.failureDetail : null; const stage = detail && typeof detail.stage === "string" ? detail.stage : null; const code = detail && detail.exitCode === 86 ? "exit_86" : "unavailable"; return stage && packageFailureStages().includes(stage) ? { stage, code } : null; }
 async function writeFailureReport(error) {
   const normalized = normalizeFailure(error);
   const report = { schemaVersion: 1, verdict: "fail", repositoryCommit: /^[a-f0-9]{40}$/u.test(repositoryCommit ?? "") ? repositoryCommit : null, repetitionsCompleted: records.length, failureHistory, failure: { stage: normalized.stage, code: normalized.code, repetition: normalized.repetition }, cleanup };

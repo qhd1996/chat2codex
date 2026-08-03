@@ -26,7 +26,7 @@ env:
 
 jobs:
   novice-acceptance:
-    if: ${{ !(github.event_name == 'push' && contains(github.event.head_commit.message, '[native-only]')) }}
+    if: ${{ !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[native-only]') || contains(github.event.head_commit.message, '[matrix-only]'))) }}
     runs-on: windows-latest
     steps:
       - name: Check out repository
@@ -223,6 +223,49 @@ jobs:
           Write-Host ('::error title=Native lifecycle evidence::' + $fallback)
           try { Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY -Value $fallback -ErrorAction Stop } catch { Write-Host '::error title=Native lifecycle evidence::{"schemaVersion":1,"verdict":"fail","failure":{"stage":"workflow_publication/summary_write","code":"unavailable"},"cleanup":{"attempted":false,"succeeded":false}}' }
           exit 0
+
+  matrix-repetition-diagnostic:
+    if: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[matrix-only]') }}
+    runs-on: windows-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: "24"
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.9
+      - name: Install frozen dependencies
+        run: bun install --frozen-lockfile
+      - name: Build candidate
+        run: bun run build
+      - name: Run one matrix repetition diagnostic
+        id: matrix
+        continue-on-error: true
+        run: bun scripts/run-novice-matrix.mjs --repetitions 1 --report .tmp/novice-repository-one.json
+      - name: Upload one matrix repetition diagnostic
+        if: always() && hashFiles('.tmp/novice-repository-one.json') != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: novice-matrix-one-evidence
+          path: .tmp/novice-repository-one.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish one matrix repetition diagnostic
+        if: always() && steps.matrix.outcome == 'failure'
+        run: node scripts/publish-novice-matrix-evidence.mjs .tmp/novice-repository-one.json
+      - name: Enforce one matrix repetition diagnostic
+        if: always()
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath .tmp/novice-repository-one.json)) { throw 'matrix_diagnostic_failed' }
+          $report = Get-Content -LiteralPath .tmp/novice-repository-one.json -Raw | ConvertFrom-Json
+          if ($report.schemaVersion -ne 5 -or @($report.repetitions).Count -ne 1 -or @($report.repetitions | Where-Object verdict -NE 'pass').Count -ne 0) { throw 'matrix_diagnostic_failed' }
 
   clean-package-acceptance:
     needs: novice-acceptance
