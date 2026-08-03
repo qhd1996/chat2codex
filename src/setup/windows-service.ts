@@ -107,7 +107,16 @@ export async function installWindowsUserTask(input: WindowsServiceInstallInput, 
     return { taskPath, manifest, createdKeys: createdKeys.length };
   } catch (error) {
     const rollbackFailures: string[] = [];
-    if (registrationAttempted) await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch((failure) => rollbackFailures.push(message(failure)));
+    if (registrationAttempted) {
+      let deleteFailure: unknown;
+      await io.runFile("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"]).catch((failure) => { deleteFailure = failure; });
+      try {
+        if (await io.taskExists(taskPath)) rollbackFailures.push(deleteFailure ? message(deleteFailure) : "Windows task remained after rollback deletion.");
+      } catch (verificationFailure) {
+        if (deleteFailure) rollbackFailures.push(message(deleteFailure));
+        rollbackFailures.push(`Windows task rollback verification failed: ${message(verificationFailure)}`);
+      }
+    }
     for (const [filePath, prior] of [...snapshots].reverse()) {
       if (prior === null) await io.removeFile(filePath).catch((failure) => rollbackFailures.push(message(failure)));
       else await io.writeTextAtomic(filePath, prior).catch((failure) => rollbackFailures.push(message(failure)));

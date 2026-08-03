@@ -62,9 +62,40 @@ describe("Windows service lifecycle executor", () => {
     expect(fixture.events).toContainEqual(["run", "schtasks.exe", ["/Delete", "/TN", "\\Chat2Codex\\Chat2Codex", "/F"]]);
   });
 
-  test("reports cleanup failure instead of hiding an uncertain task registration", async () => {
+  test("preserves the original create failure when delete reports an already absent task", async () => {
     const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => args[0] === "/Create" ? new Error("create result uncertain") : args[0] === "/Delete" ? new Error("delete rollback failed") : undefined);
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/^create result uncertain$/i);
+    expect(fixture.events).toContainEqual(["task-exists", "\\Chat2Codex\\Chat2Codex"]);
+  });
+
+  test("fails closed when a failed rollback delete leaves the uncertain task present", async () => {
+    let fixture: ReturnType<typeof ioFixture>;
+    fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => {
+      if (args[0] === "/Create") { fixture.setTaskExists(true); return new Error("create result uncertain"); }
+      return args[0] === "/Delete" ? new Error("delete rollback failed") : undefined;
+    });
     await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/rollback.*incomplete|delete rollback failed/i);
+  });
+
+  test("fails closed when task absence cannot be verified after a failed rollback delete", async () => {
+    const fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => args[0] === "/Create" ? new Error("create result uncertain") : args[0] === "/Delete" ? new Error("delete rollback failed") : undefined);
+    const taskExists = fixture.io.taskExists;
+    let queryCount = 0;
+    fixture.io.taskExists = async (taskPath) => {
+      if (++queryCount === 2) throw new Error("task state uncertain");
+      return taskExists(taskPath);
+    };
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/rollback.*incomplete|task state uncertain/i);
+  });
+
+  test("fails closed when a successful rollback delete leaves the uncertain task visible", async () => {
+    let fixture: ReturnType<typeof ioFixture>;
+    fixture = ioFixture({ [input.envFile]: "USER_SETTING=yes\r\n" }, (args) => {
+      if (args[0] === "/Create") { fixture.setTaskExists(true); return new Error("create result uncertain"); }
+      return undefined;
+    });
+    fixture.keepTaskAfterDelete();
+    await expect(installWindowsUserTask(input, fixture.io)).rejects.toThrow(/rollback.*incomplete|task remained/i);
   });
 
   test("rejects a task-name change before creating a second writer", async () => {
