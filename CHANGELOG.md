@@ -30,6 +30,8 @@ numbers once releases are published.
   verification, clean uncertain registrations, reject task-identity drift, retain
   the manifest until uninstall completes, stop exact PID/creation-time writers,
   protect rollback copies with owner-only ACLs, and reject reparse traversal.
+- Windows CI and clean-package workflows pin every third-party action to an
+  immutable GitHub commit SHA while retaining the reviewed major-version comment.
 
 ## 0.8.0 - 2026-07-29
 
