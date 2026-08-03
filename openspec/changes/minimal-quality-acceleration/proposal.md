@@ -1,4 +1,4 @@
-<!-- chat2codex-authority {"changeName":"minimal-quality-acceleration","artifact":"proposal","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"01e827bbdc6584136627d9f1f137e8051f0a8c97","requirementIds":["OPS-001","OPS-003","OPS-004"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
+<!-- chat2codex-authority {"changeName":"minimal-quality-acceleration","artifact":"proposal","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"564d6519c08cc3ecd477a7cefd4bfd8c1afca72c","requirementIds":["OPS-001","OPS-003","OPS-004"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
 
 # Minimal quality acceleration
 

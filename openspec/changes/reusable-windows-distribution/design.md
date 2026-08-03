@@ -1,4 +1,4 @@
-<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"design","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"01e827bbdc6584136627d9f1f137e8051f0a8c97","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
+<!-- chat2codex-authority {"changeName":"reusable-windows-distribution","artifact":"design","authorityRepo":"F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/","authorityCommit":"564d6519c08cc3ecd477a7cefd4bfd8c1afca72c","requirementIds":["DIST-001","DIST-002","DIST-003"],"acceptedBy":"Haoda","productionAuthorized":false,"realExternalActionsAuthorized":false} -->
 
 # Design
 

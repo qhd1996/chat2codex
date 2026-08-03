@@ -6,7 +6,7 @@ import { describe, expect, test } from "bun:test";
 
 import { validateOpenSpecAuthority } from "../scripts/verify-openspec-authority.mjs";
 
-const authorityCommit = "01e827bbdc6584136627d9f1f137e8051f0a8c97";
+const authorityCommit = "564d6519c08cc3ecd477a7cefd4bfd8c1afca72c";
 const authorityRepo = "F:/workspace/chat2codex-custom/.worktrees/requirements-ledger/docs/requirements/";
 const changeName = "minimal-quality-acceleration";
 const prohibitedTask = "019fc002-590e-7023-b7e5-2a802168f00a";
@@ -60,15 +60,17 @@ describe("OpenSpec authority overlay", () => {
     });
   });
 
-  test("the approved lock includes the novice delivery gate and current accepted CRs", () => {
+  test("the approved lock includes the personal portable scope and current accepted CRs", () => {
     expect(approvedLock.authorityCommit).toBe(authorityCommit);
-    for (const changeId of ["CR-0006", "CR-0007", "CR-0008", "CR-0009"]) expect(approvedLock.acceptedChangeIds).toContain(changeId);
-    for (const requirementId of ["DIST-001", "DIST-002", "DIST-003", "NOVICE-001", "NOVICE-002", "NOVICE-003"]) expect(approvedLock.requirementIds).toContain(requirementId);
+    for (const changeId of ["CR-0006", "CR-0007", "CR-0008", "CR-0009", "CR-0010"]) expect(approvedLock.acceptedChangeIds).toContain(changeId);
+    for (const requirementId of ["DIST-001", "DIST-002", "DIST-003", "DIST-HARDEN-001", "NOVICE-001", "NOVICE-002", "NOVICE-003"]) expect(approvedLock.requirementIds).toContain(requirementId);
     const lockedPaths = approvedLock.files.map((file: { path: string }) => file.path);
     expect(lockedPaths).toContain("docs/requirements/changes/CR-0006-reusable-windows-distribution.md");
     expect(lockedPaths).toContain("docs/requirements/changes/CR-0007-overnight-repository-autonomy.md");
     expect(lockedPaths).toContain("docs/requirements/changes/CR-0008-goal-completion-weixin-notice.md");
     expect(lockedPaths).toContain("docs/requirements/changes/CR-0009-novice-daily-use-simulation.md");
+    expect(lockedPaths).toContain("docs/requirements/changes/CR-0010-personal-portable-installer-scope.md");
+    expect(lockedPaths).toContain("docs/requirements/adr/ADR-0006-personal-portable-security-boundary.md");
   });
 
   for (const [name, override, pattern] of [
