@@ -1,6 +1,9 @@
 name: Windows quality
 
 on:
+  push:
+    branches:
+      - candidate/novice-0.8.0-novice.5
   pull_request:
   workflow_dispatch:
 

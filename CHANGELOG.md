@@ -32,6 +32,9 @@ numbers once releases are published.
   protect rollback copies with owner-only ACLs, and reject reparse traversal.
 - Windows CI and clean-package workflows pin every third-party action to an
   immutable GitHub commit SHA while retaining the reviewed major-version comment.
+- The no-checkout novice workflow has one candidate-only push trigger so an
+  approved personal-fork branch can produce clean-Windows evidence without
+  rewriting the fork default branch.
 
 ## 0.8.0 - 2026-07-29
 
