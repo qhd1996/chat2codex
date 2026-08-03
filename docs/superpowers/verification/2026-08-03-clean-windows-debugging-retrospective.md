@@ -60,7 +60,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | 16:31–16:39 | `.8` / `b0a9b22` → `a8fee1c` | [30793753462](https://github.com/qhd1996/chat2codex/actions/runs/30793753462), jobs `91622623891`, `91623994418` | repository passed; clean failed | Advanced through ACL/SID gates to Scheduled Task readiness; no ready file in 15 s. Clean log SHA-256 `A2B4A85184615541BFA975EAF2FC23DB677E62DD10246DC47DEE8C366947D308`; zero residual artifact passed |
 | 16:46–16:50 | `.8` / `4a344fc` → `2f6aefc` | [30794632293](https://github.com/qhd1996/chat2codex/actions/runs/30794632293), jobs [`91625320208`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91625320208), [`91626525352`](https://github.com/qhd1996/chat2codex/actions/runs/30794632293/job/91626525352) | repository passed; clean failed | Readiness diagnostic itself threw `ReferenceError: logFile is not defined`, masking the Scheduled Task failure. Clean log SHA-256 `4880EA5BD82F49CA6669BDFB32CC64F5393A832E68F47EC6FB4A1A8E5F857464`; cleanup proved 0 processes, 0 users, 0 task and both owned roots absent |
 | 16:53–17:01 | `.8` / `80f8093` → `992dcaa` | [30795295379](https://github.com/qhd1996/chat2codex/actions/runs/30795295379), jobs [`91627379356`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91627379356), [`91628441400`](https://github.com/qhd1996/chat2codex/actions/runs/30795295379/job/91628441400) | repository passed; clean failed | Both calls accepted `logFile`, but no outer declaration existed; clean failed at the first call with `ReferenceError: logFile is not defined`. Log SHA-256 `309CBED0BC9C93BE888AD4C522FD8D89430F5DF402D901643B1C8061045DEC11`; cleanup again proved 0 processes/users/task and absent roots |
-| 17:07–pending | `.8` / `8bc12c7` → `90c7367`, evidence heads `8d014f8` and `26b0aae` | [30796160808](https://github.com/qhd1996/chat2codex/actions/runs/30796160808), [30796194757](https://github.com/qhd1996/chat2codex/actions/runs/30796194757) | local RED→GREEN and clean-pack reproduction complete; two byte-identical hosted runs active | Declares one `logFile`, binds installer `--stderr`, both calls and diagnostic reader. The second run was triggered only by the committed evidence-index update; both consume the same package hash |
+| 17:07–17:19 | `.8` / `8bc12c7` → `90c7367`, evidence heads `8d014f8` and `26b0aae` | [30796160808](https://github.com/qhd1996/chat2codex/actions/runs/30796160808), jobs `91630108769`, `91631687008`; [30796194757](https://github.com/qhd1996/chat2codex/actions/runs/30796194757), jobs `91630214001`, `91631653758` | both repository jobs passed; both clean jobs identically failed | Task was Enabled but returned `-196608`, with writers `0` and missing launcher log. Log SHA-256 values `722FC3D2D861514E0D0335B502C5198F6520BA7CDF8D55483BC39A8FD96A37C8` and `33ED60C32CBD4A7BC176849CC6E77FD73CB379606B4B7DF04D63234386A3E831`; both cleanup artifacts reported zero residuals |
+| 17:36–17:41 | `.8` / `1baee84` → `30a3fed` | [30798020569](https://github.com/qhd1996/chat2codex/actions/runs/30798020569), jobs `91635935052`, `91636097432` | clean-package-only diagnostic run advanced through the full lifecycle and failed evidence validation | Repository packaging job completed in 46 s with deliberately deferred stable/audit gates; clean direct error `Novice process createdAt is invalid`. Log SHA-256 `3AC1DF474E246E54D23C65294B45EC5F58E90741C71B31E1EF3816C9CEAEAE58`; fail-closed cleanup proof had `InspectionComplete=true`, no error codes and zero residuals |
+| 17:45–17:56 | `.8` / `972d678` → `546a293` | [30798631293](https://github.com/qhd1996/chat2codex/actions/runs/30798631293), jobs `91637843664`, `91639180587` | full repository/30-run job passed; clean repeated the process-proof timestamp failure | Final permitted hosted attempt. Clean log SHA-256 `ABC13455B41E5C2E35469DD2DE4930A24ECAB91887EE1EDA77DB935FD6A1B919`; cleanup again complete and zero-residual. No further push or hosted rerun is authorized under the 45-minute stop-loss box |
 
 ## Confirmed root causes, hypotheses, and rejected paths
 
@@ -170,8 +172,25 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
     sites, but run `30795295379` proved the value was still undeclared at the first
     call. `8bc12c7` now declares one path and reuses it for installer `--stderr`, both
     calls and the diagnostic reader. This confirms both diagnostic defects, but the
-    underlying Scheduled Task start failure remains **unknown** until a corrected
-    hosted run preserves its original evidence.
+    underlying Scheduled Task start failure remained **unknown** at this point; the
+    next two byte-identical runs isolated it below.
+21. **Task Scheduler Exec arguments use Windows command-line quoting, not PowerShell
+    expression quoting.** Runs `30796160808` and `30796194757` showed an Enabled task,
+    Last Result `-196608`, zero writers and no launcher log; its action carried
+    `-File '<owned-path>'`. A local two-task probe held everything constant: the
+    single-quoted variant created no output while a double-quoted variant succeeded,
+    and cleanup left zero probe tasks. `1baee84` emits XML-escaped double quotes,
+    retains legacy single-quoted task parsing for upgrade/rollback, and creates the
+    log parent before redirection. The exact product install/start/ready/stop/uninstall
+    probe then passed under the unchanged 15 s boundaries with zero residual tasks.
+22. **Windows PowerShell round-trip timestamps are not JS canonical timestamps.**
+    Local CIM proof returned `...7199610Z` for `ToString('o')`, whereas the evidence
+    contract intentionally requires `new Date(value).toISOString() === value`, or
+    millisecond form `...719Z`. Run `30798020569` first exposed the attestation-side
+    value; `972d678` corrected that branch. Full run `30798631293` then proved the
+    package-matrix restart process proof had the same independent defect. `9936f7d`
+    applies the same UTC millisecond format there; hosted proof is **not yet obtained**
+    because the declared stop-loss forbids another GitHub attempt on this route.
 
 ### Inferences
 
@@ -222,6 +241,9 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `b0a9b22` native current-user SID | hosted run `30793010125` advanced past the helper, then the PowerShell SID child failed empty | parser RED covered missing implementation; 40 pass, 2 platform skips, 0 fail plus typecheck; hosted proof pending |
 | `4a344fc` readiness diagnostics | hosted run `30793753462` reached task start but timed out without a ready file | tests require redacted task/writer/log diagnostics and retain the 15 s boundary; remote evidence pending |
 | `80f8093`, superseded by `8bc12c7` readiness log binding | hosted run `30794632293` failed because the helper had no parameter; `30795295379` then failed at the first call because the value was undeclared; the final source-contract assertions fail against `80f8093` | one `logFile` declaration now feeds installer `--stderr`, both calls, the helper parameter and reader; 41/41 related tests, typecheck, contracts and build passed under Node 24.14.0/Bun 1.3.9; hosted proof pending |
+| `1bc6644` fail-closed cleanup inspection | review and RED assertions showed `SilentlyContinue`, unchecked delete/query exits and CIM/user failures could yield false zeroes | hosted runs `30798020569` and `30798631293` both emitted `InspectionComplete=true`, empty `CleanupErrorCodes`, absent roots, 0 processes/users/task; query errors now force cleanup failure |
+| `1baee84` Task argv/log parent | two hosted runs returned `-196608`, writers 0, log missing; local same-input probe: single quote no output, double quote output | exact product install/start/ready/stop/uninstall passed locally within original 15 s boundaries; 40/40 focused tests, typecheck/contracts; both legacy and current task XML accepted for upgrade |
+| `972d678`, `9936f7d` process timestamp normalization | local Windows PowerShell produced seven fractional digits; remote runs rejected attestation and package-matrix process proofs as non-canonical | attestation/evidence/matrix tests 25/25 and 33/33 passed; exact product task probe remained green; final package-matrix change awaits equivalent-isolation proof |
 
 ## Environment differences and immutable candidate evidence
 
@@ -230,10 +252,11 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
   Node `16.17.0`, so gates explicitly prepend the bundled Node.
 - Local and hosted workflows pin Bun `1.3.9`; release zip SHA-256 is
   `f4c1cf3549f6af986dc6535c40b4785ff1a7e7805e59637ec450fc11adb0c874`.
-- Current candidate is `0.8.0-novice.8`. Two detached clean checkouts at product
-  source `8bc12c7` produced byte-equal 412,103-byte archives, SHA-256
-  `9A5813B90436A024074DB1080C63813F15E5CF07D657F4328216D583810E1A53`,
-  131 files. Workflow binding commit is `90c7367`.
+- Current hosted candidate is `0.8.0-novice.8`. Two detached clean checkouts at
+  product source `972d678` produced byte-equal 412,247-byte archives, SHA-256
+  `85432737A75439FDCB8BF8218B8588F3F863A909D500F5889BE92C428F19F101`,
+  131 files. Workflow binding commit is `546a293`. Local-only product head `9936f7d`
+  changes package bytes and is not yet frozen as a release candidate.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
@@ -277,11 +300,13 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: runs `30796160808` and `30796194757` must finish both repository
-and clean-package jobs. The clean jobs must directly confirm the another-user ACL helper
-plus every clean-Windows lifecycle/ACL/upgrade/rollback/zero-residual row. Estimated
-remaining CI time is 10–20 minutes for this attempt; further repair time depends on
-its retained report if it fails.
+Current blocker: the final package-matrix timestamp branch at `9936f7d` has local
+RED→GREEN but no direct equivalent-isolated clean-Windows pass. The GitHub route has
+reached the declared stop-loss: one targeted run plus one final full run. No more push
+or hosted rerun will occur on that path. Next step is a package-bound equivalent
+isolated Windows execution under a disposable local user/environment, then one reviewed
+release freeze only if it passes. Estimated 15–25 minutes; if the environment cannot
+qualify, status remains blocked/unknown rather than weakening the requirement.
 
 Rollback is commit-scoped: revert only the offending fix/rebind pair and return the
 candidate branch to the last reviewed SHA. No production files were changed by this
@@ -307,20 +332,31 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
    flow through both call sites. Before a remote rerun, force the local failure path
    and add source/runtime checks that every diagnostic dependency is explicitly
    bound; do not accept a happy-path-only test for an error reporter.
+8. Task action tests asserted XML text but never executed the actual Windows argv
+   boundary. Before the first remote run, register paired single/double quote probes
+   and then run the exact built product install/start/ready/stop/uninstall path.
+9. Process evidence reused `.ToString('o')` without round-tripping it through the
+   verifier. Every evidence producer must feed its exact output into the same schema
+   verifier locally before a remote run.
+10. Repository stability gates dominated each diagnostic turn. The workflow now has
+    a bounded `clean-package` diagnostic input/commit marker; it never counts as final
+    acceptance, and a full unskipped run remains mandatory before release.
 
 ## Interim statistics
 
-- Remote Windows workflow attempts listed here: 40 through current runs
-  `30796160808` and `30796194757`; 38 completed before them, all preserved.
+- Remote Windows workflow attempts listed here: 42 completed through final stop-loss
+  run `30798631293`, all preserved.
 - Completed failure classes: stale/missing build/package state; wrapper/process
   enumeration; PowerShell ACL autoload; lexical/canonical root; manifest/key path;
   fixed-deadline test overhead; Codex npm layout; projected Codex Home; projected/
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 79 commits through
-  `90c7367`, including package hash rebinds and one explicit revert.
-- Latest failed clean job `30795295379` zero-residual artifact: owned root false,
+- Product/test/workflow repair commits after `8df77f3`: 88 commits through
+  local-only `9936f7d`, including package hash rebinds and one explicit revert.
+- Latest failed clean job `30798631293` zero-residual artifact: inspection complete,
+  cleanup error codes empty, owned root false, environment root false, matching
+  processes 0, residual users 0, residual task false.
   environment root false, matching processes 0, residual users 0, residual task
   false.
 - Final counts and the terminal run conclusion will be appended after the first full
