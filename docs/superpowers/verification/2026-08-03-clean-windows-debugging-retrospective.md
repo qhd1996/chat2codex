@@ -244,6 +244,8 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
 | `1bc6644` fail-closed cleanup inspection | review and RED assertions showed `SilentlyContinue`, unchecked delete/query exits and CIM/user failures could yield false zeroes | hosted runs `30798020569` and `30798631293` both emitted `InspectionComplete=true`, empty `CleanupErrorCodes`, absent roots, 0 processes/users/task; query errors now force cleanup failure |
 | `1baee84` Task argv/log parent | two hosted runs returned `-196608`, writers 0, log missing; local same-input probe: single quote no output, double quote output | exact product install/start/ready/stop/uninstall passed locally within original 15 s boundaries; 40/40 focused tests, typecheck/contracts; both legacy and current task XML accepted for upgrade |
 | `972d678`, `9936f7d` process timestamp normalization | local Windows PowerShell produced seven fractional digits; remote runs rejected attestation and package-matrix process proofs as non-canonical | attestation/evidence/matrix tests 25/25 and 33/33 passed; exact product task probe remained green; final package-matrix change awaits equivalent-isolation proof |
+| `2fb200f` task discovery fail-closed | review showed `ENOENT`, generic exit `1`, and `-1073741510` were all classified as absence, so a missing executable or interrupted query could authorize mutation | successful full CSV enumeration is now required; malformed/query-failed output rejects. A real temporary task proved absent→present→absent, and focused tests passed |
+| `527ddfb` lifecycle ownership preflight | RED tests showed upgrade accepted hash-drifted rollback bytes, did not stop an orphaned prior writer, and uninstall deleted a drifted same-name task | hash/action checks and exact writer stop now precede every mutation; real install/start/ready/stop/uninstall passed with zero task residual; focused lifecycle/security gate 65 pass, 2 platform skips, 0 fail |
 
 ## Environment differences and immutable candidate evidence
 
@@ -256,21 +258,21 @@ worktree. No evidence was read from, restored from, or replayed from damaged tas
   product source `972d678` produced byte-equal 412,247-byte archives, SHA-256
   `85432737A75439FDCB8BF8218B8588F3F863A909D500F5889BE92C428F19F101`,
   131 files. Workflow binding commit is `546a293`. Local-only product head `9936f7d`
-  changes package bytes and is not yet frozen as a release candidate. Two detached
-  clean checkouts at `9936f7d` produced byte-equal 412,271-byte archives, SHA-256
-  `C7D137A70607F2E7D91DF68CF6572E75DCD9B18CC2AA71BAD58058C914444652`,
-  131 files.
+  changes package bytes and is superseded by current local product head `527ddfb`.
+  Two detached clean checkouts at `527ddfb` produced byte-equal 412,622-byte archives,
+  SHA-256 `CE912778D1A6B011FF5E291108C22D2563513913C8C65EF25379E255CCFF4179`,
+  131 files. This local package is not yet a qualifying release candidate.
 - Local temporary-Codex-Home proof used the exact final archive, signed Codex `0.146.0`
   (SHA-256 `BC343BA420DC2E2E9F59E6FC5E5BF0AAE1CD8C771FC319665241FC9C0271FDDB`)
   and Node `24.14.0`: 2 untrusted Hooks, 0 errors/warnings, 1 disabled MCP, no
   `plugin/list`; config SHA-256
   `A86CE3499F0EB64984C187AE594427D04C1D9662DBD931C717546BFEC1124526`.
-- Latest local stable suite at `9936f7d`: 908 pass, 8 documented platform-conditional skips,
+- Latest local stable suite at `527ddfb`: 913 pass, 8 documented platform-conditional skips,
   0 fail across 87 files; typecheck/contracts/build passed.
-- Exact `9936f7d` archive package worker ran 30 installed-package repetitions with
+- Exact `527ddfb` archive package worker ran 30 installed-package repetitions with
   19 scenarios each, 30 independent canonical process proofs, 0 residual process,
   package/CLI version equality, and no repository import. Summary SHA-256
-  `924000162D1ED83806AB685475AC14E732F39F045211D6C56C95AC46A2A5DB84`.
+  `86CC73D16C380396484DFE2433D555211076ED374B54B63D73A3837B904A7F02`.
   This proves the corrected process-proof branch but not the separate elevated
   another-user ACL and lifecycle attestation.
 - Latest complete local matrix at final product `f490e6a`: 30 × 19, 570 scenario executions,
@@ -309,13 +311,13 @@ model result was accepted without main-agent verification.
 
 ## Current blocker, next step, ETA, rollback
 
-Current blocker: the final package-matrix timestamp branch at `9936f7d` now has direct
+Current blocker: the current package at `527ddfb` now has direct
 package-bound 30-repetition local-isolation proof, but no complete qualifying
 clean-Windows pass combining the elevated another-user ACL, lifecycle attestation,
 worker, real upgrade and evidence verifier. The GitHub route reached the declared
 stop-loss: one targeted run plus one final full run. No more push or hosted rerun will
 occur on that path. Next step is a qualifying elevated equivalent-isolated Windows
-execution using the exact `C7D137...4652` package, then one reviewed release freeze
+execution using the exact `CE9127...4179` package, then one reviewed release freeze
 only if it passes. The current non-elevated token cannot create the required temporary
 local user; if no elevated isolation runner is available, status remains unknown rather
 than weakening the requirement.
@@ -364,13 +366,13 @@ debugging work. Candidate package rollback retains `.7`; production remains inst
   protected npm overlap; task discovery and rollback reconciliation; task XML
   encoding; local repository-volume ACL mismatch; PowerShell 5.1 helper/module compatibility; one remote
   repetition failure whose inner cause is still unknown.
-- Product/test/workflow repair commits after `8df77f3`: 88 commits through
-  local-only `9936f7d`, including package hash rebinds and one explicit revert.
+- Product/test/workflow repair commits after `8df77f3`: 92 commits through
+  local-only `527ddfb`, including package hash rebinds and one explicit revert.
 - Latest failed clean job `30798631293` zero-residual artifact: inspection complete,
   cleanup error codes empty, owned root false, environment root false, matching
   processes 0, residual users 0, residual task false.
-- Final local `9936f7d` package-only evidence: 30 repetitions, 570 scenario
-  executions, 30 process proofs, 0 residual, plus stable suite 908 pass / 8 documented
+- Final local `527ddfb` package-only evidence: 30 repetitions, 570 scenario
+  executions, 30 process proofs, 0 residual, plus stable suite 913 pass / 8 documented
   platform skips / 0 fail.
 - Final counts and the terminal run conclusion will be appended after the first full
   green repository + clean-package run.
