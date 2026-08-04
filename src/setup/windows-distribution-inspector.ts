@@ -92,10 +92,29 @@ export async function inspectWindowsCommandVersion(name: "powershell" | "node" |
       const { stdout } = await execFileAsync(process.execPath, [npmCli, "--version"], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
       return versionResult(stdout);
     }
-    const command = name === "npm" && process.platform === "win32" ? "npm.cmd" : name === "codex" ? process.env.CODEX_BIN?.trim() || "codex" : name;
+    if (name === "npm" && process.platform === "win32") {
+      const command = await findCanonicalWindowsCommand("npm.cmd", process.env.PATH);
+      if (!command) return { available: false };
+      const cli = path.join(path.dirname(command), "node_modules", "npm", "bin", "npm-cli.js");
+      if (!await isCanonicalRegularFile(cli)) return { available: false };
+      const { stdout } = await execFileAsync(process.execPath, [cli, "--version"], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
+      return versionResult(stdout);
+    }
+    const command = name === "codex" ? process.env.CODEX_BIN?.trim() || "codex" : name;
     const { stdout } = await execFileAsync(command, ["--version"], { encoding: "utf8", timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
     return versionResult(stdout);
   } catch { return { available: false }; }
+}
+async function findCanonicalWindowsCommand(name: string, pathValue: string | undefined): Promise<string | null> {
+  for (const directory of (pathValue ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.resolve(directory, name);
+    if (await isCanonicalRegularFile(candidate)) return candidate;
+  }
+  return null;
+}
+async function isCanonicalRegularFile(file: string): Promise<boolean> {
+  const info = await fs.lstat(file).catch(() => null);
+  return Boolean(info?.isFile() && !info.isSymbolicLink() && path.resolve(await fs.realpath(file)).toLocaleLowerCase() === path.resolve(file).toLocaleLowerCase());
 }
 function versionResult(source: string): { available: boolean; version?: string } { const match = source.match(/[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?/u); return match ? { available: true, version: match[0] } : { available: true }; }
 

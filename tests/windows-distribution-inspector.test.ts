@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -52,6 +52,25 @@ describe("personal Windows environment inspector", () => {
       expect(await inspectWindowsCommandVersion("npm")).toEqual({ available: false });
     } finally {
       if (prior === undefined) delete process.env.CHAT2CODEX_NPM_CLI; else process.env.CHAT2CODEX_NPM_CLI = prior;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("discovers the canonical npm CLI beside npm.cmd without executing the command shim", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "c2c-npm-default-inspector-"));
+    const cli = path.join(root, "node_modules", "npm", "bin", "npm-cli.js");
+    const priorPath = process.env.PATH;
+    const priorOverride = process.env.CHAT2CODEX_NPM_CLI;
+    try {
+      await mkdir(path.dirname(cli), { recursive: true });
+      await writeFile(path.join(root, "npm.cmd"), "@echo off\r\n");
+      await writeFile(cli, 'process.stdout.write("12.3.4\\n");');
+      process.env.PATH = root;
+      delete process.env.CHAT2CODEX_NPM_CLI;
+      expect(await inspectWindowsCommandVersion("npm")).toEqual({ available: true, version: "12.3.4" });
+    } finally {
+      if (priorPath === undefined) delete process.env.PATH; else process.env.PATH = priorPath;
+      if (priorOverride === undefined) delete process.env.CHAT2CODEX_NPM_CLI; else process.env.CHAT2CODEX_NPM_CLI = priorOverride;
       await rm(root, { recursive: true, force: true });
     }
   });
