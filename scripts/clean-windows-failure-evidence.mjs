@@ -51,7 +51,7 @@ export function parseLifecycleFailure(source) {
 
 export function parseDoctorFailureCodes(source) {
   if (typeof source !== "string" || source.length > 1024 * 1024) return [];
-  return [...doctorCodes].filter((code) => source.includes(code + ":")).sort();
+  return [...doctorCodes].filter((code) => source.includes(code + ":") || source.includes("[" + code + "]")).sort();
 }
 
 function boundedFailure(value) {

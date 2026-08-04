@@ -46,7 +46,7 @@ describe("clean Windows bounded failure evidence", () => {
   });
 
   test("extracts only one bounded doctor code", () => {
-    expect(parseDoctorFailureCodes("error A - DIST_WEIXIN_NOT_CONFIGURED: gap\nerror B - DIST_KEYS_INVALID: hard")).toEqual(["DIST_KEYS_INVALID", "DIST_WEIXIN_NOT_CONFIGURED"]);
+    expect(parseDoctorFailureCodes("error A [DIST_WEIXIN_NOT_CONFIGURED] - gap\nerror B - DIST_KEYS_INVALID: hard")).toEqual(["DIST_KEYS_INVALID", "DIST_WEIXIN_NOT_CONFIGURED"]);
     expect(parseDoctorFailureCodes("error token - BAD-CODE: secret")).toEqual([]);
     expect(parseDoctorFailureCodes("error x - " + "A".repeat(100) + ": value")).toEqual([]);
   });
