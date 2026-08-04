@@ -50,8 +50,20 @@ export function parseLifecycleFailure(source) {
 }
 
 export function parseDoctorFailureCodes(source) {
-  if (typeof source !== "string" || source.length > 1024 * 1024) return [];
-  return [...doctorCodes].filter((code) => source.includes(code + ":") || source.includes("[" + code + "]")).sort();
+  return parseDoctorFailureEvidence(source).codes;
+}
+
+export function parseDoctorFailureEvidence(source) {
+  if (typeof source !== "string" || source.length > 1024 * 1024) return { codes: [], unclassifiedErrors: 1 };
+  const codes = new Set();
+  let unclassifiedErrors = 0;
+  for (const line of source.split(/\r?\n/u)) {
+    if (!/^error(?:\s|$)/u.test(line.trim())) continue;
+    const matches = [...doctorCodes].filter((code) => line.includes("[" + code + "]") || line.includes(code + ":"));
+    if (matches.length !== 1) { unclassifiedErrors += 1; continue; }
+    codes.add(matches[0]);
+  }
+  return { codes: [...codes].sort(), unclassifiedErrors };
 }
 
 function boundedFailure(value) {

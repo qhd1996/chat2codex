@@ -49,7 +49,7 @@ test("packages every novice acceptance runtime asset and declares Node 20.19 min
     "scripts/verify-novice-evidence.mjs", "scripts/run-novice-acceptance.mjs", "scripts/novice-windows-worker.mjs",
     "scripts/novice-native-lifecycle-probe.mjs", "scripts/process-identity.mjs", "scripts/verify-distribution-package.mjs",
     "scripts/novice-restart-probe.mjs",
-    "scripts/novice-service-probe.mjs", "scripts/novice-clean-windows-attestation.mjs", "scripts/novice-real-upgrade-probe.mjs", "scripts/novice-state-runtime-probe.mjs", "scripts/novice-another-user-acl.ps1",
+    "scripts/novice-service-probe.mjs", "scripts/novice-clean-windows-attestation.mjs", "scripts/novice-process-cleanup.mjs", "scripts/novice-real-upgrade-probe.mjs", "scripts/novice-state-runtime-probe.mjs", "scripts/novice-another-user-acl.ps1",
     "scripts/chat2codex-personal.ps1",
     "docs/quality/novice-acceptance-runbook.md", "docs/windows/novice-troubleshooting.md",
   ]) expect(packageJson.files).toContain(asset);

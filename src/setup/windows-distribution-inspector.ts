@@ -127,13 +127,17 @@ export function inspectCodexConfigReferences(source: string, reviewedPackageRoot
 export async function inspectPendingPortableReceipt(home: string): Promise<NonNullable<DistributionDoctorSnapshot["rollbackReceipt"]>> {
   const root = path.join(home, "receipts");
   const entries = await fs.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => error.code === "ENOENT" ? [] : Promise.reject(error));
-  let status: string | undefined;
+  const pending: Array<{ receiptId: string; status: string }> = [];
+  const awaiting: Array<{ receiptId: string; status: string }> = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.toLocaleLowerCase().endsWith(".json")) continue;
-    try { const receipt = parsePortableReceipt(JSON.parse(await fs.readFile(path.join(root, entry.name), "utf8"))); if (!["committed", "awaiting_setup", "rolled_back", "aborted"].includes(receipt.status)) { status = receipt.status; break; } else if (receipt.status === "awaiting_setup") status ??= receipt.status; }
-    catch { status = "invalid"; break; }
+    try { const receipt = parsePortableReceipt(JSON.parse(await fs.readFile(path.join(root, entry.name), "utf8"))); if (!["committed", "awaiting_setup", "rolled_back", "aborted"].includes(receipt.status)) pending.push({ receiptId: receipt.receiptId, status: receipt.status }); else if (receipt.status === "awaiting_setup") awaiting.push({ receiptId: receipt.receiptId, status: receipt.status }); }
+    catch { return { pending: true, status: "invalid" }; }
   }
-  return status && status !== "awaiting_setup" ? { pending: true, status } : status ? { pending: false, status } : { pending: false };
+  if (pending.length > 1) return { pending: true, status: "ambiguous" };
+  if (pending.length === 1) return { pending: true, ...pending[0] };
+  if (awaiting.length === 1) return { pending: false, ...awaiting[0] };
+  return awaiting.length > 1 ? { pending: false, status: "awaiting_setup" } : { pending: false };
 }
 function csv(value: string | undefined): string[] { return (value ?? "").split(",").map((item) => item.trim()).filter(Boolean); }
 function booleanValue(value: string | undefined, fallback: boolean): boolean { if (value === undefined) return fallback; return value.trim().toLocaleLowerCase() === "true"; }

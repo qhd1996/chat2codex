@@ -49,6 +49,7 @@ export class PersonalPortableTransactionError extends PersonalPortableError {
 export interface PersonalPortableCoreCompositionInput extends Omit<PersonalPortableInstallIo, "quiesceWindowsUserTask" | "migrateState" | "installWindowsUserTask" | "uninstallWindowsUserTask" | "startWindowsUserTask" | "stopCurrentWriter" | "doctor" | "oldDoctor"> {
   serviceInput: WindowsServiceInstallInput; serviceIo: WindowsServiceIo; statePath: string; adapterId: string;
   priorWriterWasOnline?(): boolean;
+  activeReceiptId?(): string | undefined;
 }
 export interface PersonalPortableCoreDependencies {
   installWindowsUserTask: typeof installWindowsUserTask; uninstallWindowsUserTask: typeof uninstallWindowsUserTask;
@@ -62,7 +63,7 @@ const portableCoreDependencies: PersonalPortableCoreDependencies = {
   createStateStore: (statePath, options) => new JsonStateStore(statePath, options),
   inspectInstalledWindowsDistribution, diagnoseWindowsDistribution,
 };
-export const personalPortableDeferredDoctorCodes = ["DIST_WEIXIN_NOT_CONFIGURED", "DIST_WEIXIN_BOUNDARY_INVALID", "DIST_MCP_UNCONFIGURED", "DIST_INSTALLED_HOOK_DRIFT", "DIST_ROLLBACK_PENDING"] as const;
+export const personalPortableDeferredDoctorCodes = ["DIST_WEIXIN_NOT_CONFIGURED", "DIST_WEIXIN_BOUNDARY_INVALID", "DIST_MCP_UNCONFIGURED", "DIST_INSTALLED_HOOK_DRIFT"] as const;
 export function composePersonalPortableInstallIo(input: PersonalPortableCoreCompositionInput, dependencies: PersonalPortableCoreDependencies = portableCoreDependencies): PersonalPortableInstallIo {
   const deferredOnboardingDoctorCodes = new Set<string>(personalPortableDeferredDoctorCodes);
   let installedTaskPath: string | undefined;
@@ -84,7 +85,9 @@ export function composePersonalPortableInstallIo(input: PersonalPortableCoreComp
     latestDoctorFailureCodes = [];
     if (snapshot === null) return false;
     const offlineAllowed = priorWriterCount === 0;
-    const failures = dependencies.diagnoseWindowsDistribution(snapshot).filter((check) => check.status === "error" && !deferredOnboardingDoctorCodes.has(check.code) && !(offlineAllowed && check.code === "DIST_WRITER_CONFLICT"));
+    const activeReceiptId = input.activeReceiptId?.();
+    const currentReceiptPending = typeof activeReceiptId === "string" && /^[A-Za-z0-9._-]{1,100}$/u.test(activeReceiptId) && snapshot.rollbackReceipt?.pending === true && snapshot.rollbackReceipt.receiptId === activeReceiptId;
+    const failures = dependencies.diagnoseWindowsDistribution(snapshot).filter((check) => check.status === "error" && !deferredOnboardingDoctorCodes.has(check.code) && !(offlineAllowed && check.code === "DIST_WRITER_CONFLICT") && !(currentReceiptPending && check.code === "DIST_ROLLBACK_PENDING"));
     if (failures.length) {
       latestDoctorFailureCodes = failures.map((check) => check.code).filter((code) => /^DIST_[A-Z0-9_]+$/u.test(code)).slice(0, 20);
       return false;

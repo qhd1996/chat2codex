@@ -4,7 +4,8 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanWindowsFailureLine, parseDoctorFailureCodes, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
+import { cleanWindowsFailureLine, parseDoctorFailureEvidence, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
+import { stopExactEntrypointWriters } from "./novice-process-cleanup.mjs";
 import { personalPortableDeferredDoctorCodes } from "../dist/setup/personal-portable.js";
 
 const args = process.argv.slice(2);
@@ -88,10 +89,11 @@ try {
   stage = "start_1"; const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "doctor"; const doctor = runCli(["doctor", "--env", envFile], commands, true);
   const doctorOutput = String(doctor.stdout ?? "") + "\n" + String(doctor.stderr ?? "");
-  const doctorErrorCodes = parseDoctorFailureCodes(doctorOutput);
+  const doctorEvidence = parseDoctorFailureEvidence(doctorOutput);
+  const doctorErrorCodes = doctorEvidence.codes;
   const doctorDeferredCodes = doctorErrorCodes.filter((code) => personalPortableDeferredDoctorCodes.includes(code));
   const unexpectedDoctorCode = doctorErrorCodes.find((code) => !personalPortableDeferredDoctorCodes.includes(code));
-  if (doctor.status !== 0 && (doctorDeferredCodes.length === 0 || unexpectedDoctorCode)) { doctorFailureCode = unexpectedDoctorCode ?? null; throw new Error("Installed doctor failed."); }
+  if (doctorEvidence.unclassifiedErrors !== 0 || unexpectedDoctorCode || doctor.status !== 0 && doctorDeferredCodes.length === 0 || doctor.status === 0 && doctorErrorCodes.length !== 0) { doctorFailureCode = unexpectedDoctorCode ?? null; throw new Error("Installed doctor failed."); }
   stage = "stop_1"; await stopTask(stopPath, first, commands);
   stage = "start_2"; const second = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "restart_identity";
@@ -143,6 +145,7 @@ try {
   if (!completed) {
     spawnSync("schtasks.exe", ["/End", "/TN", taskPath], { windowsHide: true });
     spawnSync("schtasks.exe", ["/Delete", "/TN", taskPath, "/F"], { windowsHide: true });
+    stopExactEntrypointWriters(entrypoint);
   }
 }
 

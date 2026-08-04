@@ -35,6 +35,7 @@
     "scripts/novice-restart-probe.mjs",
     "scripts/novice-service-probe.mjs",
     "scripts/novice-clean-windows-attestation.mjs",
+    "scripts/novice-process-cleanup.mjs",
     "scripts/novice-real-upgrade-probe.mjs",
     "scripts/novice-state-runtime-probe.mjs",
     "scripts/novice-another-user-acl.ps1",

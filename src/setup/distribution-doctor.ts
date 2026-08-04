@@ -16,7 +16,7 @@ export interface DistributionDoctorSnapshot {
   hooks?: { expectedHashesMatch: boolean; installedHashesMatch?: boolean; mcpConfigured?: boolean };
   desktop?: { available: boolean; version?: string };
   weixin?: { configured: boolean; credentialReadable: boolean; privateChatBoundary: boolean };
-  rollbackReceipt?: { pending: boolean; status?: string };
+  rollbackReceipt?: { pending: boolean; status?: string; receiptId?: string };
 }
 export interface DistributionDependencySnapshot { available: boolean; version?: string; compatible: boolean }
 

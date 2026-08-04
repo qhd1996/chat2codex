@@ -6,6 +6,7 @@ import {
   parseCleanWindowsFailureOutput,
   parseLifecycleFailure,
   parseDoctorFailureCodes,
+  parseDoctorFailureEvidence,
 } from "../scripts/clean-windows-failure-evidence.mjs";
 
 describe("clean Windows bounded failure evidence", () => {
@@ -49,5 +50,12 @@ describe("clean Windows bounded failure evidence", () => {
     expect(parseDoctorFailureCodes("error A [DIST_WEIXIN_NOT_CONFIGURED] - gap\nerror B - DIST_KEYS_INVALID: hard")).toEqual(["DIST_KEYS_INVALID", "DIST_WEIXIN_NOT_CONFIGURED"]);
     expect(parseDoctorFailureCodes("error token - BAD-CODE: secret")).toEqual([]);
     expect(parseDoctorFailureCodes("error x - " + "A".repeat(100) + ": value")).toEqual([]);
+  });
+
+  test("fails doctor evidence closed when any error line is unclassified", () => {
+    expect(parseDoctorFailureEvidence("error Gateway keys [DIST_KEYS_INVALID] - hard\nerror configuration - invalid synthetic value"))
+      .toEqual({ codes: ["DIST_KEYS_INVALID"], unclassifiedErrors: 1 });
+    expect(parseDoctorFailureEvidence("ok Node\nerror Weixin [DIST_WEIXIN_NOT_CONFIGURED] - setup required"))
+      .toEqual({ codes: ["DIST_WEIXIN_NOT_CONFIGURED"], unclassifiedErrors: 0 });
   });
 });

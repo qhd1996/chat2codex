@@ -315,8 +315,20 @@ describe("personal portable existing-core composition", () => {
       installWindowsUserTask: async () => ({} as never), uninstallWindowsUserTask: async () => ({ removed: true }), createStateStore: () => ({ load: async () => ({} as never), save: async () => undefined }), inspectInstalledWindowsDistribution: async () => ({ manifest: {} } as never), diagnoseWindowsDistribution: () => codes.map((code) => ({ status: "error", code })) as never,
     });
     expect(await build(deferred).doctor()).toBeTrue();
+    expect(await build(["DIST_ROLLBACK_PENDING"]).doctor()).toBeFalse();
     const online = build(["DIST_WRITER_CONFLICT"], 1); await online.quiesceWindowsUserTask();
     expect(await online.doctor()).toBeFalse();
+  });
+
+  test("defers rollback pending only for the exact active transaction receipt", async () => {
+    const fixture = transactionFixture();
+    const serviceInput = { home: plan.home, entrypoint: plan.home + "\\entry.js" } as never;
+    const build = (pendingReceiptId: string) => composePersonalPortableInstallIo({ ...fixture.io, activeReceiptId: () => "receipt-current", serviceInput, serviceIo: { stopWriters: async () => 1 } as never, statePath: plan.home + "\\state.json", adapterId: "weixin:test" }, {
+      installWindowsUserTask: async () => ({} as never), uninstallWindowsUserTask: async () => ({ removed: true }), createStateStore: () => ({ load: async () => ({} as never), save: async () => undefined }),
+      inspectInstalledWindowsDistribution: async () => ({ manifest: {}, rollbackReceipt: { pending: true, status: "applying", receiptId: pendingReceiptId } }) as never, diagnoseWindowsDistribution: () => [{ status: "error", code: "DIST_ROLLBACK_PENDING" }] as never,
+    });
+    expect(await build("receipt-current").doctor()).toBeTrue();
+    expect(await build("receipt-other").doctor()).toBeFalse();
   });
 
   test("defers fresh-install writer readiness but requires it for an online upgrade", async () => {

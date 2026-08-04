@@ -63,7 +63,7 @@ describe("personal Windows environment inspector", () => {
       await (await import("node:fs/promises")).mkdir(path.join(home, "receipts"), { recursive: true });
       const receipt = { schemaVersion: 1, receiptId: "receipt-awaiting", action: "install", status: "awaiting_setup", archiveSha256: "a".repeat(64), home, npmPrefix: path.join(home, "npm"), receiptRoot: path.join(home, "receipts"), createdAt: "2026-08-04T00:00:00.000Z", updatedAt: "2026-08-04T00:01:00.000Z", prerequisites: { windowsVersion: "11", architecture: "x64", powershellVersion: "5.1", nodeVersion: "24.14.0", npmVersion: "11.0.0", codexCliVersion: "0.146.0", desktopVersion: null }, backup: { backupId: "backup-fresh", hashes: { package: null, config: null, state: null, task: null }, wasOnline: false }, installedHashes: { package: "b".repeat(64), config: "c".repeat(64), state: "d".repeat(64), task: "e".repeat(64) }, pendingStep: null, completed: ["backup_prior", "quiesce_service", "install_package", "configure", "migrate_state", "install_service"], rollbackCompleted: [], rollbackFailures: [] };
       await writeFile(path.join(home, "receipts", "receipt-awaiting.json"), JSON.stringify(receipt));
-      expect(await inspectPendingPortableReceipt(home)).toEqual({ pending: false, status: "awaiting_setup" });
+      expect(await inspectPendingPortableReceipt(home)).toEqual({ pending: false, status: "awaiting_setup", receiptId: "receipt-awaiting" });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
 
