@@ -5,7 +5,7 @@ import {
   parseCleanWindowsFailureLine,
   parseCleanWindowsFailureOutput,
   parseLifecycleFailure,
-  parseDoctorFailureCode,
+  parseDoctorFailureCodes,
 } from "../scripts/clean-windows-failure-evidence.mjs";
 
 describe("clean Windows bounded failure evidence", () => {
@@ -46,8 +46,8 @@ describe("clean Windows bounded failure evidence", () => {
   });
 
   test("extracts only one bounded doctor code", () => {
-    expect(parseDoctorFailureCode("error Windows distribution - DIST_INSPECTION_FAILED: hidden path")).toBe("DIST_INSPECTION_FAILED");
-    expect(parseDoctorFailureCode("error token - BAD-CODE: secret")).toBeNull();
-    expect(parseDoctorFailureCode("error x - " + "A".repeat(100) + ": value")).toBeNull();
+    expect(parseDoctorFailureCodes("error A - DIST_WEIXIN_NOT_CONFIGURED: gap\nerror B - DIST_KEYS_INVALID: hard")).toEqual(["DIST_KEYS_INVALID", "DIST_WEIXIN_NOT_CONFIGURED"]);
+    expect(parseDoctorFailureCodes("error token - BAD-CODE: secret")).toEqual([]);
+    expect(parseDoctorFailureCodes("error x - " + "A".repeat(100) + ": value")).toEqual([]);
   });
 });

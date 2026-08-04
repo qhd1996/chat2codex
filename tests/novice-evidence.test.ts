@@ -93,6 +93,17 @@ describe("novice acceptance evidence", () => {
     expect(() => validateNoviceEvidence(value, validationOptions)).not.toThrow();
   });
 
+  test("retains the actual pre-login doctor exit with only reviewed onboarding deferrals", () => {
+    const value = validComplete();
+    value.attestation.doctorExitCode = 1;
+    value.attestation.doctorDeferredCodes = ["DIST_INSTALLED_HOOK_DRIFT", "DIST_MCP_UNCONFIGURED", "DIST_WEIXIN_NOT_CONFIGURED"];
+    rehashAttestation(value.attestation);
+    expect(() => validateNoviceEvidence(value, validationOptions)).not.toThrow();
+    value.attestation.doctorDeferredCodes.push("DIST_KEYS_INVALID");
+    rehashAttestation(value.attestation);
+    expect(() => validateNoviceEvidence(value, validationOptions)).toThrow(/doctor|defer|onboarding/i);
+  });
+
   for (const [name, mutate, pattern] of [
     ["repository-only promotion", (v: any) => { v.evidenceLevel = "repository"; }, /isolated.package|qualifying/i],
     ["only 29 repetitions", (v: any) => { v.repetitions.pop(); }, /30|repetition/i],
@@ -157,7 +168,7 @@ function validAttestation() {
     freshProfile: true, repositoryAbsent: true, priorPackageAbsent: true, realUserCodexHomeUntouched: true, productionUntouched: true,
     archiveSha256: "c".repeat(64), repositoryCommit: "a".repeat(40), oldArchiveSha256: "d".repeat(64), oldRepositoryCommit: "47c2272faf764904a5c8cba903b05b679b20a0cb", runIdentityHash: "5".repeat(64), ownedEnvironmentHash: "6".repeat(64),
     taskNameHash: "1".repeat(64), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3,
-    doctorExitCode: 0, singleWriter: true, lockHealthy: true, userDataPreserved: true,
+    doctorExitCode: 0, doctorDeferredCodes: [], singleWriter: true, lockHealthy: true, userDataPreserved: true,
     firstProcess: { pid: 101, createdAt: "2026-08-03T00:00:00.000Z", commandHash: "2".repeat(64), stateSha256: "3".repeat(64) },
     secondProcess: { pid: 102, createdAt: "2026-08-03T00:01:00.000Z", commandHash: "4".repeat(64), stateSha256: "3".repeat(64) },
     taskRemoved: true, newKeysAfterReinstall: true, anotherInteractiveUserDenied: true, zeroResidualProcesses: true, ownedRootRemoved: true,
@@ -170,3 +181,4 @@ function validAttestation() {
 function installedFileFixture() {
   return ["package/package.json", "package/dist/index.js", "package/scripts/novice-service-probe.mjs", "owned/.env", "owned/.service/windows/launcher.ps1", "owned/.service/windows/task.xml", "owned/.service/windows/installation.json", "owned/.data/state.json"].map((path, index) => ({ path, sha256: String(index + 1).repeat(64) }));
 }
+function rehashAttestation(value: any) { const input = { ...value }; delete input.attestationHash; value.attestationHash = new Bun.CryptoHasher("sha256").update(JSON.stringify(input)).digest("hex"); }

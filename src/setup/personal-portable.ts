@@ -62,8 +62,9 @@ const portableCoreDependencies: PersonalPortableCoreDependencies = {
   createStateStore: (statePath, options) => new JsonStateStore(statePath, options),
   inspectInstalledWindowsDistribution, diagnoseWindowsDistribution,
 };
+export const personalPortableDeferredDoctorCodes = ["DIST_WEIXIN_NOT_CONFIGURED", "DIST_WEIXIN_BOUNDARY_INVALID", "DIST_MCP_UNCONFIGURED", "DIST_INSTALLED_HOOK_DRIFT", "DIST_ROLLBACK_PENDING"] as const;
 export function composePersonalPortableInstallIo(input: PersonalPortableCoreCompositionInput, dependencies: PersonalPortableCoreDependencies = portableCoreDependencies): PersonalPortableInstallIo {
-  const deferredOnboardingDoctorCodes = new Set(["DIST_WEIXIN_NOT_CONFIGURED", "DIST_WEIXIN_BOUNDARY_INVALID", "DIST_MCP_UNCONFIGURED", "DIST_INSTALLED_HOOK_DRIFT", "DIST_ROLLBACK_PENDING"]);
+  const deferredOnboardingDoctorCodes = new Set<string>(personalPortableDeferredDoctorCodes);
   let installedTaskPath: string | undefined;
   let priorWriterCount = 0;
   let latestDoctorFailureCodes: string[] = [];

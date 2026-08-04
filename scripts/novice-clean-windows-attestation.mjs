@@ -4,7 +4,8 @@ import { lstat, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { cleanWindowsFailureLine, parseDoctorFailureCode, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
+import { cleanWindowsFailureLine, parseDoctorFailureCodes, parseLifecycleFailure } from "./clean-windows-failure-evidence.mjs";
+import { personalPortableDeferredDoctorCodes } from "../dist/setup/personal-portable.js";
 
 const args = process.argv.slice(2);
 const read = (flag) => { const index = args.indexOf(flag); return index < 0 ? undefined : args[index + 1]; };
@@ -86,7 +87,11 @@ try {
   stage = "installed_hashes"; const installedFiles = await hashInstalledFiles(home, packageRoot);
   stage = "start_1"; const first = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "doctor"; const doctor = runCli(["doctor", "--env", envFile], commands, true);
-  if (doctor.status !== 0) { doctorFailureCode = parseDoctorFailureCode(String(doctor.stdout ?? "") + "\n" + String(doctor.stderr ?? "")); throw new Error("Installed doctor failed."); }
+  const doctorOutput = String(doctor.stdout ?? "") + "\n" + String(doctor.stderr ?? "");
+  const doctorErrorCodes = parseDoctorFailureCodes(doctorOutput);
+  const doctorDeferredCodes = doctorErrorCodes.filter((code) => personalPortableDeferredDoctorCodes.includes(code));
+  const unexpectedDoctorCode = doctorErrorCodes.find((code) => !personalPortableDeferredDoctorCodes.includes(code));
+  if (doctor.status !== 0 && (doctorDeferredCodes.length === 0 || unexpectedDoctorCode)) { doctorFailureCode = unexpectedDoctorCode ?? null; throw new Error("Installed doctor failed."); }
   stage = "stop_1"; await stopTask(stopPath, first, commands);
   stage = "start_2"; const second = await startTask(taskPath, readyPath, stopPath, statePath, logFile, commands);
   stage = "restart_identity";
@@ -120,7 +125,7 @@ try {
     realUserCodexHomeUntouched: true,
     productionUntouched: true,
     taskNameHash: sha256(taskName), installAttempts: 3, startAttempts: 2, stopAttempts: 2, uninstallAttempts: 3,
-    doctorExitCode: doctor.status, singleWriter: true, lockHealthy: true, userDataPreserved: true,
+    doctorExitCode: doctor.status, doctorDeferredCodes, singleWriter: true, lockHealthy: true, userDataPreserved: true,
     firstProcess: first, secondProcess: second, taskRemoved: true, newKeysAfterReinstall: true,
     anotherInteractiveUserDenied, zeroResidualProcesses: !processIdentityExists(first) && !processIdentityExists(second), installedFiles,
     ownedRootRemoved,

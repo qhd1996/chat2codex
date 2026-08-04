@@ -11,7 +11,7 @@ const stages = new Set([
 ]);
 const codes = new Set(["failed", "exit_86", "unavailable"]);
 const aclStages = new Set(["file_acl_owner_read", "file_acl_dacl_apply", "directory_acl_owner_read", "directory_acl_dacl_apply", "file_create_identity", "file_create_create", "file_create_stdin"]);
-const doctorCodes = new Set(["DIST_INSPECTION_FAILED", "DIST_TASK_MISSING", "DIST_WRITER_CONFLICT", "DIST_LOCK_UNHEALTHY", "DIST_KEYS_INVALID", "DIST_LOOPBACK_INVALID"]);
+const doctorCodes = new Set(["DIST_INSPECTION_FAILED", "DIST_PLATFORM_UNSUPPORTED", "DIST_POWERSHELL_MISSING", "DIST_POWERSHELL_UNSUPPORTED", "DIST_NODE_MISSING", "DIST_NODE_UNSUPPORTED", "DIST_NPM_MISSING", "DIST_NPM_UNSUPPORTED", "DIST_CODEX_MISSING", "DIST_CODEX_UNSUPPORTED", "DIST_PACKAGE_DRIFT", "DIST_TASK_DRIFT", "DIST_WRITER_CONFLICT", "DIST_SCHEMA_UNSUPPORTED", "DIST_KEYS_INVALID", "DIST_LOOPBACK_INVALID", "DIST_HOOK_HASH_DRIFT", "DIST_INSTALLED_HOOK_DRIFT", "DIST_MCP_UNCONFIGURED", "DIST_WEIXIN_NOT_CONFIGURED", "DIST_WEIXIN_BOUNDARY_INVALID", "DIST_ROLLBACK_PENDING"]);
 
 export function cleanWindowsFailureLine(value) {
   const bounded = boundedFailure(value);
@@ -49,10 +49,9 @@ export function parseLifecycleFailure(source) {
   return { detailStage: null, code: "failed" };
 }
 
-export function parseDoctorFailureCode(source) {
-  if (typeof source !== "string" || source.length > 1024 * 1024) return null;
-  for (const code of doctorCodes) if (source.includes(code + ":")) return code;
-  return null;
+export function parseDoctorFailureCodes(source) {
+  if (typeof source !== "string" || source.length > 1024 * 1024) return [];
+  return [...doctorCodes].filter((code) => source.includes(code + ":")).sort();
 }
 
 function boundedFailure(value) {
